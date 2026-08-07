@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.2</title>
+<title>Coach v1.3</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v1.3 — Modèle par défaut passé à qwen/qwen3.6-27b, Groq ayant retiré les modèles Llama 4
+           de son catalogue ; bascule automatique des installations encore réglées sur un
+           modèle Llama 4 ; détection des modèles compatibles image étendue aux Qwen.
+
     v1.2 — Application renommée de Foodvisor en Coach, le nom précédent étant celui d'une
            société existante et le dépôt de publication étant public ; clé de stockage
            renommée, avec reprise automatique des données écrites sous l'ancienne clé.
@@ -329,7 +333,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -364,7 +368,7 @@ const DEFAULTS = {
   version: 1,
   settings: {
     apiKey: '',
-    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    model: 'qwen/qwen3.6-27b',
     models: [],
     keepPhotos: true,
     goals: { kcal: 2200, prot: 130, carb: 240, fat: 73 },
@@ -395,6 +399,13 @@ let DB;
 try { DB = deepMerge(DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}')); }
 catch (e) { DB = deepMerge(DEFAULTS, {}); }
 const S = () => DB.settings;
+
+/* Les modèles Llama 4 ont été retirés du catalogue Groq : on rebascule les
+   installations qui en avaient un enregistré vers le modèle par défaut. */
+if (/llama-4/i.test(DB.settings.model || '')) {
+  DB.settings.model = DEFAULTS.settings.model;
+  DB.settings.models = [];
+}
 
 /* Sauvegarde avec garde-fou de quota : si le stockage est plein, on supprime
    les vignettes les plus anciennes (les données nutritionnelles sont prioritaires). */
@@ -988,10 +999,9 @@ $('#btnWeight').onclick = () => {
 /* =========================================================================
    8. Vue « Réglages »
    ========================================================================= */
-const FALLBACK_MODELS = [
-  'meta-llama/llama-4-scout-17b-16e-instruct',
-  'meta-llama/llama-4-maverick-17b-128e-instruct'
-];
+/* Repli minimal si la liste n'a jamais été chargée depuis le compte Groq.
+   Le catalogue Groq bouge : le bouton « Charger les modèles » fait foi. */
+const FALLBACK_MODELS = ['qwen/qwen3.6-27b'];
 
 function fillModels() {
   const sel = $('#sModel');
@@ -1023,7 +1033,7 @@ $('#sModelLoad').onclick = async () => {
     if (!res.ok) throw new Error((j.error && j.error.message) || 'Erreur ' + res.status);
     const ids = (j.data || []).map(m => m.id).filter(Boolean).sort();
     // on met en tête ceux qui ressemblent à des modèles vision
-    const vision = ids.filter(m => /(vision|llama-4|scout|maverick|vl|omni)/i.test(m));
+    const vision = ids.filter(m => /(vision|multimodal|vl|omni|scout|maverick|llama-4|qwen3\.[6-9]|qwen[4-9])/i.test(m));
     S().models = vision.concat(ids.filter(m => !vision.includes(m)));
     save(); loader(false); fillModels();
     toast(ids.length + ' modèles chargés, ' + vision.length + ' compatibles image');
@@ -1192,7 +1202,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.2');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.3');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
