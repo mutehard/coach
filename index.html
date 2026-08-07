@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.8</title>
+<title>Coach v1.9</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v1.9 — Compléments alimentaires : liste paramétrable dans les réglages, avec modèles courants,
+           et pastilles dans le journal pour enregistrer une prise en un toucher. Les compléments
+           apportant des calories entrent dans les totaux et l'historique ; ceux qui n'en
+           apportent pas sont simplement suivis. Plusieurs doses par jour possibles.
+
     v1.8 — Jusqu'à trois photos par repas, réunies dans un composeur avant analyse et envoyées
            en une seule requête. Consigne dédiée aux étiquettes et tableaux de valeurs
            nutritionnelles, qui font autorité sur l'estimation visuelle, avec conversion
@@ -203,6 +208,13 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .g input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 2px;text-align:center;font-size:14px;outline:none;font-variant-numeric:tabular-nums}
 .item .g input:focus{border-color:var(--acc)}
 
+.supps{display:flex;flex-wrap:wrap;gap:7px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--line);
+  border-radius:20px;padding:8px 13px;font-size:13.5px;font-weight:600;color:var(--dim)}
+.chip:active{opacity:.7}
+.chip.on{background:#12281f;border-color:#1f4a35;color:var(--acc-l)}
+.chip .n{font-size:11px;font-weight:600;opacity:.75}
+.chip .x{font-size:12px;color:inherit;opacity:.6;margin:-2px -5px -2px 1px;padding:4px 6px}
 .tray{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;margin-bottom:11px;min-height:92px}
 .shot{position:relative;flex:none;width:92px;height:92px;border-radius:12px;overflow:hidden;background:var(--card);border:1px solid var(--line)}
 .shot img{width:100%;height:100%;object-fit:cover;display:block}
@@ -298,6 +310,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <button class="btn sm" id="btnManual" style="flex:none;padding:14px 16px">✍️</button>
     </div>
 
+    <div id="supps"></div>
     <div id="meals"></div>
   </section>
 
@@ -358,6 +371,13 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
     </div>
 
     <div class="card">
+      <h2>Compléments alimentaires</h2>
+      <div id="sSupps"></div>
+      <button class="btn sm" id="btnSuppAdd" style="width:100%;margin-top:9px">+ Ajouter un complément</button>
+      <p class="tiny" style="margin-top:10px">Ils apparaissent alors en pastilles dans le journal. Touche une pastille pour enregistrer une prise.</p>
+    </div>
+
+    <div class="card">
       <h2>Photos</h2>
       <div class="row between">
         <div class="grow">
@@ -381,7 +401,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.8 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.9 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -421,6 +441,7 @@ const DEFAULTS = {
     keepPhotos: true,
     lastExport: 0,
     remindAfter: 0,
+    supps: [],
     goals: { kcal: 2200, prot: 130, carb: 240, fat: 73 },
     profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0 }
   },
@@ -481,12 +502,20 @@ const r0 = n => Math.round(Number(n) || 0);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+/* Les compléments sont enregistrés comme des repas d'un moment à part : ils entrent
+   ainsi dans les totaux, l'historique, l'export et les sauvegardes sans code dédié,
+   mais ne s'affichent pas dans la liste des repas — ils ont leur propre carte. */
+const SUPP = 'complement';
+
 const MEALS = [
   { id: 'petit-dej', label: 'Petit-déjeuner', ico: '☕' },
   { id: 'dejeuner', label: 'Déjeuner', ico: '🍽' },
   { id: 'diner', label: 'Dîner', ico: '🌙' },
   { id: 'collation', label: 'Collation', ico: '🍎' }
 ];
+
+const ALL_MEALS = MEALS.map(m => m.id).concat([SUPP]);
+const mealLabel = id => id === SUPP ? 'Complément' : ((MEALS.find(m => m.id === id) || {}).label || id);
 
 function dstr(d) {
   const z = new Date(d.getTime() - d.getTimezoneOffset() * 6e4);
@@ -793,6 +822,7 @@ function renderToday() {
   $('#dNext').style.visibility = curDate >= TODAY() ? 'hidden' : 'visible';
 
   backupBanner();
+  renderSupps();
 
   const list = entriesOf(curDate);
   const t = sumEntries(list), g = S().goals;
@@ -822,13 +852,14 @@ function renderToday() {
 
   // repas
   const box = $('#meals');
-  if (!list.length) {
+  const meals = list.filter(e => e.meal !== SUPP);
+  if (!meals.length) {
     box.innerHTML = '<div class="card empty"><span class="ico">🍽</span>Aucun repas enregistré.<br>' +
       'Prends ton assiette en photo pour commencer.</div>';
     return;
   }
   box.innerHTML = MEALS.map(m => {
-    const es = list.filter(e => e.meal === m.id);
+    const es = meals.filter(e => e.meal === m.id);
     if (!es.length) return '';
     const s = sumEntries(es);
     return '<div class="meal"><div class="mh"><span>' + m.ico + ' ' + m.label + '</span><em>' + r0(s.kcal) + ' kcal</em></div>' +
@@ -858,6 +889,49 @@ function esc(s) {
 $('#dPrev').onclick = () => { curDate = shiftD(curDate, -1); renderToday(); };
 $('#dNext').onclick = () => { if (curDate < TODAY()) { curDate = shiftD(curDate, 1); renderToday(); } };
 $('#dLbl').onclick = () => { curDate = TODAY(); renderToday(); };
+
+/* Une prise est une entrée de journal ordinaire, reliée au complément par `supp`.
+   Toucher la pastille ajoute une dose, la croix retire la dernière. */
+function suppsOf(date) { return entriesOf(date).filter(e => e.meal === SUPP); }
+
+function renderSupps() {
+  const box = $('#supps');
+  const list = S().supps || [];
+  if (!list.length) { box.innerHTML = ''; return; }
+  const taken = suppsOf(curDate);
+  const s = sumEntries(taken);
+  box.innerHTML = '<div class="card"><div class="row between" style="margin-bottom:11px">' +
+    '<h2 style="margin:0">Compléments</h2>' +
+    '<span class="tiny">' + taken.length + ' prise' + (taken.length > 1 ? 's' : '') +
+    (s.kcal ? ' · ' + r0(s.kcal) + ' kcal' : '') + '</span></div><div class="supps">' +
+    list.map(sp => {
+      const n = taken.filter(e => e.supp === sp.id).length;
+      return '<span class="chip' + (n ? ' on' : '') + '" data-add="' + esc(sp.id) + '">' +
+        (n ? '✓ ' : '') + esc(sp.name) +
+        (n > 1 ? '<b class="n">×' + n + '</b>' : '') +
+        (sp.dose && !n ? '<b class="n">' + esc(sp.dose) + '</b>' : '') +
+        (n ? '<b class="x" data-del="' + esc(sp.id) + '">✕</b>' : '') + '</span>';
+    }).join('') + '</div></div>';
+}
+
+$('#supps').onclick = e => {
+  const del = e.target.closest('[data-del]');
+  if (del) {
+    const last = suppsOf(curDate).filter(x => x.supp === del.dataset.del).sort((a, b) => b.ts - a.ts)[0];
+    if (last) { DB.entries = DB.entries.filter(x => x.id !== last.id); save(); renderToday(); renderHistory(); }
+    return;
+  }
+  const add = e.target.closest('[data-add]');
+  if (!add) return;
+  const sp = (S().supps || []).find(x => x.id === add.dataset.add);
+  if (!sp) return;
+  DB.entries.push({
+    id: uid(), ts: Date.now(), date: curDate, meal: SUPP, supp: sp.id, title: sp.name,
+    items: [{ name: sp.name + (sp.dose ? ' · ' + sp.dose : ''), qty: 0,
+              kcal: r0(sp.kcal), prot: r0(sp.prot), carb: r0(sp.carb), fat: r0(sp.fat) }]
+  });
+  save(); renderToday(); renderHistory();
+};
 
 $('#backupNag').onclick = e => {
   if (e.target.closest('#nagGo')) exportJson();
@@ -1303,6 +1377,7 @@ function renderSettings() {
   const g = S().goals;
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#swPhotos').classList.toggle('on', !!S().keepPhotos);
+  renderSuppsSettings();
   const bytes = new Blob([JSON.stringify(DB)]).size;
   const le = S().lastExport;
   $('#storInfo').textContent = DB.entries.length + ' repas · ' + DB.weights.length + ' pesées · ' +
@@ -1352,6 +1427,93 @@ $('#sTest').onclick = async () => {
 });
 
 $('#swPhotos').onclick = () => { S().keepPhotos = !S().keepPhotos; save(); renderSettings(); };
+
+/* Valeurs typiques d'une dose courante, à ajuster selon le produit réellement utilisé :
+   seule l'étiquette du pot fait foi. */
+const SUPP_MODELES = [
+  { name: 'Whey', dose: '30 g', kcal: 120, prot: 24, carb: 2, fat: 2 },
+  { name: 'Créatine', dose: '5 g', kcal: 0, prot: 0, carb: 0, fat: 0 },
+  { name: 'Multivitamines', dose: '1 gélule', kcal: 0, prot: 0, carb: 0, fat: 0 },
+  { name: 'Oméga 3', dose: '2 capsules', kcal: 20, prot: 0, carb: 0, fat: 2 },
+  { name: 'Magnésium', dose: '1 comprimé', kcal: 0, prot: 0, carb: 0, fat: 0 }
+];
+
+function renderSuppsSettings() {
+  const box = $('#sSupps');
+  const list = S().supps || [];
+  box.innerHTML = list.length
+    ? list.map(sp =>
+        '<div class="entry" data-supp="' + esc(sp.id) + '" style="padding:10px 12px">' +
+        '<div class="grow"><div class="nm">' + esc(sp.name) + '</div>' +
+        '<div class="dt">' + (sp.dose ? esc(sp.dose) : 'dose non précisée') +
+        (sp.kcal || sp.prot || sp.carb || sp.fat
+          ? ' · ' + r0(sp.kcal) + ' kcal · P ' + r0(sp.prot) + ' G ' + r0(sp.carb) + ' L ' + r0(sp.fat)
+          : ' · sans apport') + '</div></div>' +
+        '<span class="tiny">modifier ›</span></div>').join('')
+    : '<div class="empty" style="padding:14px 8px">Aucun complément enregistré.</div>';
+}
+
+$('#sSupps').onclick = e => {
+  const row = e.target.closest('[data-supp]');
+  if (row) editSupp((S().supps || []).find(x => x.id === row.dataset.supp));
+};
+
+$('#btnSuppAdd').onclick = () => {
+  const dejaLa = (S().supps || []).map(x => x.name.toLowerCase());
+  const restants = SUPP_MODELES.filter(m => dejaLa.indexOf(m.name.toLowerCase()) < 0);
+  sheet('Ajouter un complément',
+    (restants.length
+      ? '<p class="tiny" style="margin-bottom:8px">Modèles courants — valeurs typiques, à corriger d\'après l\'étiquette de ton produit.</p>' +
+        '<div class="supps" style="margin-bottom:14px">' +
+        restants.map((m, i) => '<span class="chip" data-tpl="' + i + '">+ ' + esc(m.name) + '</span>').join('') +
+        '</div>'
+      : '') +
+    '<button class="btn pri" id="suppBlank">Créer un complément</button>',
+    el => {
+      el.querySelector('#suppBlank').onclick = () => { closeSheet(); editSupp(null); };
+      el.onclick = ev => {
+        const t = ev.target.closest('[data-tpl]');
+        if (!t) return;
+        closeSheet();
+        editSupp(Object.assign({ id: uid() }, restants[+t.dataset.tpl]), true);
+      };
+    });
+};
+
+function editSupp(sp, isNew) {
+  const s = sp || { id: uid(), name: '', dose: '', kcal: 0, prot: 0, carb: 0, fat: 0 };
+  const neuf = isNew || !sp;
+  sheet(neuf ? 'Nouveau complément' : 'Modifier le complément',
+    '<div class="grid2">' +
+    '<label class="f"><span>Nom</span><input class="in" id="spN" value="' + esc(s.name) + '" placeholder="Whey"></label>' +
+    '<label class="f"><span>Dose</span><input class="in" id="spD" value="' + esc(s.dose) + '" placeholder="30 g"></label></div>' +
+    '<p class="tiny" style="margin:-4px 0 10px">Apport nutritionnel par dose. Laisse à zéro pour un complément sans calories (créatine, vitamines).</p>' +
+    '<div class="grid4">' +
+    ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.'].map(f => {
+      const k = f.split('|')[0], l = f.split('|')[1];
+      return '<label class="f"><span>' + l + '</span><input class="in" id="sp_' + k + '" inputmode="numeric" value="' + r0(s[k]) + '"></label>';
+    }).join('') + '</div>' +
+    '<button class="btn pri" id="spOk">' + (neuf ? 'Ajouter' : 'Enregistrer') + '</button>' +
+    (neuf ? '' : '<button class="btn dan gho" id="spDel" style="margin-top:9px">Supprimer</button>'),
+    el => {
+      el.querySelector('#spOk').onclick = () => {
+        const name = el.querySelector('#spN').value.trim();
+        if (!name) { toast('Donne un nom au complément'); return; }
+        const o = { id: s.id, name: name.slice(0, 40), dose: el.querySelector('#spD').value.trim().slice(0, 30) };
+        ['kcal', 'prot', 'carb', 'fat'].forEach(k => o[k] = r0(el.querySelector('#sp_' + k).value));
+        S().supps = (S().supps || []).filter(x => x.id !== o.id).concat([o]);
+        save(); closeSheet(); renderSuppsSettings(); renderToday();
+        toast(neuf ? 'Complément ajouté' : 'Complément modifié');
+      };
+      const d = el.querySelector('#spDel');
+      if (d) d.onclick = () => {
+        if (!confirm('Supprimer « ' + s.name + ' » ? Les prises déjà enregistrées sont conservées.')) return;
+        S().supps = (S().supps || []).filter(x => x.id !== s.id);
+        save(); closeSheet(); renderSuppsSettings(); renderToday();
+        toast('Complément supprimé');
+      };
+    });
+}
 
 /* Calcul des objectifs — Mifflin-St Jeor */
 $('#btnCalc').onclick = () => {
@@ -1443,7 +1605,7 @@ $('#btnExpCsv').onclick = () => {
   const lines = [head.join(';')];
   DB.entries.slice().sort((a, b) => a.ts - b.ts).forEach(e => {
     const h = new Date(e.ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    const lbl = (MEALS.find(m => m.id === e.meal) || {}).label || e.meal;
+    const lbl = mealLabel(e.meal);
     (e.items || []).forEach(i => lines.push([e.date, h, lbl, e.title, i.name, i.qty, i.kcal, i.prot, i.carb, i.fat].map(q).join(';')));
   });
   lines.push('');
@@ -1458,7 +1620,7 @@ $('#btnExpCsv').onclick = () => {
 function sanitizeBackup(inc) {
   const txt = (v, max) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '').slice(0, max);
   const num = v => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(-1e6, Math.min(1e6, n)) : 0; };
-  const mealIds = MEALS.map(m => m.id);
+  const mealIds = ALL_MEALS;
   const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
   const entries = (inc.entries || []).filter(e => e && typeof e === 'object').map(e => {
@@ -1474,6 +1636,7 @@ function sanitizeBackup(inc) {
       }))
     };
     if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(e.thumb || '')) o.thumb = e.thumb;
+    if (/^[A-Za-z0-9_-]{1,40}$/.test(e.supp || '')) o.supp = e.supp;
     return o;
   });
 
@@ -1489,6 +1652,12 @@ function sanitizeBackup(inc) {
       model: txt(s.model, 120) || DEFAULTS.settings.model,
       models: (Array.isArray(s.models) ? s.models : []).slice(0, 200).map(m => txt(m, 120)),
       keepPhotos: s.keepPhotos !== false,
+      supps: (Array.isArray(s.supps) ? s.supps : []).slice(0, 60)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 40) || 'Complément', dose: txt(x.dose, 30),
+          kcal: num(x.kcal), prot: num(x.prot), carb: num(x.carb), fat: num(x.fat)
+        })),
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter),
       goals: { kcal: num(g.kcal) || DEFAULTS.settings.goals.kcal, prot: num(g.prot), carb: num(g.carb), fat: num(g.fat) },
       profile: { sex: p.sex === 'f' ? 'f' : 'h', age: num(p.age) || 35, height: num(p.height) || 175,
@@ -1549,7 +1718,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.8');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.9');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
