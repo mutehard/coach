@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.3</title>
+<title>Coach v1.4</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v1.4 — Correction de l'échec d'analyse avec les modèles à raisonnement : le bloc <think>
+           était pris pour la réponse. Raisonnement désormais masqué et sortie JSON forcée,
+           avec repli automatique si le modèle refuse ces options ; extraction du JSON par
+           balayage des objets équilibrés au lieu d'un découpage première/dernière accolade ;
+           affichage de la réponse brute du modèle en cas d'échec.
+
     v1.3 — Modèle par défaut passé à qwen/qwen3.6-27b, Groq ayant retiré les modèles Llama 4
            de son catalogue ; bascule automatique des installations encore réglées sur un
            modèle Llama 4 ; détection des modèles compatibles image étendue aux Qwen.
@@ -209,6 +215,9 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 @keyframes sp{to{transform:rotate(360deg)}}
 #loader p{font-size:14px;color:var(--dim);text-align:center;padding:0 30px}
 .err{background:#2a1518;border:1px solid #4a2229;color:#fca5a5;border-radius:12px;padding:12px;font-size:13px;margin-bottom:12px;word-break:break-word}
+.raw{background:#0d1218;border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 12px;
+  font:400 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
+  white-space:pre-wrap;word-break:break-word;max-height:230px;overflow:auto}
 .note{background:#111d19;border:1px solid #1e3a30;border-radius:12px;padding:12px;font-size:12.5px;color:#9fd9c2;line-height:1.5}
 </style>
 </head>
@@ -333,7 +342,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -548,12 +557,51 @@ Règles :
 - tous les textes en français ;
 - si la photo ne contient aucun aliment, renvoie une liste "aliments" vide et explique dans "remarque".`;
 
+/* Liste les objets JSON de premier niveau présents dans une chaîne, en tenant compte
+   des accolades situées à l'intérieur des chaînes de caractères. */
+function balancedObjects(s) {
+  const out = [];
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '{') continue;
+    let depth = 0, inStr = false, esc = false;
+    for (let j = i; j < s.length; j++) {
+      const c = s[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) { out.push(s.slice(i, j + 1)); i = j; break; }
+    }
+  }
+  return out;
+}
+
+/* Les modèles à raisonnement (Qwen 3.6, MiniMax…) précèdent leur réponse d'un bloc
+   <think> contenant du texte libre, souvent avec des accolades et des blocs de code.
+   On écarte ce bloc, puis on retient le dernier objet JSON qui parse ET qui a la forme
+   attendue — la réponse finale vient toujours après le raisonnement. */
 function extractJson(txt) {
-  let t = String(txt || '').trim();
-  t = t.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
-  const a = t.indexOf('{'), b = t.lastIndexOf('}');
-  if (a < 0 || b <= a) throw new Error('Réponse du modèle illisible : ' + t.slice(0, 160));
-  return JSON.parse(t.slice(a, b + 1));
+  let t = String(txt || '');
+  t = t.replace(/<think>[\s\S]*?<\/think>/gi, ' ');
+  t = t.replace(/<think>[\s\S]*$/i, ' ');
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const zones = fence ? [fence[1], t] : [t];
+  for (const zone of zones) {
+    const cands = balancedObjects(zone);
+    for (let i = cands.length - 1; i >= 0; i--) {
+      try {
+        const o = JSON.parse(cands[i]);
+        if (o && typeof o === 'object' && (Array.isArray(o.aliments) || o.plat)) return o;
+      } catch (e) { /* candidat suivant */ }
+    }
+  }
+  const err = new Error("Le modèle n'a pas renvoyé de JSON exploitable.");
+  err.raw = String(txt || '').trim();
+  throw err;
 }
 
 async function groq(body) {
@@ -572,6 +620,9 @@ async function groq(body) {
   let j = null; try { j = JSON.parse(txt); } catch (e) {}
   if (!res.ok) {
     const m = (j && j.error && j.error.message) || txt.slice(0, 200) || ('Erreur HTTP ' + res.status);
+    if (res.status === 400 && /reasoning_format|reasoning_effort|response_format|json_object/i.test(m)) {
+      const e = new Error(m); e.unsupportedParam = true; throw e;
+    }
     if (res.status === 401) throw new Error('Clé API refusée (401). Vérifie-la dans Réglages.');
     if (res.status === 429) throw new Error('Quota atteint (429). Réessaie dans un moment.');
     if (res.status === 404 || /model/i.test(m)) throw new Error('Modèle indisponible : ' + m);
@@ -580,22 +631,36 @@ async function groq(body) {
   return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
 }
 
+/* Deux options très utiles mais propres à certains modèles : masquer le raisonnement
+   (sinon le bloc <think> pollue la réponse et consomme les tokens) et forcer une sortie
+   JSON. Si le modèle sélectionné les refuse, on rejoue la requête sans elles. */
+const NO_REASONING = { reasoning_format: 'hidden', reasoning_effort: 'none' };
+const JSON_OUT = Object.assign({ response_format: { type: 'json_object' } }, NO_REASONING);
+
+async function groqTry(body, opts) {
+  try { return await groq(Object.assign({}, body, opts)); }
+  catch (e) {
+    if (!e.unsupportedParam) throw e;
+    return await groq(body);
+  }
+}
+
 async function analysePhoto(dataUrl, hint) {
   const content = [{ type: 'text', text: PROMPT + (hint ? '\n\nIndication de l\'utilisateur : ' + hint : '') },
                    { type: 'image_url', image_url: { url: dataUrl } }];
-  const raw = await groq({
-    model: S().model, temperature: 0.2, max_tokens: 1400,
+  const raw = await groqTry({
+    model: S().model, temperature: 0.2, max_tokens: 2000,
     messages: [{ role: 'user', content: content }]
-  });
+  }, JSON_OUT);
   return extractJson(raw);
 }
 
 async function analyseText(desc) {
-  const raw = await groq({
-    model: S().model, temperature: 0.2, max_tokens: 1200,
+  const raw = await groqTry({
+    model: S().model, temperature: 0.2, max_tokens: 2000,
     messages: [{ role: 'user', content: PROMPT.replace('Analyse la photo de ce repas.',
       'Estime la composition nutritionnelle de ce repas décrit par l\'utilisateur : « ' + desc + ' ».') }]
-  });
+  }, JSON_OUT);
   return extractJson(raw);
 }
 
@@ -671,6 +736,14 @@ function renderToday() {
           '<div class="kc">' + r0(st.kcal) + '<small>kcal</small></div></div>';
       }).join('') + '</div>';
   }).join('');
+}
+
+/* Réponse brute du modèle, affichée quand l'analyse échoue : sans elle, un échec
+   est indiagnosticable depuis le téléphone. */
+function rawBlock(err) {
+  if (!err || !err.raw) return '';
+  return '<p class="tiny" style="margin:0 0 5px">Réponse brute du modèle :</p>' +
+         '<pre class="raw">' + esc(err.raw.slice(0, 1500)) + '</pre>';
 }
 
 function esc(s) {
@@ -832,7 +905,7 @@ async function handlePhoto(input) {
     );
   } catch (err) {
     loader(false);
-    sheet('Analyse impossible', '<div class="err">' + esc(err.message) + '</div>' +
+    sheet('Analyse impossible', '<div class="err">' + esc(err.message) + '</div>' + rawBlock(err) +
       '<button class="btn" data-x>Fermer</button>');
   }
 }
@@ -857,7 +930,7 @@ $('#btnManual').onclick = () => {
                      { isNew: true, confiance: res.confiance, remarque: res.remarque });
         } catch (err) {
           loader(false);
-          sheet('Estimation impossible', '<div class="err">' + esc(err.message) + '</div><button class="btn" data-x>Fermer</button>');
+          sheet('Estimation impossible', '<div class="err">' + esc(err.message) + '</div>' + rawBlock(err) + '<button class="btn" data-x>Fermer</button>');
         }
       };
       el.querySelector('#mBlank').onclick = () => {
@@ -1043,7 +1116,7 @@ $('#sModelLoad').onclick = async () => {
 $('#sTest').onclick = async () => {
   loader(true, 'Test de la clé…');
   try {
-    const out = await groq({ model: S().model, max_tokens: 10, messages: [{ role: 'user', content: 'Réponds exactement : OK' }] });
+    const out = await groqTry({ model: S().model, max_tokens: 200, messages: [{ role: 'user', content: 'Réponds exactement : OK' }] }, NO_REASONING);
     loader(false); toast('Clé et modèle valides (' + out.trim().slice(0, 20) + ')');
   } catch (e) {
     loader(false);
@@ -1202,7 +1275,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.3');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.4');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
