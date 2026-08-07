@@ -1,0 +1,7 @@
+# Garde-fou : ce dépôt est public et ne doit contenir QUE l'application.
+# Une sauvegarde exportée depuis l'iPhone (Réglages -> Export JSON / CSV) contient
+# tout le journal alimentaire. Si un tel fichier atterrit ici par mégarde, il ne
+# doit pas pouvoir être publié.
+*.json
+*.csv
+coach-*
