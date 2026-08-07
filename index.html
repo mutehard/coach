@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.5</title>
+<title>Coach v1.6</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v1.6 — Correction d'une faille d'injection : les champs thumb et id d'un repas étaient
+           insérés sans échappement dans le HTML, permettant à une sauvegarde importée
+           d'exécuter du code ayant accès à la clé API et au journal. Les deux champs sont
+           désormais échappés, et toute sauvegarde importée est intégralement assainie.
+
     v1.5 — Bandeau de rappel de sauvegarde en tête du journal, affiché au-delà de trente jours
            sans export et reportable d'une semaine ; date du dernier export conservée et
            rappelée dans les réglages.
@@ -352,7 +357,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.5 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.6 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -771,8 +776,8 @@ function renderToday() {
       es.map(e => {
         const st = sumItems(e.items);
         const names = (e.items || []).map(i => i.name).join(', ');
-        return '<div class="entry" data-id="' + e.id + '">' +
-          (e.thumb ? '<img class="th" src="' + e.thumb + '" alt="">' : '<div class="th ph">' + m.ico + '</div>') +
+        return '<div class="entry" data-id="' + esc(e.id) + '">' +
+          (e.thumb ? '<img class="th" src="' + esc(e.thumb) + '" alt="">' : '<div class="th ph">' + m.ico + '</div>') +
           '<div class="grow"><div class="nm">' + esc(e.title) + '</div><div class="dt">' + esc(names || '—') + '</div></div>' +
           '<div class="kc">' + r0(st.kcal) + '<small>kcal</small></div></div>';
       }).join('') + '</div>';
@@ -1287,6 +1292,53 @@ $('#btnExpCsv').onclick = () => {
   deliver('coach-' + TODAY() + '.csv', '﻿' + lines.join('\r\n'), 'text/csv');
 };
 
+/* Une sauvegarde est un fichier arbitraire : on ne recopie jamais ses champs tels quels
+   dans le modèle de données. Chaque valeur est ramenée à son type attendu, et la vignette
+   n'est conservée que si c'est réellement une image encodée en data-URI. */
+function sanitizeBackup(inc) {
+  const txt = (v, max) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '').slice(0, max);
+  const num = v => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(-1e6, Math.min(1e6, n)) : 0; };
+  const mealIds = MEALS.map(m => m.id);
+  const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  const entries = (inc.entries || []).filter(e => e && typeof e === 'object').map(e => {
+    const o = {
+      id: /^[A-Za-z0-9_-]{1,40}$/.test(e.id) ? e.id : uid(),
+      ts: isFinite(Number(e.ts)) ? Number(e.ts) : Date.now(),
+      date: isDate(e.date) ? e.date : TODAY(),
+      meal: mealIds.indexOf(e.meal) >= 0 ? e.meal : 'collation',
+      title: txt(e.title, 80) || 'Repas',
+      items: (Array.isArray(e.items) ? e.items : []).filter(i => i && typeof i === 'object').map(i => ({
+        name: txt(i.name, 60) || 'Aliment', qty: num(i.qty), kcal: num(i.kcal),
+        prot: num(i.prot), carb: num(i.carb), fat: num(i.fat)
+      }))
+    };
+    if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(e.thumb || '')) o.thumb = e.thumb;
+    return o;
+  });
+
+  const weights = (inc.weights || []).filter(w => w && isDate(w.date) && isFinite(Number(w.kg)))
+    .map(w => ({ date: w.date, kg: Math.round(Number(w.kg) * 10) / 10 }));
+
+  const s = inc.settings || {};
+  const g = s.goals || {}, p = s.profile || {};
+  return {
+    version: 1,
+    settings: {
+      apiKey: /^[A-Za-z0-9_-]{0,200}$/.test(s.apiKey || '') ? (s.apiKey || '') : '',
+      model: txt(s.model, 120) || DEFAULTS.settings.model,
+      models: (Array.isArray(s.models) ? s.models : []).slice(0, 200).map(m => txt(m, 120)),
+      keepPhotos: s.keepPhotos !== false,
+      lastExport: num(s.lastExport), remindAfter: num(s.remindAfter),
+      goals: { kcal: num(g.kcal) || DEFAULTS.settings.goals.kcal, prot: num(g.prot), carb: num(g.carb), fat: num(g.fat) },
+      profile: { sex: p.sex === 'f' ? 'f' : 'h', age: num(p.age) || 35, height: num(p.height) || 175,
+                 weight: Number(p.weight) || 75, act: Number(p.act) || 1.55, aim: num(p.aim) }
+    },
+    entries: entries,
+    weights: weights
+  };
+}
+
 $('#btnImp').onclick = () => $('#fImp').click();
 $('#fImp').onchange = e => {
   const f = e.target.files && e.target.files[0];
@@ -1297,6 +1349,7 @@ $('#fImp').onchange = e => {
     let inc;
     try { inc = JSON.parse(rd.result); } catch (err) { toast('Fichier JSON illisible'); return; }
     if (!inc || !Array.isArray(inc.entries)) { toast('Ce fichier n\'est pas une sauvegarde Coach'); return; }
+    inc = sanitizeBackup(inc);
     sheet('Importer',
       '<p class="muted" style="margin-bottom:14px">La sauvegarde contient <b>' + inc.entries.length + ' repas</b> et <b>' +
       ((inc.weights || []).length) + ' pesées</b>.</p>' +
@@ -1336,7 +1389,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.5');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.6');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
