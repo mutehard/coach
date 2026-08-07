@@ -1,4 +1,4 @@
-# Foodvisor — hébergement
+# Coach — hébergement
 
 Ce dépôt ne sert qu'à **héberger** l'application, pour pouvoir l'ouvrir depuis l'iPhone
 et l'ajouter à l'écran d'accueil. Ce n'est pas le dépôt de développement.
@@ -11,14 +11,14 @@ et l'ajouter à l'écran d'accueil. Ce n'est pas le dépôt de développement.
 ## Source
 
 Le fichier maître versionné vit hors de ce dépôt, dans
-`Foodvisor vX.Y.html`, avec son `CONTEXTE.md`
+`Coach vX.Y.html`, avec son `CONTEXTE.md`
 et ses versions archivées dans `Old/`.
 
 ## Mettre à jour
 
 ```bash
 python3 preparer-deploiement.py
-cd Deploiement && git add -A && git commit -m "Foodvisor vX.Y" && git push
+cd Deploiement && git add -A && git commit -m "Coach vX.Y" && git push
 ```
 
 Le script recopie la dernière version en `index.html`. GitHub Pages republie tout seul
@@ -26,10 +26,10 @@ en une minute environ.
 
 ## À ne pas faire
 
-**Ne pas renommer ce dépôt et ne pas changer de compte.** L'URL détermine l'origine au
-sens du navigateur, et le journal alimentaire est stocké par le navigateur de l'iPhone
-sous cette origine : une URL différente affiche une application vide. Le journal ne serait
-pas perdu, mais deviendrait inaccessible.
+**Ne pas changer de compte GitHub.** L'origine au sens du navigateur est le domaine
+`https://mutehard.github.io`, et le journal alimentaire est stocké par le navigateur de
+l'iPhone sous cette origine. Renommer ce dépôt reste sans danger — le chemin change, pas
+l'origine — mais publier depuis un autre compte afficherait une application vide.
 
 Aucune donnée personnelle ni clé API ne se trouve dans ce dépôt : elles restent sur
 l'iPhone. Une sauvegarde s'exporte depuis l'application, dans Réglages → Export JSON.
