@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.9</title>
+<title>Coach v1.10</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.10 — Repas habituels : un repas déjà enregistré se transforme en modèle depuis son écran
+           d'édition, puis se rejoue en un toucher depuis le journal. Un modèle peut embarquer
+           des compléments, qui ne sont pas dupliqués s'ils ont déjà été pris dans la journée.
+           Modification du contenu et des compléments associés dans les réglages.
+
     v1.9 — Compléments alimentaires : liste paramétrable dans les réglages, avec modèles courants,
            et pastilles dans le journal pour enregistrer une prise en un toucher. Les compléments
            apportant des calories entrent dans les totaux et l'historique ; ceux qui n'en
@@ -310,6 +315,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <button class="btn sm" id="btnManual" style="flex:none;padding:14px 16px">✍️</button>
     </div>
 
+    <div id="tpls"></div>
     <div id="supps"></div>
     <div id="meals"></div>
   </section>
@@ -371,6 +377,12 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
     </div>
 
     <div class="card">
+      <h2>Repas habituels</h2>
+      <div id="sTpls"></div>
+      <p class="tiny" style="margin-top:10px">Depuis le journal, ouvre un repas déjà enregistré et touche « Enregistrer comme repas habituel ». Tu pourras ensuite lui associer des compléments ici.</p>
+    </div>
+
+    <div class="card">
       <h2>Compléments alimentaires</h2>
       <div id="sSupps"></div>
       <button class="btn sm" id="btnSuppAdd" style="width:100%;margin-top:9px">+ Ajouter un complément</button>
@@ -401,7 +413,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.9 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.10 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -442,6 +454,7 @@ const DEFAULTS = {
     lastExport: 0,
     remindAfter: 0,
     supps: [],
+    templates: [],
     goals: { kcal: 2200, prot: 130, carb: 240, fat: 73 },
     profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0 }
   },
@@ -822,6 +835,7 @@ function renderToday() {
   $('#dNext').style.visibility = curDate >= TODAY() ? 'hidden' : 'visible';
 
   backupBanner();
+  renderTpls();
   renderSupps();
 
   const list = entriesOf(curDate);
@@ -889,6 +903,49 @@ function esc(s) {
 $('#dPrev').onclick = () => { curDate = shiftD(curDate, -1); renderToday(); };
 $('#dNext').onclick = () => { if (curDate < TODAY()) { curDate = shiftD(curDate, 1); renderToday(); } };
 $('#dLbl').onclick = () => { curDate = TODAY(); renderToday(); };
+
+/* Un repas type est un modèle rejoué : il produit une entrée de journal ordinaire,
+   plus les prises de compléments associées. Rien n'est « lié » après coup — le repas
+   ajouté est modifiable et supprimable comme n'importe quel autre. */
+function renderTpls() {
+  const box = $('#tpls');
+  const list = S().templates || [];
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="card"><h2>Repas habituels</h2><div class="supps">' +
+    list.map(t => {
+      const s = sumItems(t.items);
+      const ns = (t.supps || []).length;
+      return '<span class="chip" data-tpl="' + esc(t.id) + '">' +
+        ((MEALS.find(m => m.id === t.meal) || {}).ico || '') + ' ' + esc(t.name) +
+        '<b class="n">' + r0(s.kcal) + ' kcal' + (ns ? ' · ' + ns + '💊' : '') + '</b></span>';
+    }).join('') + '</div></div>';
+}
+
+$('#tpls').onclick = e => {
+  const c = e.target.closest('[data-tpl]');
+  if (!c) return;
+  const t = (S().templates || []).find(x => x.id === c.dataset.tpl);
+  if (!t) return;
+
+  DB.entries.push({ id: uid(), ts: Date.now(), date: curDate, meal: t.meal, title: t.name,
+                    items: t.items.map(i => Object.assign({}, i)) });
+
+  // une prise déjà enregistrée ce jour-là n'est pas dupliquée
+  const deja = suppsOf(curDate).map(x => x.supp);
+  let ajoutes = 0, ignores = 0;
+  (t.supps || []).forEach(id => {
+    const sp = (S().supps || []).find(x => x.id === id);
+    if (!sp) return;
+    if (deja.indexOf(id) >= 0) { ignores++; return; }
+    DB.entries.push({ id: uid(), ts: Date.now(), date: curDate, meal: SUPP, supp: sp.id, title: sp.name,
+      items: [{ name: sp.name + (sp.dose ? ' · ' + sp.dose : ''), qty: 0,
+                kcal: r0(sp.kcal), prot: r0(sp.prot), carb: r0(sp.carb), fat: r0(sp.fat) }] });
+    ajoutes++;
+  });
+  save(); renderToday(); renderHistory();
+  toast(t.name + ' ajouté' + (ajoutes ? ' · ' + ajoutes + ' complément' + (ajoutes > 1 ? 's' : '') : '') +
+        (ignores ? ' (' + ignores + ' déjà pris)' : ''));
+};
 
 /* Une prise est une entrée de journal ordinaire, reliée au complément par `supp`.
    Toucher la pastille ajoute une dose, la croix retire la dernière. */
@@ -1016,6 +1073,7 @@ function openEditor(entry, ctx) {
     '<button class="btn sm gho" id="eAdd" style="width:100%;margin:2px 0 4px">+ Ajouter un aliment</button>' +
     '<div id="eTot"></div>' +
     '<button class="btn pri" id="eSave" style="margin-top:14px">' + (isNew ? 'Enregistrer le repas' : 'Enregistrer') + '</button>' +
+    '<button class="btn gho" id="eTpl" style="margin-top:9px">☆ Enregistrer comme repas habituel</button>' +
     (isNew ? '' : '<button class="btn dan gho" id="eDel" style="margin-top:9px">Supprimer ce repas</button>');
 
   sheet(isNew ? 'Vérifier le repas' : 'Modifier le repas', html, el => {
@@ -1070,6 +1128,24 @@ function openEditor(entry, ctx) {
         openEditor(Object.assign({}, entry, keep, { title: previous.plat, items: items }),
                    Object.assign({}, ctx, { error: 'Relance impossible — ' + err.message }));
       }
+    };
+
+    /* On utilise prompt() et non une feuille modale : sheet() ferme la précédente,
+       ce qui ferait disparaître le repas en cours d'édition. */
+    el.querySelector('#eTpl').onclick = () => {
+      const clean = items.filter(i => (i.name || '').trim() || i.kcal);
+      if (!clean.length) { toast('Ajoute au moins un aliment'); return; }
+      const nom = (prompt('Nom du repas habituel', el.querySelector('#eTitle').value || 'Petit-déjeuner') || '').trim();
+      if (!nom) return;
+      const t = {
+        id: uid(), name: nom.slice(0, 40), meal: el.querySelector('#eMeal').value,
+        items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
+                                 prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) })),
+        supps: []
+      };
+      S().templates = (S().templates || []).concat([t]);
+      save(); renderTpls();
+      toast('« ' + t.name + ' » enregistré. Ajoute-lui des compléments dans Réglages.');
     };
 
     el.querySelector('#eSave').onclick = () => {
@@ -1377,6 +1453,7 @@ function renderSettings() {
   const g = S().goals;
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#swPhotos').classList.toggle('on', !!S().keepPhotos);
+  renderTplsSettings();
   renderSuppsSettings();
   const bytes = new Blob([JSON.stringify(DB)]).size;
   const le = S().lastExport;
@@ -1437,6 +1514,95 @@ const SUPP_MODELES = [
   { name: 'Oméga 3', dose: '2 capsules', kcal: 20, prot: 0, carb: 0, fat: 2 },
   { name: 'Magnésium', dose: '1 comprimé', kcal: 0, prot: 0, carb: 0, fat: 0 }
 ];
+
+function renderTplsSettings() {
+  const box = $('#sTpls');
+  const list = S().templates || [];
+  box.innerHTML = list.length
+    ? list.map(t => {
+        const s = sumItems(t.items);
+        const ns = (t.supps || []).length;
+        return '<div class="entry" data-tplid="' + esc(t.id) + '" style="padding:10px 12px">' +
+          '<div class="grow"><div class="nm">' + esc(t.name) + '</div>' +
+          '<div class="dt">' + mealLabel(t.meal) + ' · ' + t.items.length + ' aliment' + (t.items.length > 1 ? 's' : '') +
+          (ns ? ' · ' + ns + ' complément' + (ns > 1 ? 's' : '') : '') + '</div></div>' +
+          '<div class="kc">' + r0(s.kcal) + '<small>kcal</small></div></div>';
+      }).join('')
+    : '<div class="empty" style="padding:14px 8px">Aucun repas habituel enregistré.</div>';
+}
+
+$('#sTpls').onclick = e => {
+  const row = e.target.closest('[data-tplid]');
+  if (row) editTpl((S().templates || []).find(x => x.id === row.dataset.tplid));
+};
+
+function editTpl(t) {
+  if (!t) return;
+  const items = t.items.map(o => Object.assign({}, o));
+  let picked = (t.supps || []).slice();
+  const supps = S().supps || [];
+  sheet('Repas habituel',
+    '<label class="f"><span>Nom</span><input class="in" id="tN" value="' + esc(t.name) + '"></label>' +
+    '<label class="f"><span>Moment</span><select class="in" id="tM">' +
+    MEALS.map(m => '<option value="' + m.id + '"' + (m.id === t.meal ? ' selected' : '') + '>' + m.ico + ' ' + m.label + '</option>').join('') +
+    '</select></label>' +
+    '<div id="tItems"></div>' +
+    '<button class="btn sm gho" id="tAdd" style="width:100%;margin:2px 0 4px">+ Ajouter un aliment</button>' +
+    '<div id="tTot"></div>' +
+    (supps.length
+      ? '<p class="tiny" style="margin:14px 0 7px">Compléments ajoutés en même temps</p><div class="supps" id="tSupps"></div>'
+      : '<p class="tiny" style="margin-top:14px">Déclare des compléments pour pouvoir les associer à ce repas.</p>') +
+    '<button class="btn pri" id="tOk" style="margin-top:14px">Enregistrer</button>' +
+    '<button class="btn dan gho" id="tDel" style="margin-top:9px">Supprimer ce repas habituel</button>',
+    el => {
+      const listEl = el.querySelector('#tItems'), totEl = el.querySelector('#tTot'), spEl = el.querySelector('#tSupps');
+      function paint() {
+        listEl.innerHTML = items.map(itemHtml).join('') ||
+          '<div class="empty" style="padding:14px">Aucun aliment.</div>';
+        totEl.innerHTML = totalsHtml(items);
+        if (spEl) spEl.innerHTML = supps.map(sp =>
+          '<span class="chip' + (picked.indexOf(sp.id) >= 0 ? ' on' : '') + '" data-sp="' + esc(sp.id) + '">' +
+          (picked.indexOf(sp.id) >= 0 ? '✓ ' : '') + esc(sp.name) + '</span>').join('');
+      }
+      paint();
+      listEl.addEventListener('input', ev => {
+        const x = ev.target;
+        if (x.dataset.k === undefined) return;
+        items[+x.dataset.i][x.dataset.k] = x.dataset.k === 'name' ? x.value : (x.value === '' ? 0 : r0(x.value));
+        totEl.innerHTML = totalsHtml(items);
+      });
+      listEl.addEventListener('click', ev => {
+        const d = ev.target.dataset.del;
+        if (d !== undefined) { items.splice(+d, 1); paint(); }
+      });
+      if (spEl) spEl.onclick = ev => {
+        const c = ev.target.closest('[data-sp]');
+        if (!c) return;
+        const i = picked.indexOf(c.dataset.sp);
+        if (i >= 0) picked.splice(i, 1); else picked.push(c.dataset.sp);
+        paint();
+      };
+      el.querySelector('#tAdd').onclick = () => { items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 }); paint(); };
+      el.querySelector('#tOk').onclick = () => {
+        const clean = items.filter(i => (i.name || '').trim() || i.kcal);
+        if (!clean.length) { toast('Ajoute au moins un aliment'); return; }
+        const o = { id: t.id, name: (el.querySelector('#tN').value || 'Repas type').trim().slice(0, 40),
+                    meal: el.querySelector('#tM').value,
+                    items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
+                                             prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) })),
+                    supps: picked.slice() };
+        S().templates = (S().templates || []).map(x => x.id === o.id ? o : x);
+        save(); closeSheet(); renderTplsSettings(); renderToday();
+        toast('Repas habituel enregistré');
+      };
+      el.querySelector('#tDel').onclick = () => {
+        if (!confirm('Supprimer « ' + t.name + ' » ? Les repas déjà enregistrés au journal sont conservés.')) return;
+        S().templates = (S().templates || []).filter(x => x.id !== t.id);
+        save(); closeSheet(); renderTplsSettings(); renderToday();
+        toast('Repas habituel supprimé');
+      };
+    });
+}
 
 function renderSuppsSettings() {
   const box = $('#sSupps');
@@ -1652,6 +1818,17 @@ function sanitizeBackup(inc) {
       model: txt(s.model, 120) || DEFAULTS.settings.model,
       models: (Array.isArray(s.models) ? s.models : []).slice(0, 200).map(m => txt(m, 120)),
       keepPhotos: s.keepPhotos !== false,
+      templates: (Array.isArray(s.templates) ? s.templates : []).slice(0, 60)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 40) || 'Repas type',
+          meal: MEALS.map(m => m.id).indexOf(x.meal) >= 0 ? x.meal : 'petit-dej',
+          items: (Array.isArray(x.items) ? x.items : []).filter(i => i && typeof i === 'object').map(i => ({
+            name: txt(i.name, 60) || 'Aliment', qty: num(i.qty), kcal: num(i.kcal),
+            prot: num(i.prot), carb: num(i.carb), fat: num(i.fat)
+          })),
+          supps: (Array.isArray(x.supps) ? x.supps : []).filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 30)
+        })),
       supps: (Array.isArray(s.supps) ? s.supps : []).slice(0, 60)
         .filter(x => x && typeof x === 'object').map(x => ({
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
@@ -1718,7 +1895,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.9');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.10');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
