@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.4</title>
+<title>Coach v1.5</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v1.5 — Bandeau de rappel de sauvegarde en tête du journal, affiché au-delà de trente jours
+           sans export et reportable d'une semaine ; date du dernier export conservée et
+           rappelée dans les réglages.
+
     v1.4 — Correction de l'échec d'analyse avec les modèles à raisonnement : le bloc <think>
            était pris pour la réponse. Raisonnement désormais masqué et sortie JSON forcée,
            avec repli automatique si le modèle refuse ces options ; extraction du JSON par
@@ -215,6 +219,11 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 @keyframes sp{to{transform:rotate(360deg)}}
 #loader p{font-size:14px;color:var(--dim);text-align:center;padding:0 30px}
 .err{background:#2a1518;border:1px solid #4a2229;color:#fca5a5;border-radius:12px;padding:12px;font-size:13px;margin-bottom:12px;word-break:break-word}
+.nag{display:flex;align-items:flex-start;gap:10px;background:#241d12;border:1px solid #4a3a1c;border-radius:14px;padding:11px 12px;margin-bottom:12px}
+.nag b{display:block;font-size:13.5px;font-weight:700;color:#fbbf24}
+.nag span{display:block;font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.4}
+.nag .btn{margin-top:1px}
+.nagX{color:var(--dim2);font-size:15px;padding:2px 2px 2px 0;flex:none;line-height:1}
 .raw{background:#0d1218;border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 12px;
   font:400 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
   white-space:pre-wrap;word-break:break-word;max-height:230px;overflow:auto}
@@ -231,6 +240,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
   <!-- ============ AUJOURD'HUI ============ -->
   <section id="view-today">
+    <div id="backupNag" class="hidden"></div>
     <div class="datenav">
       <button id="dPrev" aria-label="Jour précédent">‹</button>
       <div class="lbl grow" id="dLbl"></div>
@@ -342,7 +352,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.5 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -380,6 +390,8 @@ const DEFAULTS = {
     model: 'qwen/qwen3.6-27b',
     models: [],
     keepPhotos: true,
+    lastExport: 0,
+    remindAfter: 0,
     goals: { kcal: 2200, prot: 130, carb: 240, fat: 73 },
     profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0 }
   },
@@ -684,10 +696,39 @@ function normalise(j) {
    ========================================================================= */
 let curDate = TODAY();
 
+const DAY = 864e5;
+
+/* Rappel de sauvegarde. Les données ne vivent que dans ce navigateur : sans export,
+   une purge iOS ou un effacement des données de site emporte tout le suivi.
+   On ne sollicite pas un utilisateur qui débute : le décompte part du premier repas
+   enregistré tant qu'aucun export n'a eu lieu. */
+function backupBanner() {
+  const box = $('#backupNag');
+  if (!box) return;
+  const hide = () => { box.className = 'hidden'; box.innerHTML = ''; };
+  if (!DB.entries.length) return hide();
+
+  const ref = S().lastExport || Math.min.apply(null, DB.entries.map(e => e.ts));
+  const days = Math.floor((Date.now() - ref) / DAY);
+  if (days < 30 || Date.now() < (S().remindAfter || 0)) return hide();
+
+  box.className = 'nag';
+  box.innerHTML =
+    '<div class="grow"><b>Sauvegarde recommandée</b><span>' +
+    (S().lastExport
+      ? 'Dernier export il y a ' + days + ' jours.'
+      : 'Aucun export depuis ton premier repas, il y a ' + days + ' jours.') +
+    ' Ton suivi n\'existe que sur cet iPhone.</span></div>' +
+    '<button class="btn sm" id="nagGo">Exporter</button>' +
+    '<button class="nagX" id="nagLater" aria-label="Plus tard">✕</button>';
+}
+
 function renderToday() {
   $('#dLbl').innerHTML = frDate(curDate, true) +
     '<small>' + parseD(curDate).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + '</small>';
   $('#dNext').style.visibility = curDate >= TODAY() ? 'hidden' : 'visible';
+
+  backupBanner();
 
   const list = entriesOf(curDate);
   const t = sumEntries(list), g = S().goals;
@@ -753,6 +794,15 @@ function esc(s) {
 $('#dPrev').onclick = () => { curDate = shiftD(curDate, -1); renderToday(); };
 $('#dNext').onclick = () => { if (curDate < TODAY()) { curDate = shiftD(curDate, 1); renderToday(); } };
 $('#dLbl').onclick = () => { curDate = TODAY(); renderToday(); };
+
+$('#backupNag').onclick = e => {
+  if (e.target.closest('#nagGo')) exportJson();
+  else if (e.target.closest('#nagLater')) {
+    S().remindAfter = Date.now() + 7 * DAY;
+    save(); backupBanner();
+    toast('Rappel repoussé d\'une semaine');
+  }
+};
 
 $('#meals').onclick = e => {
   const row = e.target.closest('.entry');
@@ -1089,8 +1139,11 @@ function renderSettings() {
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#swPhotos').classList.toggle('on', !!S().keepPhotos);
   const bytes = new Blob([JSON.stringify(DB)]).size;
+  const le = S().lastExport;
   $('#storInfo').textContent = DB.entries.length + ' repas · ' + DB.weights.length + ' pesées · ' +
-    (bytes / 1024).toFixed(0) + ' Ko utilisés (limite ~5000 Ko)';
+    (bytes / 1024).toFixed(0) + ' Ko utilisés (limite ~5000 Ko)\n' +
+    'Dernière sauvegarde : ' + (le ? new Date(le).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'jamais');
+  $('#storInfo').style.whiteSpace = 'pre-line';
 }
 
 $('#sKey').oninput = e => { S().apiKey = e.target.value.trim(); save(); };
@@ -1196,8 +1249,8 @@ async function deliver(filename, text, mime) {
   const file = new File([text], filename, { type: mime });
   // Sur iPhone, la feuille de partage permet d'enregistrer dans Fichiers ou d'envoyer.
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: filename }); return; }
-    catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.share({ files: [file], title: filename }); return true; }
+    catch (e) { if (e && e.name === 'AbortError') return false; }
   }
   const url = URL.createObjectURL(file);
   const a = document.createElement('a');
@@ -1205,11 +1258,19 @@ async function deliver(filename, text, mime) {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
   toast('Fichier généré : ' + filename);
+  return true;
 }
 
-$('#btnExpJson').onclick = () => {
-  deliver('coach-' + TODAY() + '.json', JSON.stringify(DB, null, 2), 'application/json');
-};
+async function exportJson() {
+  const ok = await deliver('coach-' + TODAY() + '.json', JSON.stringify(DB, null, 2), 'application/json');
+  if (ok) {
+    S().lastExport = Date.now();
+    S().remindAfter = 0;
+    save(); backupBanner(); renderSettings();
+  }
+  return ok;
+}
+$('#btnExpJson').onclick = exportJson;
 
 $('#btnExpCsv').onclick = () => {
   const q = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
@@ -1275,7 +1336,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.4');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.5');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
