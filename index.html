@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.7</title>
+<title>Coach v1.8</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v1.8 — Jusqu'à trois photos par repas, réunies dans un composeur avant analyse et envoyées
+           en une seule requête. Consigne dédiée aux étiquettes et tableaux de valeurs
+           nutritionnelles, qui font autorité sur l'estimation visuelle, avec conversion
+           explicite depuis les valeurs pour 100 g. La relance avec correction porte sur
+           l'ensemble des photos.
+
     v1.7 — Champ de correction dans l'écran de vérification : on décrit ce que le modèle a mal
            identifié et on relance l'analyse. Les corrections sont cumulatives et l'état courant
            du repas, retouches manuelles comprises, est transmis au modèle. Disponible aussi
@@ -197,6 +203,13 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .g input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 2px;text-align:center;font-size:14px;outline:none;font-variant-numeric:tabular-nums}
 .item .g input:focus{border-color:var(--acc)}
 
+.tray{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;margin-bottom:11px;min-height:92px}
+.shot{position:relative;flex:none;width:92px;height:92px;border-radius:12px;overflow:hidden;background:var(--card);border:1px solid var(--line)}
+.shot img{width:100%;height:100%;object-fit:cover;display:block}
+.shot button{position:absolute;top:3px;right:3px;width:24px;height:24px;border-radius:50%;background:#000c;color:#fff;font-size:12px;line-height:24px;text-align:center;padding:0}
+.shot.empty2{display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--dim2);width:100%;border-style:dashed}
+.prevrow{display:flex;gap:7px;overflow-x:auto;margin-bottom:13px}
+.prevrow img{flex:none;width:118px;height:118px;object-fit:cover;border-radius:12px;background:var(--card)}
 .fix{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:11px 12px;margin-bottom:13px}
 .fix>b{display:block;font-size:12px;color:var(--dim);font-weight:700;margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px}
 .fix textarea{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:15px;outline:none;resize:none;margin-bottom:8px}
@@ -368,7 +381,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.7 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.8 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -571,9 +584,9 @@ function toJpeg(bmp, maxSide, q) {
 /* =========================================================================
    4. Appel de l'API Groq (vision)
    ========================================================================= */
-const PROMPT = `Tu es un nutritionniste. Analyse la photo de ce repas.
+const MAX_PHOTOS = 3;   // limite imposée par les modèles vision de Groq (3 images par requête)
 
-Réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise markdown, exactement à ce format :
+const PROMPT_REGLES = `Réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise markdown, exactement à ce format :
 {"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14}],"confiance":"haute","remarque":"une phrase courte"}
 
 Règles :
@@ -583,7 +596,30 @@ Règles :
 - nombres entiers uniquement, pas d'unité dans les nombres, pas d'intervalle ;
 - "confiance" vaut "haute", "moyenne" ou "basse" ;
 - tous les textes en français ;
-- si la photo ne contient aucun aliment, renvoie une liste "aliments" vide et explique dans "remarque".`;
+- si aucun aliment n'est identifiable, renvoie une liste "aliments" vide et explique dans "remarque".`;
+
+/* Consigne sur les étiquettes nutritionnelles. C'est le cas d'usage qui apporte le plus de
+   précision : une valeur lue sur l'emballage vaut infiniment mieux qu'une estimation à l'œil.
+   Le piège à désamorcer explicitement est que ces tableaux sont donnés pour 100 g. */
+const PROMPT_ETIQUETTES = `Si une photo montre une étiquette, un emballage ou un tableau de valeurs \
+nutritionnelles, ces valeurs FONT AUTORITÉ et remplacent toute estimation visuelle pour l'aliment concerné.
+Attention : ces tableaux sont presque toujours donnés pour 100 g ou 100 ml. Convertis-les à la quantité \
+réellement consommée, déduite des autres photos ou du poids net indiqué sur l'emballage. Ne crée pas de \
+ligne "étiquette" ou "emballage" dans la liste des aliments : l'étiquette décrit un aliment, elle n'en est pas un.`;
+
+const PROMPT_MULTI = `Les photos montrent toutes LE MÊME repas : angles différents, détails, ou emballages \
+des produits consommés. Ne compte jamais deux fois un aliment qui apparaît sur plusieurs photos.`;
+
+function promptPhotos(n) {
+  return 'Tu es un nutritionniste. Analyse ce repas à partir ' +
+    (n > 1 ? 'des ' + n + ' photos fournies.' : 'de la photo fournie.') + '\n\n' +
+    (n > 1 ? PROMPT_MULTI + '\n\n' : '') + PROMPT_ETIQUETTES + '\n\n' + PROMPT_REGLES;
+}
+
+function promptTexte(desc) {
+  return 'Tu es un nutritionniste. Estime la composition nutritionnelle de ce repas décrit par ' +
+    'l\'utilisateur : « ' + desc + ' ».\n\n' + PROMPT_REGLES;
+}
 
 /* Liste les objets JSON de premier niveau présents dans une chaîne, en tenant compte
    des accolades situées à l'intérieur des chaînes de caractères. */
@@ -677,7 +713,7 @@ async function groqTry(body, opts) {
    telle qu'elle figure à l'écran après les retouches éventuelles, puis la liste
    complète des corrections déjà demandées. */
 function correctionHint(previous, corrections) {
-  return 'Ton estimation précédente était :\n' + JSON.stringify(previous) +
+  return 'Indication de l\'utilisateur.\nTon estimation précédente était :\n' + JSON.stringify(previous) +
     '\n\nCorrections apportées par l\'utilisateur, à respecter impérativement :\n' +
     corrections.map((c, i) => (i + 1) + '. ' + c).join('\n') +
     '\n\nReprends l\'analyse complète en tenant compte de ces corrections. ' +
@@ -685,11 +721,12 @@ function correctionHint(previous, corrections) {
     'Réponds au même format JSON, sans commentaire.';
 }
 
-async function analysePhoto(dataUrl, hint) {
-  const content = [{ type: 'text', text: PROMPT + (hint ? '\n\nIndication de l\'utilisateur : ' + hint : '') },
-                   { type: 'image_url', image_url: { url: dataUrl } }];
+async function analysePhotos(dataUrls, hint) {
+  const imgs = dataUrls.slice(0, MAX_PHOTOS);
+  const content = [{ type: 'text', text: promptPhotos(imgs.length) + (hint ? '\n\n' + hint : '') }];
+  imgs.forEach(u => content.push({ type: 'image_url', image_url: { url: u } }));
   const raw = await groqTry({
-    model: S().model, temperature: 0.2, max_tokens: 2000,
+    model: S().model, temperature: 0.2, max_tokens: 2400,
     messages: [{ role: 'user', content: content }]
   }, JSON_OUT);
   return extractJson(raw);
@@ -698,8 +735,7 @@ async function analysePhoto(dataUrl, hint) {
 async function analyseText(desc) {
   const raw = await groqTry({
     model: S().model, temperature: 0.2, max_tokens: 2000,
-    messages: [{ role: 'user', content: PROMPT.replace('Analyse la photo de ce repas.',
-      'Estime la composition nutritionnelle de ce repas décrit par l\'utilisateur : « ' + desc + ' ».') }]
+    messages: [{ role: 'user', content: promptTexte(desc) }]
   }, JSON_OUT);
   return extractJson(raw);
 }
@@ -891,7 +927,11 @@ function openEditor(entry, ctx) {
     : '';
   const html =
     (ctx && ctx.error ? '<div class="err">' + esc(ctx.error) + '</div>' : '') +
-    (ctx && ctx.photo ? '<img class="prev" src="' + esc(ctx.photo) + '" alt="">' : '') +
+    (ctx && ctx.photos && ctx.photos.length
+      ? (ctx.photos.length > 1
+          ? '<div class="prevrow">' + ctx.photos.map(p => '<img src="' + esc(p) + '" alt="">').join('') + '</div>'
+          : '<img class="prev" src="' + esc(ctx.photos[0]) + '" alt="">')
+      : '') +
     (conf ? '<div style="margin-bottom:12px"><span class="conf ' + conf + '"><b></b>Confiance ' + conf + '</span>' +
       (ctx.remarque ? ' <span class="tiny">' + esc(ctx.remarque) + '</span>' : '') + '</div>' : '') +
     fixBox +
@@ -982,46 +1022,94 @@ function openEditor(entry, ctx) {
 }
 
 /* --- Photo --- */
+/* Photos en attente d'analyse. Chaque entrée : { big, thumb }. Vidée après analyse. */
+let pending = [];
+
+function renderTray() {
+  const el = $('#pTray');
+  if (!el) return;
+  el.innerHTML = pending.length
+    ? pending.map((p, i) =>
+        '<div class="shot"><img src="' + esc(p.thumb || p.big) + '" alt="">' +
+        '<button data-rm="' + i + '" aria-label="Retirer">✕</button></div>').join('')
+    : '<div class="shot empty2">Aucune photo</div>';
+  const full = pending.length >= MAX_PHOTOS;
+  $('#pCam').disabled = full;
+  $('#pLib').disabled = full;
+  $('#pCam').style.opacity = $('#pLib').style.opacity = full ? '.4' : '1';
+  const go = $('#pGo');
+  go.disabled = !pending.length;
+  go.style.opacity = pending.length ? '1' : '.4';
+  go.textContent = pending.length > 1 ? 'Analyser les ' + pending.length + ' photos' : 'Analyser la photo';
+  $('#pHint').textContent = full
+    ? 'Maximum atteint : le modèle accepte ' + MAX_PHOTOS + ' photos par analyse.'
+    : 'Jusqu\'à ' + MAX_PHOTOS + ' photos du même repas. Ajoute le tableau de valeurs nutritionnelles d\'un produit pour un calcul exact.';
+}
+
 $('#btnPhoto').onclick = () => {
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
-  sheet('Ajouter un repas', '<button class="btn pri" id="pCam">📷 Prendre une photo</button>' +
-    '<button class="btn" id="pLib" style="margin-top:9px">🖼 Choisir dans la photothèque</button>' +
-    '<p class="tiny" style="margin-top:12px;text-align:center">La photo est envoyée à Groq pour analyse, puis conservée uniquement sur cet appareil.</p>',
+  pending = [];
+  sheet('Photos du repas',
+    '<div id="pTray" class="tray"></div>' +
+    '<div class="grid2" style="margin-bottom:10px">' +
+    '<button class="btn sm" id="pCam" style="width:100%">📷 Photo</button>' +
+    '<button class="btn sm" id="pLib" style="width:100%">🖼 Photothèque</button></div>' +
+    '<button class="btn pri" id="pGo">Analyser la photo</button>' +
+    '<p class="tiny" id="pHint" style="margin-top:11px;text-align:center"></p>',
     el => {
-      el.querySelector('#pCam').onclick = () => { closeSheet(); $('#fPhoto').click(); };
-      el.querySelector('#pLib').onclick = () => { closeSheet(); $('#fLib').click(); };
+      el.querySelector('#pCam').onclick = () => { if (pending.length < MAX_PHOTOS) $('#fPhoto').click(); };
+      el.querySelector('#pLib').onclick = () => { if (pending.length < MAX_PHOTOS) $('#fLib').click(); };
+      el.querySelector('#pGo').onclick = () => { if (pending.length) runAnalysis(); };
+      el.querySelector('#pTray').onclick = ev => {
+        const b = ev.target.closest('[data-rm]');
+        if (b) { pending.splice(+b.dataset.rm, 1); renderTray(); }
+      };
+      renderTray();
     });
 };
-$('#fPhoto').onchange = e => handlePhoto(e.target);
-$('#fLib').onchange = e => handlePhoto(e.target);
 
-async function handlePhoto(input) {
+$('#fPhoto').onchange = e => addPhoto(e.target);
+$('#fLib').onchange = e => addPhoto(e.target);
+
+async function addPhoto(input) {
   const file = input.files && input.files[0];
   input.value = '';
-  if (!file) return;
-  loader(true, 'Préparation de la photo…');
+  if (!file || pending.length >= MAX_PHOTOS) return;
   try {
     const bmp = await loadBitmap(file);
-    const big = toJpeg(bmp, 1024, 0.82);
-    const thumb = S().keepPhotos ? toJpeg(bmp, 220, 0.6) : null;
+    pending.push({ big: toJpeg(bmp, 1024, 0.82), thumb: toJpeg(bmp, 220, 0.6) });
     if (bmp.close) bmp.close();
+    renderTray();
+  } catch (err) {
+    toast('Photo illisible');
+  }
+}
 
-    loader(true, 'Analyse du repas par l\'IA…\nCela prend quelques secondes.');
-    const res = normalise(await analysePhoto(big));
+async function runAnalysis() {
+  const shots = pending.slice();
+  closeSheet();
+  loader(true, shots.length > 1
+    ? 'Analyse des ' + shots.length + ' photos par l\'IA…\nCela prend quelques secondes.'
+    : 'Analyse du repas par l\'IA…\nCela prend quelques secondes.');
+  try {
+    const bigs = shots.map(s => s.big);
+    const res = normalise(await analysePhotos(bigs));
     loader(false);
+    pending = [];
 
     if (!res.items.length) {
-      toast(res.remarque || 'Aucun aliment reconnu sur la photo');
+      toast(res.remarque || 'Aucun aliment reconnu sur les photos');
       return;
     }
     const corrections = [];
     openEditor(
-      { id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(), title: res.titre, items: res.items, thumb: thumb || undefined },
-      { isNew: true, photo: thumb || big, confiance: res.confiance, remarque: res.remarque,
+      { id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(),
+        title: res.titre, items: res.items, thumb: S().keepPhotos ? shots[0].thumb : undefined },
+      { isNew: true, photos: shots.map(s => s.thumb), confiance: res.confiance, remarque: res.remarque,
         corrections: corrections,
         reanalyse: async (correction, previous) => {
           corrections.push(correction);
-          return normalise(await analysePhoto(big, correctionHint(previous, corrections)));
+          return normalise(await analysePhotos(bigs, correctionHint(previous, corrections)));
         } }
     );
   } catch (err) {
@@ -1461,7 +1549,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.7');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.8');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
