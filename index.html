@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.11</title>
+<title>Coach v1.12</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.12 — Modification et suppression des repas habituels et des compléments accessibles
+           directement depuis le journal, via un lien dans l'en-tête de leur carte.
+           L'éditeur existait déjà mais n'était atteignable que par les réglages.
+
    v1.11 — Nombre de photos par analyse ramené de 3 à 2, l'API Groq refusant la troisième
            contrairement à ce qu'annonce la fiche du modèle ; message explicite si l'API
            rejette une requête pour cause de nombre d'images.
@@ -218,6 +222,8 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .g input:focus{border-color:var(--acc)}
 
 .supps{display:flex;flex-wrap:wrap;gap:7px}
+.lnk{font-size:12px;font-weight:700;color:var(--acc-l);padding:5px 2px;letter-spacing:.2px}
+.lnk:active{opacity:.6}
 .chip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--line);
   border-radius:20px;padding:8px 13px;font-size:13.5px;font-weight:600;color:var(--dim)}
 .chip:active{opacity:.7}
@@ -417,7 +423,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.11 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -921,7 +927,9 @@ function renderTpls() {
   const box = $('#tpls');
   const list = S().templates || [];
   if (!list.length) { box.innerHTML = ''; return; }
-  box.innerHTML = '<div class="card"><h2>Repas habituels</h2><div class="supps">' +
+  box.innerHTML = '<div class="card"><div class="row between" style="margin-bottom:11px">' +
+    '<h2 style="margin:0">Repas habituels</h2>' +
+    '<button class="lnk" data-tpledit>✎ Modifier</button></div><div class="supps">' +
     list.map(t => {
       const s = sumItems(t.items);
       const ns = (t.supps || []).length;
@@ -931,7 +939,56 @@ function renderTpls() {
     }).join('') + '</div></div>';
 }
 
+/* Sélecteur ouvert depuis le journal : modifier un repas habituel doit être possible
+   là où on le voit, pas seulement au fond des réglages. */
+function pickTpl() {
+  const list = S().templates || [];
+  if (!list.length) return;
+  sheet('Modifier un repas habituel',
+    list.map(t => {
+      const s = sumItems(t.items), ns = (t.supps || []).length;
+      return '<div class="entry" data-pick="' + esc(t.id) + '">' +
+        '<div class="grow"><div class="nm">' + esc(t.name) + '</div>' +
+        '<div class="dt">' + mealLabel(t.meal) + ' · ' + t.items.length + ' aliment' + (t.items.length > 1 ? 's' : '') +
+        (ns ? ' · ' + ns + ' complément' + (ns > 1 ? 's' : '') : '') + '</div></div>' +
+        '<div class="kc">' + r0(s.kcal) + '<small>kcal</small></div></div>';
+    }).join('') +
+    '<p class="tiny" style="margin-top:10px;text-align:center">Touche un repas pour en changer le contenu, les compléments associés, ou le supprimer.</p>',
+    el => {
+      el.onclick = ev => {
+        const r = ev.target.closest('[data-pick]');
+        if (!r) return;
+        const t = (S().templates || []).find(x => x.id === r.dataset.pick);
+        closeSheet();
+        editTpl(t);
+      };
+    });
+}
+
+function pickSupp() {
+  const list = S().supps || [];
+  if (!list.length) return;
+  sheet('Modifier un complément',
+    list.map(sp =>
+      '<div class="entry" data-pick="' + esc(sp.id) + '">' +
+      '<div class="grow"><div class="nm">' + esc(sp.name) + '</div>' +
+      '<div class="dt">' + (sp.dose ? esc(sp.dose) : 'dose non précisée') +
+      (sp.kcal || sp.prot || sp.carb || sp.fat ? ' · ' + r0(sp.kcal) + ' kcal' : ' · sans apport') +
+      '</div></div><span class="tiny">modifier ›</span></div>').join('') +
+    '<p class="tiny" style="margin-top:10px;text-align:center">Les prises déjà enregistrées sont conservées quoi qu\'il arrive.</p>',
+    el => {
+      el.onclick = ev => {
+        const r = ev.target.closest('[data-pick]');
+        if (!r) return;
+        const sp = (S().supps || []).find(x => x.id === r.dataset.pick);
+        closeSheet();
+        editSupp(sp);
+      };
+    });
+}
+
 $('#tpls').onclick = e => {
+  if (e.target.closest('[data-tpledit]')) { pickTpl(); return; }
   const c = e.target.closest('[data-tpl]');
   if (!c) return;
   const t = (S().templates || []).find(x => x.id === c.dataset.tpl);
@@ -969,8 +1026,9 @@ function renderSupps() {
   const s = sumEntries(taken);
   box.innerHTML = '<div class="card"><div class="row between" style="margin-bottom:11px">' +
     '<h2 style="margin:0">Compléments</h2>' +
-    '<span class="tiny">' + taken.length + ' prise' + (taken.length > 1 ? 's' : '') +
-    (s.kcal ? ' · ' + r0(s.kcal) + ' kcal' : '') + '</span></div><div class="supps">' +
+    '<span class="row" style="gap:11px"><span class="tiny">' + taken.length + ' prise' + (taken.length > 1 ? 's' : '') +
+    (s.kcal ? ' · ' + r0(s.kcal) + ' kcal' : '') + '</span>' +
+    '<button class="lnk" data-spedit>✎</button></span></div><div class="supps">' +
     list.map(sp => {
       const n = taken.filter(e => e.supp === sp.id).length;
       return '<span class="chip' + (n ? ' on' : '') + '" data-add="' + esc(sp.id) + '">' +
@@ -982,6 +1040,7 @@ function renderSupps() {
 }
 
 $('#supps').onclick = e => {
+  if (e.target.closest('[data-spedit]')) { pickSupp(); return; }
   const del = e.target.closest('[data-del]');
   if (del) {
     const last = suppsOf(curDate).filter(x => x.supp === del.dataset.del).sort((a, b) => b.ts - a.ts)[0];
@@ -1602,13 +1661,13 @@ function editTpl(t) {
                                              prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) })),
                     supps: picked.slice() };
         S().templates = (S().templates || []).map(x => x.id === o.id ? o : x);
-        save(); closeSheet(); renderTplsSettings(); renderToday();
+        save(); closeSheet(); renderTplsSettings(); renderToday(); renderHistory();
         toast('Repas habituel enregistré');
       };
       el.querySelector('#tDel').onclick = () => {
         if (!confirm('Supprimer « ' + t.name + ' » ? Les repas déjà enregistrés au journal sont conservés.')) return;
         S().templates = (S().templates || []).filter(x => x.id !== t.id);
-        save(); closeSheet(); renderTplsSettings(); renderToday();
+        save(); closeSheet(); renderTplsSettings(); renderToday(); renderHistory();
         toast('Repas habituel supprimé');
       };
     });
@@ -1905,7 +1964,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.11');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.12');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
