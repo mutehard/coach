@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.14</title>
+<title>Coach v1.15</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.15 — Mascotte redessinée : un smiley à bras, plus lisible que l'haltère de la v1.14.
+           Le teint passe du grisâtre au hâlé et les bras s'épaississent en continu avec
+           l'avancement de la journée ; lunettes de soleil et pose de body-builder à
+           l'objectif, moue gênée et goutte au front en cas de dépassement.
+
    v1.14 — Refonte visuelle motivante : mascotte haltère à quatre humeurs, message du coach
            qui suit l'avancement de la journée, série de jours consécutifs, coche et halo sur
            une macro atteinte, bandeau de félicitations une fois par jour à l'objectif, et
@@ -475,7 +480,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.14 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.15 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -902,7 +907,7 @@ function coachState(t, g, nb) {
     return { mood: 'motive', t: 'Protéines validées', s: 'Il te reste ' + resteK + ' kcal à placer. Continue.' };
 
   if (pk > 1.15)
-    return { mood: 'content', t: 'Journée copieuse', s: 'Ça arrive, et ça compte moins que la régularité.' };
+    return { mood: 'gene', t: 'Journée copieuse', s: 'Ça arrive, et ça compte moins que la régularité.' };
 
   if (pk >= 0.75)
     return { mood: 'motive', t: 'Dernière ligne droite', s: resteP ? 'Encore ' + resteP + ' g de protéines pour valider.' : 'Tu y es presque, tiens bon.' };
@@ -931,7 +936,7 @@ function renderCoach(t, g, nb) {
   const c = coachState(t, g, nb);
   const st = streak();
   $('#coach').innerHTML =
-    '<div class="av bob">' + avatarSvg(c.mood) + '</div>' +
+    '<div class="av bob">' + avatarSvg(c.mood, g.kcal > 0 ? t.kcal / g.kcal : 0) + '</div>' +
     '<div class="msg grow"><b>' + esc(c.t) + '</b><span>' + esc(c.s) + '</span>' +
     (st > 1 ? '<span class="streak">🔥 ' + st + ' jours de suite</span>' : '') + '</div>';
   return c;
@@ -944,7 +949,7 @@ function celebrate(c) {
   if (c.mood !== 'champion' || curDate !== TODAY()) { box.innerHTML = ''; return; }
   if (S().lastCeleb === curDate) { box.innerHTML = ''; return; }
   S().lastCeleb = curDate; save();
-  box.innerHTML = '<div class="celeb"><div class="av">' + avatarSvg('champion') + '</div>' +
+  box.innerHTML = '<div class="celeb"><div class="av">' + avatarSvg('champion', 1) + '</div>' +
     '<div><b>Objectif du jour atteint 💪</b><span>Belle journée de travail. On remet ça demain.</span></div>' +
     '<button class="x" data-celebx aria-label="Fermer">✕</button></div>';
   const av = $('#coach .av');
@@ -1056,70 +1061,82 @@ function rawBlock(err) {
    varier que le visage et la position des bras — le corps reste identique pour
    que le personnage reste reconnaissable d'un état à l'autre.
    --------------------------------------------------------------------------- */
-function avatarSvg(mood) {
-  const champion = mood === 'champion';
-  const motive = champion || mood === 'motive';
-  const rim = { repos: '#5c6b80', content: '#10b981', motive: '#10b981', champion: '#fbbf24' }[mood] || '#10b981';
-  const M = (x) => 140 - x;   // symétrie horizontale
+/* ---------------------------------------------------------------------------
+   Mascotte : un smiley à bras, qui se transforme au fil de la journée.
+   `t` va de 0 à 1 selon l'avancement vers l'objectif calorique et pilote
+   trois choses en continu : le teint (grisâtre -> hâlé), l'épaisseur des bras
+   (fins -> congestionnés) et leur position (ballants -> levés).
+   Trois états particuliers se superposent : normal, champion (lunettes de
+   soleil et pose de body-builder) et gêné (dépassement).
+   --------------------------------------------------------------------------- */
+function teint(t) {
+  const stops = [[0, [150, 160, 172]], [0.5, [226, 190, 150]], [1, [238, 166, 98]]];
+  t = clamp(t, 0, 1);
+  let i = t <= 0.5 ? 0 : 1;
+  const a = stops[i], b = stops[i + 1];
+  const k = (t - a[0]) / (b[0] - a[0]);
+  return 'rgb(' + a[1].map((v, j) => Math.round(v + (b[1][j] - v) * k)).join(',') + ')';
+}
 
-  // bras : détendus le long du corps au repos, levés et gonflés en action
-  const brasG = motive ? 'M30,42 C18,32 14,20 22,10' : 'M24,56 C10,60 4,68 6,79';
-  const poingG = motive ? [22, 9] : [6, 81];
-  const bicepsG = motive ? [20, 26] : null;
+function avatarSvg(mood, t) {
+  const champion = mood === 'champion';
+  const gene = mood === 'gene';
+  // gêné : bras à demi levés plutôt qu'en pose de force, la posture doit être penaude
+  t = champion ? 1 : gene ? Math.min(clamp(t || 0, 0, 1), 0.45) : clamp(t || 0, 0, 1);
+  const peau = champion ? teint(1) : gene ? teint(0.75) : teint(t);
+  const ombre = champion ? 'rgba(150,80,20,.28)' : 'rgba(90,100,115,.22)';
+  const M = x => 120 - x;
+
+  // bras : interpolation entre ballant (t=0) et double biceps (t=1).
+  // Cinq points, deux quadratiques : épaule, coude, avant-bras, poing — la flexion
+  // doit dégager la tête, sans quoi les bras se lisent comme des oreilles.
+  const A = [[34, 78], [31, 89], [29, 97], [28, 102], [28, 106]];
+  const B = [[34, 72], [14, 72], [12, 57], [10, 41], [25, 30]];
+  const P = A.map((q, i) => [q[0] + (B[i][0] - q[0]) * t, q[1] + (B[i][1] - q[1]) * t]);
+  const f = q => q[0].toFixed(1) + ',' + q[1].toFixed(1);
+  const fM = q => M(q[0]).toFixed(1) + ',' + q[1].toFixed(1);
+  const d = 'M' + f(P[0]) + ' Q' + f(P[1]) + ' ' + f(P[2]) + ' Q' + f(P[3]) + ' ' + f(P[4]);
+  const dM = 'M' + fM(P[0]) + ' Q' + fM(P[1]) + ' ' + fM(P[2]) + ' Q' + fM(P[3]) + ' ' + fM(P[4]);
+  const ep = (4.5 + 10 * t).toFixed(1);
+  const bic = 2 + 10.5 * t;
+  const bx = (P[2][0] + P[4][0]) / 2, by = (P[2][1] + P[4][1]) / 2;
 
   const bras =
-    '<path d="' + brasG + '" stroke="#e9eff6" stroke-width="9" fill="none" stroke-linecap="round"/>' +
-    '<path d="' + brasG.replace(/(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)/g, (m, x, y) => M(+x) + ',' + y) +
-    '" stroke="#e9eff6" stroke-width="9" fill="none" stroke-linecap="round"/>' +
-    (bicepsG ? '<circle cx="' + bicepsG[0] + '" cy="' + bicepsG[1] + '" r="7.5" fill="#e9eff6"/>' +
-               '<circle cx="' + M(bicepsG[0]) + '" cy="' + bicepsG[1] + '" r="7.5" fill="#e9eff6"/>' : '') +
-    '<circle cx="' + poingG[0] + '" cy="' + poingG[1] + '" r="8" fill="#e9eff6"/>' +
-    '<circle cx="' + M(poingG[0]) + '" cy="' + poingG[1] + '" r="8" fill="#e9eff6"/>';
+    '<path d="' + d + '" stroke="' + peau + '" stroke-width="' + ep + '" fill="none" stroke-linecap="round"/>' +
+    '<path d="' + dM + '" stroke="' + peau + '" stroke-width="' + ep + '" fill="none" stroke-linecap="round"/>' +
+    (t > 0.28
+      ? '<circle cx="' + bx.toFixed(1) + '" cy="' + by.toFixed(1) + '" r="' + bic.toFixed(1) + '" fill="' + peau + '"/>' +
+        '<circle cx="' + M(bx).toFixed(1) + '" cy="' + by.toFixed(1) + '" r="' + bic.toFixed(1) + '" fill="' + peau + '"/>'
+      : '') +
+    '<circle cx="' + P[4][0].toFixed(1) + '" cy="' + P[4][1].toFixed(1) + '" r="' + (4.5 + 3.5 * t).toFixed(1) + '" fill="' + peau + '"/>' +
+    '<circle cx="' + M(P[4][0]).toFixed(1) + '" cy="' + P[4][1].toFixed(1) + '" r="' + (4.5 + 3.5 * t).toFixed(1) + '" fill="' + peau + '"/>';
 
-  const yeux = champion
-    ? '<path d="M52,64 q7,-9 14,0" stroke="#101820" stroke-width="4.2" fill="none" stroke-linecap="round"/>' +
-      '<path d="M74,64 q7,-9 14,0" stroke="#101820" stroke-width="4.2" fill="none" stroke-linecap="round"/>'
-    : '<circle cx="59" cy="62" r="5.2" fill="#101820"/><circle cx="81" cy="62" r="5.2" fill="#101820"/>' +
-      '<circle cx="60.9" cy="60.1" r="1.8" fill="#fff"/><circle cx="82.9" cy="60.1" r="1.8" fill="#fff"/>';
-
-  const bouche = champion
-    ? '<path d="M60,73 q10,12 20,0 q-10,4 -20,0 z" fill="#101820"/>'
-    : motive
-      ? '<path d="M61,73 q9,9 18,0" stroke="#101820" stroke-width="4" fill="none" stroke-linecap="round"/>'
-      : mood === 'content'
-        ? '<path d="M63,74 q7,6 14,0" stroke="#101820" stroke-width="3.6" fill="none" stroke-linecap="round"/>'
-        : '<path d="M64,76 h12" stroke="#101820" stroke-width="3.6" fill="none" stroke-linecap="round"/>';
+  const visage = champion
+    ? // lunettes de soleil
+      '<g><rect x="34" y="44" width="22" height="15" rx="7" fill="#101820"/>' +
+      '<rect x="64" y="44" width="22" height="15" rx="7" fill="#101820"/>' +
+      '<rect x="54" y="49" width="12" height="4" rx="2" fill="#101820"/>' +
+      '<path d="M38,48 l5,0 -6,7 -3,0 z" fill="#fff" opacity=".35"/>' +
+      '<path d="M68,48 l5,0 -6,7 -3,0 z" fill="#fff" opacity=".35"/></g>' +
+      '<path d="M46,68 q14,15 28,0 q-14,5 -28,0 z" fill="#101820"/>'
+    : gene
+      ? '<path d="M42,50 q6,-5 12,0 M66,50 q6,-5 12,0" stroke="#101820" stroke-width="3.6" fill="none" stroke-linecap="round"/>' +
+        '<path d="M50,70 q5,-5 9,0 q4,5 9,0" stroke="#101820" stroke-width="3.4" fill="none" stroke-linecap="round"/>' +
+        '<path d="M92,24 q6,10 0,13 q-6,-3 0,-13 z" fill="#7dd3fc"/>'
+      : '<circle cx="48" cy="52" r="4.6" fill="#101820"/><circle cx="72" cy="52" r="4.6" fill="#101820"/>' +
+        '<circle cx="49.6" cy="50.4" r="1.6" fill="#fff"/><circle cx="73.6" cy="50.4" r="1.6" fill="#fff"/>' +
+        '<path d="M47,66 q13,' + (3 + 11 * t).toFixed(1) + ' 26,0" stroke="#101820" stroke-width="3.8" fill="none" stroke-linecap="round"/>';
 
   const etincelles = champion
-    ? '<g fill="#fbbf24"><path d="M70,4 l2.2,5 5,2.2 -5,2.2 -2.2,5 -2.2,-5 -5,-2.2 5,-2.2 z"/>' +
-      '<circle cx="8" cy="52" r="2.8"/><circle cx="132" cy="52" r="2.8"/></g>'
+    ? '<g fill="#fbbf24"><path d="M60,4 l2,4.6 4.6,2 -4.6,2 -2,4.6 -2,-4.6 -4.6,-2 4.6,-2 z"/>' +
+      '<circle cx="12" cy="24" r="2.4"/><circle cx="108" cy="24" r="2.4"/></g>'
     : '';
 
-  // basket : semelle blanche débordante, tige verte
-  const basket = (x, flip) =>
-    '<g transform="translate(' + x + ',102)' + (flip ? ' scale(-1,1)' : '') + '">' +
-    '<path d="M0,0 q0,-4 5,-4 h5 q3,0 4,3 l2,5 q1,2 4,3 l5,2 q4,1 4,5 v1 q0,2 -2,2 H-2 q-3,0 -3,-3 z" fill="#10b981"/>' +
-    '<rect x="-6" y="11" width="38" height="6" rx="3" fill="#e9eff6"/></g>';
-
-  return '<svg viewBox="0 0 140 130" xmlns="http://www.w3.org/2000/svg">' +
-    '<defs><linearGradient id="pl" x1="0" y1="0" x2="0" y2="1">' +
-    '<stop offset="0" stop-color="#46566a"/><stop offset="1" stop-color="#232e3b"/></linearGradient></defs>' +
-    etincelles + bras +
-    // jambes, bien écartées pour que les baskets ne se touchent pas
-    '<path d="M60,84 L48,101 M80,84 L92,101" stroke="#e9eff6" stroke-width="9" stroke-linecap="round"/>' +
-    basket(34, false) + basket(106, true) +
-    // barre centrale : c'est elle qui porte le visage
-    '<rect x="34" y="52" width="72" height="34" rx="16" fill="#e9eff6"/>' +
-    // disques de l'haltère, posés par-dessus la barre
-    '<rect x="14" y="34" width="26" height="62" rx="9" fill="url(#pl)"/>' +
-    '<rect x="100" y="34" width="26" height="62" rx="9" fill="url(#pl)"/>' +
-    '<rect x="19" y="39" width="16" height="52" rx="6" fill="none" stroke="#5f7186" stroke-width="2" opacity=".55"/>' +
-    '<rect x="105" y="39" width="16" height="52" rx="6" fill="none" stroke="#5f7186" stroke-width="2" opacity=".55"/>' +
-    // le visage vient au-dessus de tout
-    '<rect x="40" y="52" width="60" height="34" rx="15" fill="#e9eff6"/>' +
-    '<rect x="40" y="52" width="60" height="34" rx="15" fill="none" stroke="' + rim + '" stroke-width="2.5" opacity=".6"/>' +
-    yeux + bouche +
-    '</svg>';
+  return '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">' + etincelles +
+    '<g transform="rotate(' + (gene ? -7 : 0) + ' 60 58)">' + bras +
+    '<circle cx="60" cy="58" r="32" fill="' + peau + '"/>' +
+    '<circle cx="60" cy="58" r="32" fill="none" stroke="' + ombre + '" stroke-width="2"/>' +
+    visage + '</g></svg>';
 }
 
 function esc(s) {
@@ -2315,7 +2332,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.14');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.15');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
