@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.16</title>
+<title>Coach v2.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,13 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.0 — Suivi de l'hydratation. Objectif calculé depuis le profil (30 ml par kilo, majoré
+           selon l'activité), carte dédiée avec ajouts rapides et quantité libre, prise en
+           compte automatique des boissons reconnues sur les photos via un champ
+           hydratation_ml renvoyé par le modèle, graphique dans l'historique, colonne dans
+           l'export CSV. Seuls les liquides comptent : l'eau des aliments solides est
+           volontairement exclue, l'objectif porte donc sur les boissons.
+
    v1.16 — Rappel de pesée hebdomadaire en tête du journal au-delà de sept jours sans pesée,
            avec saisie et enregistrement directement dans le bandeau, et report de deux jours.
 
@@ -181,6 +188,10 @@ h1,h2,h3,p{margin:0}
 
 .macro .hd b .ok{color:var(--acc-l);font-size:11px;margin-left:4px}
 .bar i.full{box-shadow:0 0 9px currentColor}
+.bar.big{height:12px;border-radius:6px}
+.bar.big i{border-radius:6px;background:linear-gradient(90deg,#38bdf8,#0ea5e9)}
+.hydra .tot{font-size:14px;font-weight:700;color:var(--txt)}
+.chip.water{background:#12232e;border-color:#1e4257;color:#7dd3fc}
 
 .ringwrap{display:flex;align-items:center;gap:18px}
 .ring{position:relative;width:118px;height:118px;flex:none}
@@ -381,6 +392,8 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       </div>
     </div>
 
+    <div id="hydra"></div>
+
     <div class="actions">
       <button class="btn pri" id="btnPhoto">📷 Photo du repas</button>
       <button class="btn sm" id="btnManual" style="flex:none;padding:14px 16px">✍️</button>
@@ -402,6 +415,10 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
     <div class="card">
       <h2>Calories par jour</h2>
       <div id="chartKcal"></div>
+    </div>
+    <div class="card">
+      <h2>Hydratation par jour</h2>
+      <div id="chartWater"></div>
     </div>
     <div class="card">
       <div class="row between" style="margin-bottom:12px">
@@ -443,6 +460,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
         <label class="f"><span>Protéines (g)</span><input class="in" id="gProt" inputmode="numeric"></label>
         <label class="f"><span>Glucides (g)</span><input class="in" id="gCarb" inputmode="numeric"></label>
         <label class="f"><span>Lipides (g)</span><input class="in" id="gFat" inputmode="numeric"></label>
+        <label class="f"><span>Hydratation (ml)</span><input class="in" id="gWater" inputmode="numeric"></label>
       </div>
       <button class="btn sm" id="btnCalc" style="width:100%">🧮 Calculer à partir de mon profil</button>
     </div>
@@ -491,7 +509,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.16 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -535,7 +553,7 @@ const DEFAULTS = {
     supps: [],
     templates: [],
     foods: [],
-    goals: { kcal: 2200, prot: 130, carb: 240, fat: 73 },
+    goals: { kcal: 2200, prot: 130, carb: 240, fat: 73, water: 2500 },
     profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0 }
   },
   entries: [],
@@ -599,6 +617,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
    ainsi dans les totaux, l'historique, l'export et les sauvegardes sans code dédié,
    mais ne s'affichent pas dans la liste des repas — ils ont leur propre carte. */
 const SUPP = 'complement';
+const DRINK = 'boisson';   // ajouts d'eau manuels : comptés dans l'hydratation, hors liste des repas
 
 const MEALS = [
   { id: 'petit-dej', label: 'Petit-déjeuner', ico: '☕' },
@@ -607,8 +626,9 @@ const MEALS = [
   { id: 'collation', label: 'Collation', ico: '🍎' }
 ];
 
-const ALL_MEALS = MEALS.map(m => m.id).concat([SUPP]);
-const mealLabel = id => id === SUPP ? 'Complément' : ((MEALS.find(m => m.id === id) || {}).label || id);
+const ALL_MEALS = MEALS.map(m => m.id).concat([SUPP, DRINK]);
+const mealLabel = id => id === SUPP ? 'Complément' : id === DRINK ? 'Boisson'
+  : ((MEALS.find(m => m.id === id) || {}).label || id);
 
 function dstr(d) {
   const z = new Date(d.getTime() - d.getTimezoneOffset() * 6e4);
@@ -664,8 +684,9 @@ function loader(on, msg) {
 function sumItems(items) {
   return (items || []).reduce((a, i) => ({
     kcal: a.kcal + (+i.kcal || 0), prot: a.prot + (+i.prot || 0),
-    carb: a.carb + (+i.carb || 0), fat: a.fat + (+i.fat || 0)
-  }), { kcal: 0, prot: 0, carb: 0, fat: 0 });
+    carb: a.carb + (+i.carb || 0), fat: a.fat + (+i.fat || 0),
+    water: a.water + (+i.water || 0)
+  }), { kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 });
 }
 function sumEntries(entries) {
   return sumItems(entries.reduce((a, e) => a.concat(e.items || []), []));
@@ -712,13 +733,16 @@ function toJpeg(bmp, maxSide, q) {
 const MAX_PHOTOS = 2;
 
 const PROMPT_REGLES = `Réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise markdown, exactement à ce format :
-{"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14}],"confiance":"haute","remarque":"une phrase courte"}
+{"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14,"hydratation_ml":0}],"confiance":"haute","remarque":"une phrase courte"}
 
 Règles :
 - une ligne par aliment identifiable (viande, féculent, légume, sauce, boisson, pain...) ;
 - estime la portion visible en grammes (ou en millilitres pour un liquide) en te servant des repères de taille de l'assiette et des couverts ;
 - les valeurs kcal, proteines_g, glucides_g et lipides_g correspondent à la quantité estimée, PAS à 100 g ;
 - nombres entiers uniquement, pas d'unité dans les nombres, pas d'intervalle ;
+- "hydratation_ml" : volume de liquide RÉELLEMENT BU, en millilitres. Un café, un thé, une infusion, \
+un verre d'eau, un jus, un soda, un bouillon ou une soupe comptent pour leur volume estimé. Le café et le thé \
+comptent en entier, ils ne déshydratent pas. Un aliment solide vaut 0, même s'il contient de l'eau ;
 - "confiance" vaut "haute", "moyenne" ou "basse" ;
 - tous les textes en français ;
 - si aucun aliment n'est identifiable, renvoie une liste "aliments" vide et explique dans "remarque".`;
@@ -878,7 +902,8 @@ function normalise(j) {
     items: arr.map(a => ({
       name: String(a.nom || 'Aliment').slice(0, 50),
       qty: r0(a.quantite_g), kcal: r0(a.kcal),
-      prot: r0(a.proteines_g), carb: r0(a.glucides_g), fat: r0(a.lipides_g)
+      prot: r0(a.proteines_g), carb: r0(a.glucides_g), fat: r0(a.lipides_g),
+      water: r0(a.hydratation_ml)
     }))
   };
 }
@@ -902,6 +927,7 @@ function streak() {
 /* Message du coach. Deux règles de fond : ne jamais culpabiliser un dépassement,
    et toujours proposer la prochaine action plutôt que de commenter le passé. */
 function coachState(t, g, nb) {
+  const ph = g.water > 0 ? t.water / g.water : 1;
   const pk = g.kcal > 0 ? t.kcal / g.kcal : 0;
   const pp = g.prot > 0 ? t.prot / g.prot : 0;
   const h = new Date().getHours();
@@ -913,7 +939,9 @@ function coachState(t, g, nb) {
     : { mood: 'repos', t: 'Rien d\'enregistré', s: 'Une photo suffit pour lancer la journée.' };
 
   if (pk >= 0.9 && pk <= 1.1 && pp >= 1)
-    return { mood: 'champion', t: 'Objectif atteint', s: 'Calories dans la cible et protéines validées. Du travail propre.' };
+    return ph >= 1
+      ? { mood: 'champion', t: 'Journée parfaite', s: 'Calories, protéines et hydratation : tout y est.' }
+      : { mood: 'champion', t: 'Objectif atteint', s: 'Reste ' + r0(g.water - t.water) + ' ml à boire pour boucler la journée.' };
 
   if (pp >= 1 && pk < 0.9)
     return { mood: 'motive', t: 'Protéines validées', s: 'Il te reste ' + resteK + ' kcal à placer. Continue.' };
@@ -923,6 +951,9 @@ function coachState(t, g, nb) {
 
   if (pk >= 0.75)
     return { mood: 'motive', t: 'Dernière ligne droite', s: resteP ? 'Encore ' + resteP + ' g de protéines pour valider.' : 'Tu y es presque, tiens bon.' };
+
+  if (pk >= 0.5 && ph < 0.4 && h >= 14)
+    return { mood: 'motive', t: 'Pense à boire', s: 'Seulement ' + r0(t.water) + ' ml sur ' + r0(g.water) + ' ml aujourd\'hui.' };
 
   if (pk >= 0.5)
     return { mood: 'motive', t: 'Plus de la moitié', s: 'Le rythme est bon, ne lâche rien.' };
@@ -1056,6 +1087,7 @@ function renderToday() {
   const left = r0(g.kcal - t.kcal);
   $('#ringSub').textContent = left >= 0 ? ('reste ' + left) : ('+' + (-left) + ' kcal');
 
+  renderHydra(t, g);
   const c = renderCoach(t, g, list.length);
   celebrate(c);
 
@@ -1075,7 +1107,7 @@ function renderToday() {
 
   // repas
   const box = $('#meals');
-  const meals = list.filter(e => e.meal !== SUPP);
+  const meals = list.filter(e => e.meal !== SUPP && e.meal !== DRINK);
   if (!meals.length) {
     box.innerHTML = '<div class="card empty"><span class="ico">🍽</span>Aucun repas enregistré.<br>' +
       'Prends ton assiette en photo pour commencer.</div>';
@@ -1345,6 +1377,52 @@ $('#tpls').onclick = e => {
 /* Une prise est une entrée de journal ordinaire, reliée au complément par `supp`.
    Toucher la pastille ajoute une dose, la croix retire la dernière. */
 function suppsOf(date) { return entriesOf(date).filter(e => e.meal === SUPP); }
+
+/* Hydratation. Seuls les LIQUIDES comptent : c'est ce sur quoi on peut agir, et c'est
+   la seule mesure dont l'estimation reste fiable. L'eau des aliments solides, environ
+   20 à 30 % des apports totaux, est délibérément hors du compteur — l'objectif est donc
+   un objectif de boissons, pas d'eau totale. */
+function renderHydra(t, g) {
+  const box = $('#hydra');
+  if (!box) return;
+  const goal = g.water || 0;
+  if (!goal) { box.innerHTML = ''; return; }
+  const pct = clamp(t.water / goal, 0, 1);
+  const plein = t.water >= goal;
+  const manuels = entriesOf(curDate).filter(e => e.meal === DRINK).length;
+  box.innerHTML = '<div class="card hydra"><div class="row between" style="margin-bottom:10px">' +
+    '<h2 style="margin:0">💧 Hydratation</h2>' +
+    '<span class="tiny"><span class="tot">' + r0(t.water) + '</span> / ' + r0(goal) + ' ml' +
+    (plein ? ' <span style="color:var(--acc-l)">✓</span>' : '') + '</span></div>' +
+    '<div class="bar big"><i class="' + (plein ? 'full' : '') + '" style="width:' + (pct * 100).toFixed(1) + '%"></i></div>' +
+    '<div class="supps" style="margin-top:12px">' +
+    [[250, 'Verre'], [500, 'Bouteille'], [150, 'Tasse']]
+      .map(q => '<span class="chip water" data-water="' + q[0] + '">+ ' + q[1] + ' <b class="n">' + q[0] + ' ml</b></span>').join('') +
+    '<span class="chip water" data-waterx>+ Autre…</span>' +
+    (manuels ? '<span class="chip" data-waterundo>↺ Annuler</span>' : '') +
+    '</div></div>';
+}
+
+function ajouterEau(ml) {
+  if (!(ml > 0)) return;
+  DB.entries.push({ id: uid(), ts: Date.now(), date: curDate, meal: DRINK, title: 'Eau',
+                    items: [{ name: 'Eau', qty: r0(ml), kcal: 0, prot: 0, carb: 0, fat: 0, water: r0(ml) }] });
+  save(); renderToday(); renderHistory();
+}
+
+$('#hydra').onclick = e => {
+  const q = e.target.closest('[data-water]');
+  if (q) { ajouterEau(+q.dataset.water); toast('+' + q.dataset.water + ' ml 💧'); return; }
+  if (e.target.closest('[data-waterx]')) {
+    const v = parseFloat(String(prompt('Quantité bue, en millilitres', '330') || '').replace(',', '.'));
+    if (v > 0) { ajouterEau(v); toast('+' + r0(v) + ' ml 💧'); }
+    return;
+  }
+  if (e.target.closest('[data-waterundo]')) {
+    const last = entriesOf(curDate).filter(x => x.meal === DRINK).sort((a, b) => b.ts - a.ts)[0];
+    if (last) { DB.entries = DB.entries.filter(x => x.id !== last.id); save(); renderToday(); renderHistory(); }
+  }
+};
 
 function renderSupps() {
   const box = $('#supps');
@@ -1734,15 +1812,16 @@ function daysBack(n) {
    sans cela (preserveAspectRatio="none") les textes des axes seraient étirés. */
 const CW = 360, CTOP = 8, CBASE = 118, CLAB = 134;
 
-function barChart(days, vals, goal) {
+function barChart(days, vals, goal, unite, c1, c2) {
   const n = vals.length, plotH = CBASE - CTOP;
+  const gid = 'bg' + (c1 ? '2b' : '2');
   const max = Math.max(goal || 0, ...vals, 1) * 1.12;
   const bw = CW / n, pad = Math.min(bw * 0.22, 2.4);
   let bars = '', labs = '';
   vals.forEach((v, i) => {
     const h = (v / max) * plotH;
     const x = i * bw + pad, w = Math.max(bw - pad * 2, 1);
-    const col = goal && v > goal ? '#fb923c' : (v > 0 ? 'url(#bg2)' : '#222c38');
+    const col = (goal && v > goal && !c1) ? '#fb923c' : (v > 0 ? 'url(#' + gid + ')' : '#222c38');
     bars += '<rect x="' + x.toFixed(2) + '" y="' + (CBASE - Math.max(h, v > 0 ? 2 : 1)).toFixed(2) +
       '" width="' + w.toFixed(2) + '" height="' + Math.max(h, v > 0 ? 2 : 1).toFixed(2) +
       '" rx="' + Math.min(w / 2, 2.5).toFixed(2) + '" fill="' + col + '"/>';
@@ -1757,13 +1836,13 @@ function barChart(days, vals, goal) {
   });
   const gy = goal ? CBASE - (goal / max) * plotH : null;
   return '<svg class="chart" viewBox="0 0 ' + CW + ' 150">' +
-    '<defs><linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">' +
-    '<stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#059669"/></linearGradient></defs>' +
+    '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="' + (c1 || '#34d399') + '"/><stop offset="1" stop-color="' + (c2 || '#059669') + '"/></linearGradient></defs>' +
     '<line class="gl" x1="0" y1="' + CBASE + '" x2="' + CW + '" y2="' + CBASE + '"/>' + bars +
     (gy !== null ? '<line x1="0" y1="' + gy.toFixed(2) + '" x2="' + CW + '" y2="' + gy.toFixed(2) +
       '" stroke="#8b9bad" stroke-width="1" stroke-dasharray="5 4"/>' : '') +
     labs + '</svg>' +
-    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">— — objectif ' + r0(goal) + ' kcal</div>' : '');
+    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">— — objectif ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
 }
 
 function lineChart(pts) {
@@ -1803,6 +1882,7 @@ function renderHistory() {
     '<div><b>' + inGoal + '</b><span>objectif tenu</span></div>';
 
   $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal);
+  $('#chartWater').innerHTML = barChart(days, per.map(p => p.water), g.water, 'ml', '#38bdf8', '#0284c7');
 
   const wpts = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).filter(w => w.date >= days[0]);
   $('#chartWeight').innerHTML = lineChart(wpts);
@@ -1812,7 +1892,8 @@ function renderHistory() {
     const t = sumEntries(entriesOf(d));
     const over = g.kcal && t.kcal > g.kcal;
     return '<div class="dayrow" data-d="' + d + '"><div class="grow"><div class="d">' + frDate(d) + '</div>' +
-      '<div class="m">P ' + r0(t.prot) + ' g · G ' + r0(t.carb) + ' g · L ' + r0(t.fat) + ' g</div></div>' +
+      '<div class="m">P ' + r0(t.prot) + ' g · G ' + r0(t.carb) + ' g · L ' + r0(t.fat) + ' g' +
+      (t.water ? ' · 💧 ' + (t.water / 1000).toFixed(1) + ' L' : '') + '</div></div>' +
       '<span class="pill' + (over ? ' over' : '') + '">' + (g.kcal ? (over ? '+' : '') + r0(t.kcal - g.kcal) : '—') + '</span>' +
       '<div class="v">' + r0(t.kcal) + '</div></div>';
   }).join('') : '<div class="empty" style="padding:18px">Aucune journée enregistrée sur la période.</div>';
@@ -1874,6 +1955,7 @@ function renderSettings() {
   fillModels();
   const g = S().goals;
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
+  $('#gWater').value = g.water;
   $('#swPhotos').classList.toggle('on', !!S().keepPhotos);
   renderFoodsSettings();
   renderTplsSettings();
@@ -1919,9 +2001,9 @@ $('#sTest').onclick = async () => {
   }
 };
 
-['gKcal', 'gProt', 'gCarb', 'gFat'].forEach(id => {
+['gKcal', 'gProt', 'gCarb', 'gFat', 'gWater'].forEach(id => {
   $('#' + id).oninput = e => {
-    const k = { gKcal: 'kcal', gProt: 'prot', gCarb: 'carb', gFat: 'fat' }[id];
+    const k = { gKcal: 'kcal', gProt: 'prot', gCarb: 'carb', gFat: 'fat', gWater: 'water' }[id];
     S().goals[k] = r0(e.target.value); save(); renderToday();
   };
 });
@@ -2166,6 +2248,15 @@ function editSupp(sp, isNew) {
     });
 }
 
+/* Objectif d'hydratation : repère courant de 30 ml par kilo, majoré selon l'activité.
+   Il porte sur les BOISSONS seules — l'eau apportée par les aliments solides, de l'ordre
+   de 20 à 30 % des apports, n'est pas comptée, donc pas non plus visée. Valeur à ajuster
+   librement : c'est un repère, pas une prescription. */
+function eauObjectif(poids, act) {
+  const ml = poids * 30 + Math.max(0, (act - 1.2)) * 1000;
+  return clamp(Math.round(ml / 50) * 50, 1200, 4500);
+}
+
 /* Calcul des objectifs — Mifflin-St Jeor */
 $('#btnCalc').onclick = () => {
   const p = S().profile;
@@ -2203,17 +2294,19 @@ $('#btnCalc').onclick = () => {
         const prot = Math.round(v.weight * (v.aim < 0 ? 2.0 : 1.7));
         const fat = Math.round(v.weight * 0.9);
         const carb = Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4));
+        const water = eauObjectif(v.weight, v.act);
         el.querySelector('#cRes').innerHTML =
           'Métabolisme de base ' + r0(bmr) + ' kcal · dépense estimée ' + r0(tdee) + ' kcal/jour.<br>' +
-          '<b>Objectif : ' + kcal + ' kcal</b> — ' + prot + ' g de protéines, ' + carb + ' g de glucides, ' + fat + ' g de lipides.';
-        return { v, kcal, prot, carb, fat };
+          '<b>Objectif : ' + kcal + ' kcal</b> — ' + prot + ' g de protéines, ' + carb + ' g de glucides, ' + fat + ' g de lipides.<br>' +
+          '<b>Hydratation : ' + water + ' ml de boissons</b>, activité comprise.';
+        return { v, kcal, prot, carb, fat, water };
       }
       let cur = compute();
       el.addEventListener('input', () => { cur = compute(); });
       el.addEventListener('change', () => { cur = compute(); });
       el.querySelector('#cOk').onclick = () => {
         DB.settings.profile = cur.v;
-        DB.settings.goals = { kcal: cur.kcal, prot: cur.prot, carb: cur.carb, fat: cur.fat };
+        DB.settings.goals = { kcal: cur.kcal, prot: cur.prot, carb: cur.carb, fat: cur.fat, water: cur.water };
         save(); closeSheet(); renderSettings(); renderToday(); renderHistory();
         toast('Objectifs mis à jour');
       };
@@ -2252,16 +2345,16 @@ $('#btnExpJson').onclick = exportJson;
 
 $('#btnExpCsv').onclick = () => {
   const q = s => '"' + String(s == null ? '' : s).replace(/"/g, '""') + '"';
-  const head = ['date', 'heure', 'moment', 'repas', 'aliment', 'quantite_g', 'kcal', 'proteines_g', 'glucides_g', 'lipides_g'];
+  const head = ['date', 'heure', 'moment', 'repas', 'aliment', 'quantite_g', 'kcal', 'proteines_g', 'glucides_g', 'lipides_g', 'hydratation_ml'];
   const lines = [head.join(';')];
   DB.entries.slice().sort((a, b) => a.ts - b.ts).forEach(e => {
     const h = new Date(e.ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const lbl = mealLabel(e.meal);
-    (e.items || []).forEach(i => lines.push([e.date, h, lbl, e.title, i.name, i.qty, i.kcal, i.prot, i.carb, i.fat].map(q).join(';')));
+    (e.items || []).forEach(i => lines.push([e.date, h, lbl, e.title, i.name, i.qty, i.kcal, i.prot, i.carb, i.fat, i.water || 0].map(q).join(';')));
   });
   lines.push('');
   lines.push(['# poids'].join(';'));
-  DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(w => lines.push([w.date, '', '', '', 'poids_kg', '', '', '', '', w.kg].map(q).join(';')));
+  DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).forEach(w => lines.push([w.date, '', '', '', 'poids_kg', '', '', '', '', w.kg, ''].map(q).join(';')));
   deliver('coach-' + TODAY() + '.csv', '﻿' + lines.join('\r\n'), 'text/csv');
 };
 
@@ -2283,7 +2376,7 @@ function sanitizeBackup(inc) {
       title: txt(e.title, 80) || 'Repas',
       items: (Array.isArray(e.items) ? e.items : []).filter(i => i && typeof i === 'object').map(i => ({
         name: txt(i.name, 60) || 'Aliment', qty: num(i.qty), kcal: num(i.kcal),
-        prot: num(i.prot), carb: num(i.carb), fat: num(i.fat)
+        prot: num(i.prot), carb: num(i.carb), fat: num(i.fat), water: num(i.water)
       }))
     };
     if (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(e.thumb || '')) o.thumb = e.thumb;
@@ -2327,7 +2420,8 @@ function sanitizeBackup(inc) {
           kcal: num(x.kcal), prot: num(x.prot), carb: num(x.carb), fat: num(x.fat)
         })),
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
-      goals: { kcal: num(g.kcal) || DEFAULTS.settings.goals.kcal, prot: num(g.prot), carb: num(g.carb), fat: num(g.fat) },
+      goals: { kcal: num(g.kcal) || DEFAULTS.settings.goals.kcal, prot: num(g.prot), carb: num(g.carb),
+               fat: num(g.fat), water: num(g.water) || DEFAULTS.settings.goals.water },
       profile: { sex: p.sex === 'f' ? 'f' : 'h', age: num(p.age) || 35, height: num(p.height) || 175,
                  weight: Number(p.weight) || 75, act: Number(p.act) || 1.55, aim: num(p.aim) }
     },
@@ -2386,7 +2480,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.16');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.0');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
