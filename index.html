@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.15</title>
+<title>Coach v1.16</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,9 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.16 — Rappel de pesée hebdomadaire en tête du journal au-delà de sept jours sans pesée,
+           avec saisie et enregistrement directement dans le bandeau, et report de deux jours.
+
    v1.15 — Mascotte redessinée : un smiley à bras, plus lisible que l'haltère de la v1.14.
            Le teint passe du grisâtre au hâlé et les bras s'épaississent en continu avec
            l'avancement de la journée ; lunettes de soleil et pose de body-builder à
@@ -327,6 +330,13 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .nag span{display:block;font-size:11.5px;color:var(--dim);margin-top:3px;line-height:1.4}
 .nag .btn{margin-top:1px}
 .nagX{color:var(--dim2);font-size:15px;padding:2px 2px 2px 0;flex:none;line-height:1}
+.nag.info{background:#132030;border-color:#26455f}
+.nag.info b{color:#7dd3fc}
+.nag .wrow{display:flex;gap:7px;margin-top:10px}
+.nag .wrow input{flex:1;min-width:0;background:var(--bg2);border:1px solid var(--line);border-radius:10px;
+  padding:10px 12px;font-size:16px;outline:none;color:var(--txt)}
+.nag .wrow input:focus{border-color:#38bdf8}
+.nag .wrow .btn{flex:none;width:auto}
 .raw{background:#0d1218;border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 12px;
   font:400 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
   white-space:pre-wrap;word-break:break-word;max-height:230px;overflow:auto}
@@ -344,6 +354,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
   <!-- ============ AUJOURD'HUI ============ -->
   <section id="view-today">
     <div id="backupNag" class="hidden"></div>
+    <div id="weightNag" class="hidden"></div>
     <div class="datenav">
       <button id="dPrev" aria-label="Jour précédent">‹</button>
       <div class="lbl grow" id="dLbl"></div>
@@ -480,7 +491,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.15 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.16 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -520,6 +531,7 @@ const DEFAULTS = {
     keepPhotos: true,
     lastExport: 0,
     remindAfter: 0,
+    weightRemind: 0,
     supps: [],
     templates: [],
     foods: [],
@@ -962,6 +974,42 @@ $('#celeb').onclick = e => { if (e.target.closest('[data-celebx]')) $('#celeb').
    une purge iOS ou un effacement des données de site emporte tout le suivi.
    On ne sollicite pas un utilisateur qui débute : le décompte part du premier repas
    enregistré tant qu'aucun export n'a eu lieu. */
+/* Rappel de pesée hebdomadaire, saisissable sur place : envoyer l'utilisateur dans
+   l'onglet Historique pour trois chiffres ferait perdre le geste. */
+function weightBanner() {
+  const box = $('#weightNag');
+  if (!box) return;
+  const hide = () => { box.className = 'hidden'; box.innerHTML = ''; };
+  if (curDate !== TODAY() || !DB.entries.length) return hide();
+  if (Date.now() < (S().weightRemind || 0)) return hide();
+
+  const last = DB.weights.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
+  const jours = last ? Math.round((parseD(TODAY()) - parseD(last.date)) / DAY) : null;
+  if (last && jours < 7) return hide();
+
+  box.className = '';
+  box.innerHTML =
+    '<div class="nag info"><div class="grow"><b>⚖️ Pesée de la semaine</b><span>' +
+    (last ? 'Dernière pesée il y a ' + jours + ' jours.' : 'Aucune pesée enregistrée pour l\'instant.') +
+    ' Une par semaine suffit pour suivre la tendance.</span>' +
+    '<div class="wrow"><input id="wnKg" inputmode="decimal" placeholder="kg" value="' +
+    (last ? last.kg : (S().profile.weight || '')) + '">' +
+    '<button class="btn sm" id="wnOk">Enregistrer</button></div></div>' +
+    '<button class="nagX" id="wnLater" aria-label="Plus tard">✕</button>';
+}
+
+$('#weightNag').onclick = e => {
+  if (e.target.closest('#wnOk')) {
+    if (!enregistrerPoids($('#wnKg').value)) return;
+    renderToday(); renderHistory(); renderSettings();
+    toast('Poids enregistré 👍 tendance mise à jour');
+  } else if (e.target.closest('#wnLater')) {
+    S().weightRemind = Date.now() + 2 * DAY;
+    save(); weightBanner();
+    toast('Rappel repoussé de 2 jours');
+  }
+};
+
 function backupBanner() {
   const box = $('#backupNag');
   if (!box) return;
@@ -989,6 +1037,7 @@ function renderToday() {
   $('#dNext').style.visibility = curDate >= TODAY() ? 'hidden' : 'visible';
 
   backupBanner();
+  weightBanner();
   renderTpls();
   renderSupps();
 
@@ -1056,11 +1105,6 @@ function rawBlock(err) {
          '<pre class="raw">' + esc(err.raw.slice(0, 1500)) + '</pre>';
 }
 
-/* ---------------------------------------------------------------------------
-   Mascotte : un haltère à bras musclés et baskets. Quatre humeurs, qui ne font
-   varier que le visage et la position des bras — le corps reste identique pour
-   que le personnage reste reconnaissable d'un état à l'autre.
-   --------------------------------------------------------------------------- */
 /* ---------------------------------------------------------------------------
    Mascotte : un smiley à bras, qui se transforme au fil de la journée.
    `t` va de 0 à 1 selon l'avancement vers l'objectif calorique et pilote
@@ -1783,6 +1827,20 @@ $$('.seg [data-range]').forEach(b => b.onclick = () => {
   b.classList.add('on'); range = +b.dataset.range; renderHistory();
 });
 
+/* Écriture d'une pesée. Une seule valeur par date : une nouvelle saisie sur une date
+   déjà pesée la remplace. Le poids du profil suit, puisqu'il sert au calcul des objectifs. */
+function enregistrerPoids(saisie, date) {
+  const kg = parseFloat(String(saisie).replace(',', '.'));
+  if (!(kg > 20 && kg < 400)) { toast('Poids invalide'); return false; }
+  const d = date || TODAY();
+  const v = Math.round(kg * 10) / 10;
+  DB.weights = DB.weights.filter(w => w.date !== d).concat([{ date: d, kg: v }]);
+  S().profile.weight = v;
+  S().weightRemind = 0;
+  save();
+  return true;
+}
+
 $('#btnWeight').onclick = () => {
   const last = DB.weights.slice().sort((a, b) => b.date.localeCompare(a.date))[0];
   sheet('Saisir mon poids',
@@ -1791,12 +1849,8 @@ $('#btnWeight').onclick = () => {
     '<button class="btn pri" id="wOk">Enregistrer</button>',
     el => {
       el.querySelector('#wOk').onclick = () => {
-        const kg = parseFloat(String(el.querySelector('#wKg').value).replace(',', '.'));
-        const d = el.querySelector('#wD').value || TODAY();
-        if (!(kg > 20 && kg < 400)) { toast('Poids invalide'); return; }
-        DB.weights = DB.weights.filter(w => w.date !== d).concat([{ date: d, kg: Math.round(kg * 10) / 10 }]);
-        S().profile.weight = Math.round(kg * 10) / 10;
-        save(); closeSheet(); renderHistory(); renderSettings();
+        if (!enregistrerPoids(el.querySelector('#wKg').value, el.querySelector('#wD').value)) return;
+        closeSheet(); renderToday(); renderHistory(); renderSettings();
         toast('Poids enregistré');
       };
     });
@@ -2272,7 +2326,7 @@ function sanitizeBackup(inc) {
           name: txt(x.name, 40) || 'Complément', dose: txt(x.dose, 30),
           kcal: num(x.kcal), prot: num(x.prot), carb: num(x.carb), fat: num(x.fat)
         })),
-      lastExport: num(s.lastExport), remindAfter: num(s.remindAfter),
+      lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
       goals: { kcal: num(g.kcal) || DEFAULTS.settings.goals.kcal, prot: num(g.prot), carb: num(g.carb), fat: num(g.fat) },
       profile: { sex: p.sex === 'f' ? 'f' : 'h', age: num(p.age) || 35, height: num(p.height) || 175,
                  weight: Number(p.weight) || 75, act: Number(p.act) || 1.55, aim: num(p.aim) }
@@ -2332,7 +2386,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.15');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.16');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
