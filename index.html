@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.0</title>
+<title>Coach v2.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.1 — Correction : l'hydratation d'un aliment était perdue dès que le repas passait par
+           l'éditeur, donc à chaque repas analysé. L'eau devient une propriété d'aliment à
+           part entière — colonne ml dans l'éditeur, conservée à l'enregistrement, dans les
+           repas habituels, les aliments favoris et les sauvegardes, et mise à l'échelle
+           avec la quantité.
+
     v2.0 — Suivi de l'hydratation. Objectif calculé depuis le profil (30 ml par kilo, majoré
            selon l'activité), carte dédiée avec ajouts rapides et quantité libre, prise en
            compte automatique des boissons reconnues sur les photos via un champ
@@ -276,10 +282,10 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .t input{flex:1;background:transparent;border:0;font-weight:600;font-size:15px;outline:none;min-width:0;padding:2px 0}
 .item .t button{color:var(--dim2);font-size:19px;padding:0 3px;line-height:1}
 .item .t button[data-fav]{color:#6b5a2a;font-size:16px}
-.item .g{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.item .g{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}
 .item .g label{display:block}
-.item .g span{display:block;font-size:9.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;text-align:center}
-.item .g input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 2px;text-align:center;font-size:14px;outline:none;font-variant-numeric:tabular-nums}
+.item .g span{display:block;font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.2px;margin-bottom:3px;text-align:center}
+.item .g input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 1px;text-align:center;font-size:13px;outline:none;font-variant-numeric:tabular-nums}
 .item .g input:focus{border-color:var(--acc)}
 
 .supps{display:flex;flex-wrap:wrap;gap:7px}
@@ -509,7 +515,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1229,7 +1235,7 @@ $('#dLbl').onclick = () => { curDate = TODAY(); renderToday(); };
 function scaleFood(f, qty) {
   const k = f.qty > 0 ? qty / f.qty : 1;
   return { name: f.name, qty: r0(qty), kcal: r0(f.kcal * k), prot: r0(f.prot * k),
-           carb: r0(f.carb * k), fat: r0(f.fat * k) };
+           carb: r0(f.carb * k), fat: r0(f.fat * k), water: r0((f.water || 0) * k) };
 }
 
 function saveFav(i) {
@@ -1239,7 +1245,7 @@ function saveFav(i) {
   const nom = (prompt('Nom de l\'aliment favori', base) || '').trim();
   if (!nom) return;
   const f = { id: uid(), name: nom.slice(0, 60), qty: r0(i.qty), kcal: r0(i.kcal),
-              prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) };
+              prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) };
   const remplace = (S().foods || []).some(x => x.name.toLowerCase() === f.name.toLowerCase());
   S().foods = (S().foods || []).filter(x => x.name.toLowerCase() !== f.name.toLowerCase()).concat([f]);
   save(); renderFoodsSettings();
@@ -1259,7 +1265,7 @@ function pickFood(cb) {
       '<div class="entry" data-pick="' + esc(f.id) + '">' +
       '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
       '<div class="dt">' + r0(f.qty) + ' g · ' + r0(f.kcal) + ' kcal · P ' + r0(f.prot) +
-      ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + '</div></div>' +
+      ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
       '<button class="lnk" data-qty="' + esc(f.id) + '">autre&nbsp;quantité</button></div>').join('') +
     '<p class="tiny" style="margin-top:10px;text-align:center">Touche un aliment pour l\'ajouter à sa quantité de référence.</p>',
     el => {
@@ -1514,7 +1520,7 @@ function itemHtml(i, idx) {
     '<button data-fav="' + idx + '" aria-label="Enregistrer comme aliment favori">★</button>' +
     '<button data-del="' + idx + '" aria-label="Supprimer">✕</button></div>' +
     '<div class="g">' + f('qty', 'g', i.qty) + f('kcal', 'kcal', i.kcal) + f('prot', 'prot', i.prot) +
-    f('carb', 'gluc', i.carb) + f('fat', 'lip', i.fat) + '</div></div>';
+    f('carb', 'gluc', i.carb) + f('fat', 'lip', i.fat) + f('water', 'ml', i.water) + '</div></div>';
 }
 
 function totalsHtml(items) {
@@ -1523,7 +1529,9 @@ function totalsHtml(items) {
     '<span>Total</span><span>' + r0(t.kcal) + ' kcal &nbsp;·&nbsp; ' +
     '<span style="color:var(--prot)">' + r0(t.prot) + '</span> / ' +
     '<span style="color:var(--carb)">' + r0(t.carb) + '</span> / ' +
-    '<span style="color:var(--fat)">' + r0(t.fat) + '</span> g</span></div>';
+    '<span style="color:var(--fat)">' + r0(t.fat) + '</span> g' +
+    (t.water ? ' &nbsp;·&nbsp; <span style="color:#38bdf8">💧 ' + r0(t.water) + ' ml</span>' : '') +
+    '</span></div>';
 }
 
 /* Éditeur commun : création (photo / manuel) et modification d'une entrée */
@@ -1588,7 +1596,7 @@ function openEditor(entry, ctx) {
     });
     el.querySelector('#eFav').onclick = () => pickFood(it => { items.push(it); paint(); totEl.innerHTML = totalsHtml(items); });
     el.querySelector('#eAdd').onclick = () => {
-      items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 });
+      items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 });
       paint();
       const ins = listEl.querySelectorAll('.item input'); if (ins.length) ins[ins.length - 5].focus();
     };
@@ -1630,7 +1638,7 @@ function openEditor(entry, ctx) {
       const t = {
         id: uid(), name: nom.slice(0, 40), meal: el.querySelector('#eMeal').value,
         items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
-                                 prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) })),
+                                 prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) })),
         supps: []
       };
       S().templates = (S().templates || []).concat([t]);
@@ -1644,7 +1652,7 @@ function openEditor(entry, ctx) {
       entry.title = (el.querySelector('#eTitle').value || 'Repas').trim();
       entry.meal = el.querySelector('#eMeal').value;
       entry.date = el.querySelector('#eDate').value || TODAY();
-      entry.items = clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal), prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) }));
+      entry.items = clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal), prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) }));
       if (isNew) DB.entries.push(entry);
       save();
       curDate = entry.date;
@@ -1791,7 +1799,7 @@ $('#btnManual').onclick = () => {
       el.querySelector('#mBlank').onclick = () => {
         const d = el.querySelector('#mDesc').value.trim();
         closeSheet();
-        openEditor({ id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(), title: d.slice(0, 40) || 'Repas', items: [{ name: d.slice(0, 40) || '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 }] },
+        openEditor({ id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(), title: d.slice(0, 40) || 'Repas', items: [{ name: d.slice(0, 40) || '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 }] },
           { isNew: true });
       };
     });
@@ -2028,7 +2036,8 @@ function renderFoodsSettings() {
     ? list.map(f =>
         '<div class="entry" data-foodid="' + esc(f.id) + '" style="padding:10px 12px">' +
         '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
-        '<div class="dt">' + r0(f.qty) + ' g · P ' + r0(f.prot) + ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + '</div></div>' +
+        '<div class="dt">' + r0(f.qty) + ' g · P ' + r0(f.prot) + ' G ' + r0(f.carb) + ' L ' + r0(f.fat) +
+        (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
         '<div class="kc">' + r0(f.kcal) + '<small>kcal</small></div></div>').join('')
     : '<div class="empty" style="padding:14px 8px">Aucun aliment favori.</div>';
 }
@@ -2041,7 +2050,7 @@ $('#sFoods').onclick = e => {
 $('#btnFoodAdd').onclick = () => editFood(null);
 
 function editFood(f) {
-  const o = f || { id: uid(), name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 };
+  const o = f || { id: uid(), name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 };
   const neuf = !f;
   sheet(neuf ? 'Nouvel aliment' : 'Modifier l\'aliment',
     '<div class="grid2">' +
@@ -2053,6 +2062,7 @@ function editFood(f) {
       const k = x.split('|')[0], l = x.split('|')[1];
       return '<label class="f"><span>' + l + '</span><input class="in" id="fd_' + k + '" inputmode="numeric" value="' + r0(o[k]) + '"></label>';
     }).join('') + '</div>' +
+    '<label class="f"><span>Hydratation apportée (ml)</span><input class="in" id="fd_water" inputmode="numeric" value="' + r0(o.water) + '"></label>' +
     '<button class="btn pri" id="fdOk">' + (neuf ? 'Ajouter' : 'Enregistrer') + '</button>' +
     (neuf ? '' : '<button class="btn dan gho" id="fdDel" style="margin-top:9px">Supprimer</button>'),
     el => {
@@ -2062,7 +2072,7 @@ function editFood(f) {
         const q = r0(el.querySelector('#fd_qty').value);
         if (!q) { toast('Indique la quantité de référence'); return; }
         const n = { id: o.id, name: nom.slice(0, 60), qty: q };
-        ['kcal', 'prot', 'carb', 'fat'].forEach(k => n[k] = r0(el.querySelector('#fd_' + k).value));
+        ['kcal', 'prot', 'carb', 'fat', 'water'].forEach(k => n[k] = r0(el.querySelector('#fd_' + k).value));
         S().foods = (S().foods || []).filter(x => x.id !== n.id).concat([n]);
         save(); closeSheet(); renderFoodsSettings();
         toast(neuf ? 'Aliment ajouté' : 'Aliment modifié');
@@ -2149,14 +2159,14 @@ function editTpl(t) {
         if (i >= 0) picked.splice(i, 1); else picked.push(c.dataset.sp);
         paint();
       };
-      el.querySelector('#tAdd').onclick = () => { items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 }); paint(); };
+      el.querySelector('#tAdd').onclick = () => { items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 }); paint(); };
       el.querySelector('#tOk').onclick = () => {
         const clean = items.filter(i => (i.name || '').trim() || i.kcal);
         if (!clean.length) { toast('Ajoute au moins un aliment'); return; }
         const o = { id: t.id, name: (el.querySelector('#tN').value || 'Repas type').trim().slice(0, 40),
                     meal: el.querySelector('#tM').value,
                     items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
-                                             prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) })),
+                                             prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) })),
                     supps: picked.slice() };
         S().templates = (S().templates || []).map(x => x.id === o.id ? o : x);
         save(); closeSheet(); renderTplsSettings(); renderToday(); renderHistory();
@@ -2400,7 +2410,7 @@ function sanitizeBackup(inc) {
         .filter(x => x && typeof x === 'object').map(x => ({
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
           name: txt(x.name, 60) || 'Aliment', qty: num(x.qty) || 100,
-          kcal: num(x.kcal), prot: num(x.prot), carb: num(x.carb), fat: num(x.fat)
+          kcal: num(x.kcal), prot: num(x.prot), carb: num(x.carb), fat: num(x.fat), water: num(x.water)
         })),
       templates: (Array.isArray(s.templates) ? s.templates : []).slice(0, 60)
         .filter(x => x && typeof x === 'object').map(x => ({
@@ -2409,7 +2419,7 @@ function sanitizeBackup(inc) {
           meal: MEALS.map(m => m.id).indexOf(x.meal) >= 0 ? x.meal : 'petit-dej',
           items: (Array.isArray(x.items) ? x.items : []).filter(i => i && typeof i === 'object').map(i => ({
             name: txt(i.name, 60) || 'Aliment', qty: num(i.qty), kcal: num(i.kcal),
-            prot: num(i.prot), carb: num(i.carb), fat: num(i.fat)
+            prot: num(i.prot), carb: num(i.carb), fat: num(i.fat), water: num(i.water)
           })),
           supps: (Array.isArray(x.supps) ? x.supps : []).filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 30)
         })),
@@ -2480,7 +2490,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.0');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.1');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
