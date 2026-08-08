@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.1</title>
+<title>Coach v2.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.2 — Volumes d'eau favoris définis par l'utilisateur, en remplacement des trois
+           raccourcis fixes verre, bouteille et tasse. Aucun volume n'est fourni par défaut ;
+           gestion depuis l'en-tête de la carte Hydratation.
+
     v2.1 — Correction : l'hydratation d'un aliment était perdue dès que le repas passait par
            l'éditeur, donc à chaque repas analysé. L'eau devient une propriété d'aliment à
            part entière — colonne ml dans l'éditeur, conservée à l'enregistrement, dans les
@@ -515,7 +519,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -557,6 +561,7 @@ const DEFAULTS = {
     remindAfter: 0,
     weightRemind: 0,
     supps: [],
+    waterPresets: [],
     templates: [],
     foods: [],
     goals: { kcal: 2200, prot: 130, carb: 240, fat: 73, water: 2500 },
@@ -1398,12 +1403,14 @@ function renderHydra(t, g) {
   const manuels = entriesOf(curDate).filter(e => e.meal === DRINK).length;
   box.innerHTML = '<div class="card hydra"><div class="row between" style="margin-bottom:10px">' +
     '<h2 style="margin:0">💧 Hydratation</h2>' +
-    '<span class="tiny"><span class="tot">' + r0(t.water) + '</span> / ' + r0(goal) + ' ml' +
-    (plein ? ' <span style="color:var(--acc-l)">✓</span>' : '') + '</span></div>' +
+    '<span class="row" style="gap:11px"><span class="tiny"><span class="tot">' + r0(t.water) + '</span> / ' + r0(goal) + ' ml' +
+    (plein ? ' <span style="color:var(--acc-l)">✓</span>' : '') + '</span>' +
+    '<button class="lnk" data-wpedit>✎</button></span></div>' +
     '<div class="bar big"><i class="' + (plein ? 'full' : '') + '" style="width:' + (pct * 100).toFixed(1) + '%"></i></div>' +
     '<div class="supps" style="margin-top:12px">' +
-    [[250, 'Verre'], [500, 'Bouteille'], [150, 'Tasse']]
-      .map(q => '<span class="chip water" data-water="' + q[0] + '">+ ' + q[1] + ' <b class="n">' + q[0] + ' ml</b></span>').join('') +
+    (S().waterPresets || [])
+      .map(p => '<span class="chip water" data-water="' + r0(p.ml) + '">+ ' + esc(p.name) +
+                ' <b class="n">' + r0(p.ml) + ' ml</b></span>').join('') +
     '<span class="chip water" data-waterx>+ Autre…</span>' +
     (manuels ? '<span class="chip" data-waterundo>↺ Annuler</span>' : '') +
     '</div></div>';
@@ -1416,7 +1423,61 @@ function ajouterEau(ml) {
   save(); renderToday(); renderHistory();
 }
 
+/* Volumes favoris : à chacun ses contenants. Aucun volume n'est fourni par défaut —
+   des valeurs génériques ne correspondraient à personne. */
+function gererVolumes() {
+  const list = S().waterPresets || [];
+  sheet('Mes volumes',
+    (list.length
+      ? list.map(p => '<div class="entry" data-wp="' + esc(p.id) + '" style="padding:10px 12px">' +
+          '<div class="grow"><div class="nm">' + esc(p.name) + '</div>' +
+          '<div class="dt">touche pour modifier</div></div>' +
+          '<div class="kc">' + r0(p.ml) + '<small>ml</small></div></div>').join('')
+      : '<div class="empty" style="padding:14px 8px">Aucun volume enregistré.</div>') +
+    '<button class="btn sm" id="wpAdd" style="width:100%;margin-top:9px">+ Ajouter un volume</button>' +
+    '<p class="tiny" style="margin-top:10px">Enregistre les contenants que tu utilises vraiment : ta gourde, ta bouteille, ton mug.</p>',
+    el => {
+      el.querySelector('#wpAdd').onclick = () => editVolume(null);
+      el.onclick = ev => {
+        const r = ev.target.closest('[data-wp]');
+        if (r) editVolume((S().waterPresets || []).find(x => x.id === r.dataset.wp));
+      };
+    });
+}
+
+function editVolume(p) {
+  const o = p || { id: uid(), name: '', ml: 500 };
+  const neuf = !p;
+  sheet(neuf ? 'Nouveau volume' : 'Modifier le volume',
+    '<div class="grid2">' +
+    '<label class="f"><span>Nom</span><input class="in" id="wpN" value="' + esc(o.name) + '" placeholder="Ma gourde"></label>' +
+    '<label class="f"><span>Contenance (ml)</span><input class="in" id="wpV" inputmode="numeric" value="' + r0(o.ml) + '"></label></div>' +
+    '<button class="btn pri" id="wpOk">' + (neuf ? 'Ajouter' : 'Enregistrer') + '</button>' +
+    (neuf ? '' : '<button class="btn dan gho" id="wpDel" style="margin-top:9px">Supprimer</button>'),
+    el => {
+      el.querySelector('#wpOk').onclick = () => {
+        const nom = el.querySelector('#wpN').value.trim();
+        const ml = r0(el.querySelector('#wpV').value);
+        if (!nom) { toast('Donne un nom au volume'); return; }
+        if (!(ml > 0 && ml <= 5000)) { toast('Contenance invalide'); return; }
+        // remplacement sur place : modifier un volume ne doit pas le renvoyer en fin de liste
+        const n = { id: o.id, name: nom.slice(0, 30), ml: ml };
+        const l = S().waterPresets || [];
+        S().waterPresets = l.some(x => x.id === n.id) ? l.map(x => x.id === n.id ? n : x) : l.concat([n]);
+        save(); closeSheet(); renderToday();
+        toast(neuf ? '« ' + nom +' » ajouté' : 'Volume modifié');
+      };
+      const d = el.querySelector('#wpDel');
+      if (d) d.onclick = () => {
+        S().waterPresets = (S().waterPresets || []).filter(x => x.id !== o.id);
+        save(); closeSheet(); renderToday();
+        toast('Volume supprimé');
+      };
+    }, true);
+}
+
 $('#hydra').onclick = e => {
+  if (e.target.closest('[data-wpedit]')) { gererVolumes(); return; }
   const q = e.target.closest('[data-water]');
   if (q) { ajouterEau(+q.dataset.water); toast('+' + q.dataset.water + ' ml 💧'); return; }
   if (e.target.closest('[data-waterx]')) {
@@ -2073,7 +2134,8 @@ function editFood(f) {
         if (!q) { toast('Indique la quantité de référence'); return; }
         const n = { id: o.id, name: nom.slice(0, 60), qty: q };
         ['kcal', 'prot', 'carb', 'fat', 'water'].forEach(k => n[k] = r0(el.querySelector('#fd_' + k).value));
-        S().foods = (S().foods || []).filter(x => x.id !== n.id).concat([n]);
+        const lf = S().foods || [];
+        S().foods = lf.some(x => x.id === n.id) ? lf.map(x => x.id === n.id ? n : x) : lf.concat([n]);
         save(); closeSheet(); renderFoodsSettings();
         toast(neuf ? 'Aliment ajouté' : 'Aliment modifié');
       };
@@ -2244,7 +2306,8 @@ function editSupp(sp, isNew) {
         if (!name) { toast('Donne un nom au complément'); return; }
         const o = { id: s.id, name: name.slice(0, 40), dose: el.querySelector('#spD').value.trim().slice(0, 30) };
         ['kcal', 'prot', 'carb', 'fat'].forEach(k => o[k] = r0(el.querySelector('#sp_' + k).value));
-        S().supps = (S().supps || []).filter(x => x.id !== o.id).concat([o]);
+        const ls = S().supps || [];
+        S().supps = ls.some(x => x.id === o.id) ? ls.map(x => x.id === o.id ? o : x) : ls.concat([o]);
         save(); closeSheet(); renderSuppsSettings(); renderToday();
         toast(neuf ? 'Complément ajouté' : 'Complément modifié');
       };
@@ -2423,6 +2486,11 @@ function sanitizeBackup(inc) {
           })),
           supps: (Array.isArray(x.supps) ? x.supps : []).filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 30)
         })),
+      waterPresets: (Array.isArray(s.waterPresets) ? s.waterPresets : []).slice(0, 30)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 30) || 'Volume', ml: clamp(num(x.ml), 1, 5000)
+        })),
       supps: (Array.isArray(s.supps) ? s.supps : []).slice(0, 60)
         .filter(x => x && typeof x === 'object').map(x => ({
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
@@ -2490,7 +2558,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.1');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.2');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
