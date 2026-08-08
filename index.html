@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.10</title>
+<title>Coach v1.11</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.11 — Nombre de photos par analyse ramené de 3 à 2, l'API Groq refusant la troisième
+           contrairement à ce qu'annonce la fiche du modèle ; message explicite si l'API
+           rejette une requête pour cause de nombre d'images.
+
    v1.10 — Repas habituels : un repas déjà enregistré se transforme en modèle depuis son écran
            d'édition, puis se rejoue en un toucher depuis le journal. Un modèle peut embarquer
            des compléments, qui ne sont pas dupliqués s'ils ont déjà été pris dans la journée.
@@ -413,7 +417,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.10 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.11 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -626,7 +630,10 @@ function toJpeg(bmp, maxSide, q) {
 /* =========================================================================
    4. Appel de l'API Groq (vision)
    ========================================================================= */
-const MAX_PHOTOS = 3;   // limite imposée par les modèles vision de Groq (3 images par requête)
+/* Limite constatée à l'usage : l'API Groq refuse 3 images, alors que la fiche du modèle
+   en annonce 3. C'est le comportement réel qui fait foi. Si un jour l'API accepte
+   davantage, cette constante est le seul endroit à changer. */
+const MAX_PHOTOS = 2;
 
 const PROMPT_REGLES = `Réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise markdown, exactement à ce format :
 {"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14}],"confiance":"haute","remarque":"une phrase courte"}
@@ -731,6 +738,9 @@ async function groq(body) {
     }
     if (res.status === 401) throw new Error('Clé API refusée (401). Vérifie-la dans Réglages.');
     if (res.status === 429) throw new Error('Quota atteint (429). Réessaie dans un moment.');
+    if (/image/i.test(m) && /(too many|maximum|max |limit|number of|at most)/i.test(m)) {
+      throw new Error('Trop de photos pour ce modèle. Retires-en une et relance. (' + m + ')');
+    }
     if (res.status === 404 || /model/i.test(m)) throw new Error('Modèle indisponible : ' + m);
     throw new Error(m);
   }
@@ -1895,7 +1905,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.10');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.11');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
