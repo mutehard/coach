@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.12</title>
+<title>Coach v1.13</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.13 — Aliments favoris : briques réutilisables mémorisées pour une quantité de référence,
+           insérables dans n'importe quel repas ou repas habituel, avec mise à l'échelle
+           proportionnelle si la quantité consommée diffère. Capture en un toucher depuis
+           une ligne d'un repas, gestion complète dans les réglages.
+
    v1.12 — Modification et suppression des repas habituels et des compléments accessibles
            directement depuis le journal, via un lien dans l'en-tête de leur carte.
            L'éditeur existait déjà mais n'était atteignable que par les réglages.
@@ -215,6 +220,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .t{display:flex;align-items:center;gap:8px;margin-bottom:9px}
 .item .t input{flex:1;background:transparent;border:0;font-weight:600;font-size:15px;outline:none;min-width:0;padding:2px 0}
 .item .t button{color:var(--dim2);font-size:19px;padding:0 3px;line-height:1}
+.item .t button[data-fav]{color:#6b5a2a;font-size:16px}
 .item .g{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .item .g label{display:block}
 .item .g span{display:block;font-size:9.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;text-align:center}
@@ -393,6 +399,13 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
     </div>
 
     <div class="card">
+      <h2>Mes aliments</h2>
+      <div id="sFoods"></div>
+      <button class="btn sm" id="btnFoodAdd" style="width:100%;margin-top:9px">+ Ajouter un aliment</button>
+      <p class="tiny" style="margin-top:10px">Briques réutilisables dans n'importe quel repas. Le plus simple : touche ★ sur une ligne d'un repas déjà correct. Les valeurs sont mémorisées pour une quantité de référence et mises à l'échelle à l'insertion.</p>
+    </div>
+
+    <div class="card">
       <h2>Compléments alimentaires</h2>
       <div id="sSupps"></div>
       <button class="btn sm" id="btnSuppAdd" style="width:100%;margin-top:9px">+ Ajouter un complément</button>
@@ -423,7 +436,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.13 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -465,6 +478,7 @@ const DEFAULTS = {
     remindAfter: 0,
     supps: [],
     templates: [],
+    foods: [],
     goals: { kcal: 2200, prot: 130, carb: 240, fat: 73 },
     profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0 }
   },
@@ -920,6 +934,63 @@ $('#dPrev').onclick = () => { curDate = shiftD(curDate, -1); renderToday(); };
 $('#dNext').onclick = () => { if (curDate < TODAY()) { curDate = shiftD(curDate, 1); renderToday(); } };
 $('#dLbl').onclick = () => { curDate = TODAY(); renderToday(); };
 
+/* Aliments favoris : des briques réutilisables, mémorisées pour une quantité de
+   référence. À l'insertion, tout est mis à l'échelle proportionnellement — c'est la
+   seule façon d'éviter qu'un pot de 125 g serve à décrire une portion de 250 g. */
+function scaleFood(f, qty) {
+  const k = f.qty > 0 ? qty / f.qty : 1;
+  return { name: f.name, qty: r0(qty), kcal: r0(f.kcal * k), prot: r0(f.prot * k),
+           carb: r0(f.carb * k), fat: r0(f.fat * k) };
+}
+
+function saveFav(i) {
+  const base = (i.name || '').trim();
+  if (!base) { toast('Nomme d\'abord la ligne'); return; }
+  if (!r0(i.qty)) { toast('Indique la quantité de référence'); return; }
+  const nom = (prompt('Nom de l\'aliment favori', base) || '').trim();
+  if (!nom) return;
+  const f = { id: uid(), name: nom.slice(0, 60), qty: r0(i.qty), kcal: r0(i.kcal),
+              prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat) };
+  const remplace = (S().foods || []).some(x => x.name.toLowerCase() === f.name.toLowerCase());
+  S().foods = (S().foods || []).filter(x => x.name.toLowerCase() !== f.name.toLowerCase()).concat([f]);
+  save(); renderFoodsSettings();
+  toast('« ' + f.name + ' » ' + (remplace ? 'mis à jour' : 'ajouté') + ' · référence ' + f.qty + ' g');
+}
+
+/* Sélecteur d'aliment favori. Toucher la ligne insère la quantité de référence ;
+   le bouton « autre quantité » demande la quantité réelle et met à l'échelle. */
+function pickFood(cb) {
+  const list = (S().foods || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  if (!list.length) {
+    toast('Aucun aliment favori. Touche ★ sur une ligne pour en créer un.');
+    return;
+  }
+  sheet('Mes aliments',
+    list.map(f =>
+      '<div class="entry" data-pick="' + esc(f.id) + '">' +
+      '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
+      '<div class="dt">' + r0(f.qty) + ' g · ' + r0(f.kcal) + ' kcal · P ' + r0(f.prot) +
+      ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + '</div></div>' +
+      '<button class="lnk" data-qty="' + esc(f.id) + '">autre&nbsp;quantité</button></div>').join('') +
+    '<p class="tiny" style="margin-top:10px;text-align:center">Touche un aliment pour l\'ajouter à sa quantité de référence.</p>',
+    el => {
+      el.onclick = ev => {
+        const q = ev.target.closest('[data-qty]');
+        if (q) {
+          const f = list.find(x => x.id === q.dataset.qty);
+          const v = parseFloat(String(prompt('Quantité en grammes', f.qty) || '').replace(',', '.'));
+          if (!(v > 0)) return;
+          closeSheet(); cb(scaleFood(f, v));
+          return;
+        }
+        const r = ev.target.closest('[data-pick]');
+        if (!r) return;
+        const f = list.find(x => x.id === r.dataset.pick);
+        closeSheet(); cb(scaleFood(f, f.qty));
+      };
+    }, true);
+}
+
 /* Un repas type est un modèle rejoué : il produit une entrée de journal ordinaire,
    plus les prises de compléments associées. Rien n'est « lié » après coup — le repas
    ajouté est modifiable et supprimable comme n'importe quel autre. */
@@ -1076,10 +1147,14 @@ $('#meals').onclick = e => {
 /* =========================================================================
    6. Feuilles modales
    ========================================================================= */
-function sheet(title, html, onMount) {
-  closeSheet();
+/* Les feuilles peuvent être empilées : `stack` ouvre par-dessus la feuille courante
+   au lieu de la remplacer. Indispensable pour un sélecteur appelé depuis un éditeur —
+   sans quoi choisir un aliment ferait disparaître le repas en cours d'édition. */
+function sheet(title, html, onMount, stack) {
+  if (stack) { /* on empile : la feuille dessous reste ouverte */ } else closeSheet(true);
   const el = document.createElement('div');
   el.className = 'sheet';
+  if (stack) el.style.zIndex = String(60 + $$('.sheet').length);
   el.innerHTML = '<div class="pnl"><div class="grab"></div>' +
     '<div class="sh-hd"><h3>' + esc(title) + '</h3><button data-x>Fermer</button></div>' + html + '</div>';
   el.addEventListener('click', ev => {
@@ -1089,13 +1164,19 @@ function sheet(title, html, onMount) {
   if (onMount) onMount(el);
   return el;
 }
-function closeSheet() { const s = $('.sheet'); if (s) s.remove(); }
+/* Sans argument, ne ferme que la feuille du dessus. */
+function closeSheet(all) {
+  const s = $$('.sheet');
+  if (!s.length) return;
+  if (all) s.forEach(x => x.remove()); else s[s.length - 1].remove();
+}
 
 /* Bloc HTML d'un aliment éditable */
 function itemHtml(i, idx) {
   const f = (k, lab, v) => '<label><span>' + lab + '</span><input inputmode="numeric" data-i="' + idx + '" data-k="' + k + '" value="' + r0(v) + '"></label>';
   return '<div class="item" data-row="' + idx + '">' +
     '<div class="t"><input data-i="' + idx + '" data-k="name" value="' + esc(i.name) + '" placeholder="Aliment">' +
+    '<button data-fav="' + idx + '" aria-label="Enregistrer comme aliment favori">★</button>' +
     '<button data-del="' + idx + '" aria-label="Supprimer">✕</button></div>' +
     '<div class="g">' + f('qty', 'g', i.qty) + f('kcal', 'kcal', i.kcal) + f('prot', 'prot', i.prot) +
     f('carb', 'gluc', i.carb) + f('fat', 'lip', i.fat) + '</div></div>';
@@ -1139,7 +1220,9 @@ function openEditor(entry, ctx) {
     '<div class="grid2"><label class="f"><span>Moment</span><select class="in" id="eMeal">' + mealOpts + '</select></label>' +
     '<label class="f"><span>Date</span><input class="in" id="eDate" type="date" value="' + entry.date + '"></label></div>' +
     '<div id="eItems"></div>' +
-    '<button class="btn sm gho" id="eAdd" style="width:100%;margin:2px 0 4px">+ Ajouter un aliment</button>' +
+    '<div class="grid2" style="margin:2px 0 4px">' +
+    '<button class="btn sm gho" id="eAdd" style="width:100%">+ Aliment</button>' +
+    '<button class="btn sm gho" id="eFav" style="width:100%">★ Mes aliments</button></div>' +
     '<div id="eTot"></div>' +
     '<button class="btn pri" id="eSave" style="margin-top:14px">' + (isNew ? 'Enregistrer le repas' : 'Enregistrer') + '</button>' +
     '<button class="btn gho" id="eTpl" style="margin-top:9px">☆ Enregistrer comme repas habituel</button>' +
@@ -1163,9 +1246,12 @@ function openEditor(entry, ctx) {
       totEl.innerHTML = totalsHtml(items);
     });
     listEl.addEventListener('click', ev => {
+      const f = ev.target.dataset.fav;
+      if (f !== undefined) { saveFav(items[+f]); return; }
       const d = ev.target.dataset.del;
       if (d !== undefined) { items.splice(+d, 1); paint(); }
     });
+    el.querySelector('#eFav').onclick = () => pickFood(it => { items.push(it); paint(); totEl.innerHTML = totalsHtml(items); });
     el.querySelector('#eAdd').onclick = () => {
       items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 });
       paint();
@@ -1522,6 +1608,7 @@ function renderSettings() {
   const g = S().goals;
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#swPhotos').classList.toggle('on', !!S().keepPhotos);
+  renderFoodsSettings();
   renderTplsSettings();
   renderSuppsSettings();
   const bytes = new Blob([JSON.stringify(DB)]).size;
@@ -1584,6 +1671,63 @@ const SUPP_MODELES = [
   { name: 'Magnésium', dose: '1 comprimé', kcal: 0, prot: 0, carb: 0, fat: 0 }
 ];
 
+function renderFoodsSettings() {
+  const box = $('#sFoods');
+  if (!box) return;
+  const list = (S().foods || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  box.innerHTML = list.length
+    ? list.map(f =>
+        '<div class="entry" data-foodid="' + esc(f.id) + '" style="padding:10px 12px">' +
+        '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
+        '<div class="dt">' + r0(f.qty) + ' g · P ' + r0(f.prot) + ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + '</div></div>' +
+        '<div class="kc">' + r0(f.kcal) + '<small>kcal</small></div></div>').join('')
+    : '<div class="empty" style="padding:14px 8px">Aucun aliment favori.</div>';
+}
+
+$('#sFoods').onclick = e => {
+  const row = e.target.closest('[data-foodid]');
+  if (row) editFood((S().foods || []).find(x => x.id === row.dataset.foodid));
+};
+
+$('#btnFoodAdd').onclick = () => editFood(null);
+
+function editFood(f) {
+  const o = f || { id: uid(), name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0 };
+  const neuf = !f;
+  sheet(neuf ? 'Nouvel aliment' : 'Modifier l\'aliment',
+    '<div class="grid2">' +
+    '<label class="f"><span>Nom</span><input class="in" id="fdN" value="' + esc(o.name) + '" placeholder="Yaourt grec 0 %"></label>' +
+    '<label class="f"><span>Quantité de référence (g)</span><input class="in" id="fd_qty" inputmode="numeric" value="' + r0(o.qty) + '"></label></div>' +
+    '<p class="tiny" style="margin:-4px 0 10px">Valeurs correspondant à cette quantité — celles du pot ou de la portion, pas celles pour 100 g si la quantité de référence est différente.</p>' +
+    '<div class="grid4">' +
+    ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.'].map(x => {
+      const k = x.split('|')[0], l = x.split('|')[1];
+      return '<label class="f"><span>' + l + '</span><input class="in" id="fd_' + k + '" inputmode="numeric" value="' + r0(o[k]) + '"></label>';
+    }).join('') + '</div>' +
+    '<button class="btn pri" id="fdOk">' + (neuf ? 'Ajouter' : 'Enregistrer') + '</button>' +
+    (neuf ? '' : '<button class="btn dan gho" id="fdDel" style="margin-top:9px">Supprimer</button>'),
+    el => {
+      el.querySelector('#fdOk').onclick = () => {
+        const nom = el.querySelector('#fdN').value.trim();
+        if (!nom) { toast('Donne un nom à l\'aliment'); return; }
+        const q = r0(el.querySelector('#fd_qty').value);
+        if (!q) { toast('Indique la quantité de référence'); return; }
+        const n = { id: o.id, name: nom.slice(0, 60), qty: q };
+        ['kcal', 'prot', 'carb', 'fat'].forEach(k => n[k] = r0(el.querySelector('#fd_' + k).value));
+        S().foods = (S().foods || []).filter(x => x.id !== n.id).concat([n]);
+        save(); closeSheet(); renderFoodsSettings();
+        toast(neuf ? 'Aliment ajouté' : 'Aliment modifié');
+      };
+      const d = el.querySelector('#fdDel');
+      if (d) d.onclick = () => {
+        if (!confirm('Supprimer « ' + o.name + ' » ? Les repas déjà enregistrés sont conservés.')) return;
+        S().foods = (S().foods || []).filter(x => x.id !== o.id);
+        save(); closeSheet(); renderFoodsSettings();
+        toast('Aliment supprimé');
+      };
+    });
+}
+
 function renderTplsSettings() {
   const box = $('#sTpls');
   const list = S().templates || [];
@@ -1616,7 +1760,9 @@ function editTpl(t) {
     MEALS.map(m => '<option value="' + m.id + '"' + (m.id === t.meal ? ' selected' : '') + '>' + m.ico + ' ' + m.label + '</option>').join('') +
     '</select></label>' +
     '<div id="tItems"></div>' +
-    '<button class="btn sm gho" id="tAdd" style="width:100%;margin:2px 0 4px">+ Ajouter un aliment</button>' +
+    '<div class="grid2" style="margin:2px 0 4px">' +
+    '<button class="btn sm gho" id="tAdd" style="width:100%">+ Aliment</button>' +
+    '<button class="btn sm gho" id="tFav" style="width:100%">★ Mes aliments</button></div>' +
     '<div id="tTot"></div>' +
     (supps.length
       ? '<p class="tiny" style="margin:14px 0 7px">Compléments ajoutés en même temps</p><div class="supps" id="tSupps"></div>'
@@ -1641,9 +1787,12 @@ function editTpl(t) {
         totEl.innerHTML = totalsHtml(items);
       });
       listEl.addEventListener('click', ev => {
+        const f = ev.target.dataset.fav;
+        if (f !== undefined) { saveFav(items[+f]); return; }
         const d = ev.target.dataset.del;
         if (d !== undefined) { items.splice(+d, 1); paint(); }
       });
+      el.querySelector('#tFav').onclick = () => pickFood(it => { items.push(it); paint(); });
       if (spEl) spEl.onclick = ev => {
         const c = ev.target.closest('[data-sp]');
         if (!c) return;
@@ -1887,6 +2036,12 @@ function sanitizeBackup(inc) {
       model: txt(s.model, 120) || DEFAULTS.settings.model,
       models: (Array.isArray(s.models) ? s.models : []).slice(0, 200).map(m => txt(m, 120)),
       keepPhotos: s.keepPhotos !== false,
+      foods: (Array.isArray(s.foods) ? s.foods : []).slice(0, 300)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 60) || 'Aliment', qty: num(x.qty) || 100,
+          kcal: num(x.kcal), prot: num(x.prot), carb: num(x.carb), fat: num(x.fat)
+        })),
       templates: (Array.isArray(s.templates) ? s.templates : []).slice(0, 60)
         .filter(x => x && typeof x === 'object').map(x => ({
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
@@ -1964,7 +2119,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.12');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.13');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
