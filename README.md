@@ -10,11 +10,12 @@ et l'ajouter à l'écran d'accueil. Ce n'est pas le dépôt de développement.
 
 ## Source
 
-Le fichier maître versionné vit hors de ce dépôt, dans
-`Coach vX.Y.html`, avec son `CONTEXTE.md`
-et ses versions archivées dans `Old/`.
+Le fichier maître versionné vit hors de ce dépôt, dans le dossier de travail local du
+projet, avec son `CONTEXTE.md` et ses versions archivées dans `Old/`.
 
 ## Mettre à jour
+
+Depuis le dossier du projet :
 
 ```bash
 python3 preparer-deploiement.py
