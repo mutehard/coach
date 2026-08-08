@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v1.13</title>
+<title>Coach v1.14</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v1.14 — Refonte visuelle motivante : mascotte haltère à quatre humeurs, message du coach
+           qui suit l'avancement de la journée, série de jours consécutifs, coche et halo sur
+           une macro atteinte, bandeau de félicitations une fois par jour à l'objectif, et
+           encouragement chiffré à chaque repas enregistré.
+
    v1.13 — Aliments favoris : briques réutilisables mémorisées pour une quantité de référence,
            insérables dans n'importe quel repas ou repas habituel, avec mise à l'échelle
            proportionnelle si la quantité consommée diffère. Capture en un toucher depuis
@@ -138,6 +143,37 @@ h1,h2,h3,p{margin:0}
 .datenav .lbl small{display:block;font-weight:500;font-size:11px;color:var(--dim2);margin-top:1px}
 
 /* ---------- anneau calories ---------- */
+/* ---------- mascotte et coach ---------- */
+.hero{background:linear-gradient(165deg,#18222c,#141a22 60%);border-color:#2b3a49;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:-70px;right:-70px;width:190px;height:190px;border-radius:50%;
+  background:radial-gradient(circle,rgba(16,185,129,.18),transparent 68%);pointer-events:none}
+.coach{display:flex;align-items:center;gap:13px;margin-bottom:15px;position:relative}
+.coach .av{width:70px;height:70px;flex:none}
+.coach .av svg{width:100%;height:100%;display:block}
+.coach .msg{min-width:0}
+.coach .msg b{display:block;font-size:15.5px;font-weight:800;letter-spacing:-.3px;line-height:1.25}
+.coach .msg span{display:block;font-size:12.5px;color:var(--dim);margin-top:3px;line-height:1.4}
+.coach .msg span.streak{display:inline-flex;width:auto}
+.streak{display:inline-flex;align-items:center;gap:4px;margin-top:7px;font-size:11px;font-weight:800;
+  padding:3px 9px;border-radius:20px;background:#2a1f12;color:#fbbf24;letter-spacing:.2px}
+
+@keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.16) rotate(-5deg)}70%{transform:scale(.96)}100%{transform:scale(1)}}
+.av.pop{animation:pop .7s cubic-bezier(.3,1.4,.5,1)}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+.av.bob{animation:bob 2.6s ease-in-out infinite}
+
+/* ---------- félicitations ---------- */
+.celeb{display:flex;align-items:center;gap:13px;padding:14px;border-radius:var(--r);margin-bottom:12px;
+  background:linear-gradient(135deg,#0f3d2e,#12281f);border:1px solid #1f6b4a;animation:slidein .45s cubic-bezier(.2,.9,.3,1)}
+@keyframes slidein{from{opacity:0;transform:translateY(-10px)}}
+.celeb .av{width:62px;height:62px;flex:none}
+.celeb b{display:block;font-size:16px;font-weight:800;color:#6ee7b7;letter-spacing:-.3px}
+.celeb span{display:block;font-size:12.5px;color:#9fd9c2;margin-top:3px;line-height:1.4}
+.celeb .x{margin-left:auto;color:#4d8f74;font-size:15px;padding:6px;align-self:flex-start}
+
+.macro .hd b .ok{color:var(--acc-l);font-size:11px;margin-left:4px}
+.bar i.full{box-shadow:0 0 9px currentColor}
+
 .ringwrap{display:flex;align-items:center;gap:18px}
 .ring{position:relative;width:118px;height:118px;flex:none}
 .ring svg{transform:rotate(-90deg)}
@@ -309,7 +345,10 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <button id="dNext" aria-label="Jour suivant">›</button>
     </div>
 
-    <div class="card">
+    <div id="celeb"></div>
+
+    <div class="card hero">
+      <div id="coach" class="coach"></div>
       <div class="ringwrap">
         <div class="ring">
           <svg width="118" height="118" viewBox="0 0 118 118">
@@ -436,7 +475,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v1.13 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v1.14 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -834,6 +873,86 @@ let curDate = TODAY();
 
 const DAY = 864e5;
 
+/* Nombre de jours consécutifs, en remontant depuis aujourd'hui, où au moins
+   un repas a été enregistré. */
+function streak() {
+  let n = 0, d = TODAY();
+  if (!entriesOf(d).length) d = shiftD(d, -1);   // la journée en cours n'a pas encore à être remplie
+  while (entriesOf(d).length) { n++; d = shiftD(d, -1); }
+  return n;
+}
+
+/* Message du coach. Deux règles de fond : ne jamais culpabiliser un dépassement,
+   et toujours proposer la prochaine action plutôt que de commenter le passé. */
+function coachState(t, g, nb) {
+  const pk = g.kcal > 0 ? t.kcal / g.kcal : 0;
+  const pp = g.prot > 0 ? t.prot / g.prot : 0;
+  const h = new Date().getHours();
+  const resteP = Math.max(0, r0(g.prot - t.prot));
+  const resteK = Math.max(0, r0(g.kcal - t.kcal));
+
+  if (!nb) return h < 11
+    ? { mood: 'repos', t: 'Nouvelle journée', s: 'Ta première assiette t\'attend. On commence fort.' }
+    : { mood: 'repos', t: 'Rien d\'enregistré', s: 'Une photo suffit pour lancer la journée.' };
+
+  if (pk >= 0.9 && pk <= 1.1 && pp >= 1)
+    return { mood: 'champion', t: 'Objectif atteint', s: 'Calories dans la cible et protéines validées. Du travail propre.' };
+
+  if (pp >= 1 && pk < 0.9)
+    return { mood: 'motive', t: 'Protéines validées', s: 'Il te reste ' + resteK + ' kcal à placer. Continue.' };
+
+  if (pk > 1.15)
+    return { mood: 'content', t: 'Journée copieuse', s: 'Ça arrive, et ça compte moins que la régularité.' };
+
+  if (pk >= 0.75)
+    return { mood: 'motive', t: 'Dernière ligne droite', s: resteP ? 'Encore ' + resteP + ' g de protéines pour valider.' : 'Tu y es presque, tiens bon.' };
+
+  if (pk >= 0.5)
+    return { mood: 'motive', t: 'Plus de la moitié', s: 'Le rythme est bon, ne lâche rien.' };
+
+  if (pk >= 0.25)
+    return { mood: 'content', t: 'Bien lancé', s: 'Deuxième repas quand tu veux.' };
+
+  return { mood: 'content', t: 'C\'est parti', s: 'Premier repas au compteur. Continue sur cette lancée.' };
+}
+
+/* Retour immédiat après l'enregistrement d'un repas : on annonce ce qu'il reste
+   à faire plutôt que de se contenter d'un accusé de réception. */
+function encouragement() {
+  const t = sumEntries(entriesOf(curDate)), g = S().goals;
+  const rp = r0(g.prot - t.prot), rk = r0(g.kcal - t.kcal);
+  if (rp <= 0 && rk >= -g.kcal * 0.1 && rk <= g.kcal * 0.1) return 'Objectif atteint 💪';
+  if (rp <= 0) return 'Protéines validées 💪 reste ' + Math.max(0, rk) + ' kcal';
+  if (rk <= 0) return 'Enregistré · protéines : encore ' + rp + ' g';
+  return 'Enregistré 👊 reste ' + rk + ' kcal et ' + rp + ' g de protéines';
+}
+
+function renderCoach(t, g, nb) {
+  const c = coachState(t, g, nb);
+  const st = streak();
+  $('#coach').innerHTML =
+    '<div class="av bob">' + avatarSvg(c.mood) + '</div>' +
+    '<div class="msg grow"><b>' + esc(c.t) + '</b><span>' + esc(c.s) + '</span>' +
+    (st > 1 ? '<span class="streak">🔥 ' + st + ' jours de suite</span>' : '') + '</div>';
+  return c;
+}
+
+/* Félicitations : une seule fois par journée, et seulement sur la journée en cours. */
+function celebrate(c) {
+  const box = $('#celeb');
+  if (!box) return;
+  if (c.mood !== 'champion' || curDate !== TODAY()) { box.innerHTML = ''; return; }
+  if (S().lastCeleb === curDate) { box.innerHTML = ''; return; }
+  S().lastCeleb = curDate; save();
+  box.innerHTML = '<div class="celeb"><div class="av">' + avatarSvg('champion') + '</div>' +
+    '<div><b>Objectif du jour atteint 💪</b><span>Belle journée de travail. On remet ça demain.</span></div>' +
+    '<button class="x" data-celebx aria-label="Fermer">✕</button></div>';
+  const av = $('#coach .av');
+  if (av) { av.classList.add('pop'); setTimeout(() => av.classList.remove('pop'), 800); }
+}
+
+$('#celeb').onclick = e => { if (e.target.closest('[data-celebx]')) $('#celeb').innerHTML = ''; };
+
 /* Rappel de sauvegarde. Les données ne vivent que dans ce navigateur : sans export,
    une purge iOS ou un effacement des données de site emporte tout le suivi.
    On ne sollicite pas un utilisateur qui débute : le décompte part du premier repas
@@ -883,16 +1002,22 @@ function renderToday() {
   const left = r0(g.kcal - t.kcal);
   $('#ringSub').textContent = left >= 0 ? ('reste ' + left) : ('+' + (-left) + ' kcal');
 
+  const c = renderCoach(t, g, list.length);
+  celebrate(c);
+
   // barres macros
   const defs = [
     ['Protéines', t.prot, g.prot, 'var(--prot)'],
     ['Glucides', t.carb, g.carb, 'var(--carb)'],
     ['Lipides', t.fat, g.fat, 'var(--fat)']
   ];
-  $('#macros').innerHTML = defs.map(([n, v, gl, c]) =>
-    '<div class="macro"><div class="hd"><b>' + n + '</b><span>' + r0(v) + ' / ' + r0(gl) + ' g</span></div>' +
-    '<div class="bar"><i style="width:' + (gl > 0 ? clamp(v / gl, 0, 1) * 100 : 0).toFixed(1) + '%;background:' + c + '"></i></div></div>'
-  ).join('');
+  $('#macros').innerHTML = defs.map(([n, v, gl, col]) => {
+    const plein = gl > 0 && v >= gl;
+    return '<div class="macro"><div class="hd"><b>' + n + (plein ? '<span class="ok">✓</span>' : '') +
+      '</b><span>' + r0(v) + ' / ' + r0(gl) + ' g</span></div>' +
+      '<div class="bar"><i class="' + (plein ? 'full' : '') + '" style="width:' +
+      (gl > 0 ? clamp(v / gl, 0, 1) * 100 : 0).toFixed(1) + '%;background:' + col + ';color:' + col + '"></i></div></div>';
+  }).join('');
 
   // repas
   const box = $('#meals');
@@ -924,6 +1049,77 @@ function rawBlock(err) {
   if (!err || !err.raw) return '';
   return '<p class="tiny" style="margin:0 0 5px">Réponse brute du modèle :</p>' +
          '<pre class="raw">' + esc(err.raw.slice(0, 1500)) + '</pre>';
+}
+
+/* ---------------------------------------------------------------------------
+   Mascotte : un haltère à bras musclés et baskets. Quatre humeurs, qui ne font
+   varier que le visage et la position des bras — le corps reste identique pour
+   que le personnage reste reconnaissable d'un état à l'autre.
+   --------------------------------------------------------------------------- */
+function avatarSvg(mood) {
+  const champion = mood === 'champion';
+  const motive = champion || mood === 'motive';
+  const rim = { repos: '#5c6b80', content: '#10b981', motive: '#10b981', champion: '#fbbf24' }[mood] || '#10b981';
+  const M = (x) => 140 - x;   // symétrie horizontale
+
+  // bras : détendus le long du corps au repos, levés et gonflés en action
+  const brasG = motive ? 'M30,42 C18,32 14,20 22,10' : 'M24,56 C10,60 4,68 6,79';
+  const poingG = motive ? [22, 9] : [6, 81];
+  const bicepsG = motive ? [20, 26] : null;
+
+  const bras =
+    '<path d="' + brasG + '" stroke="#e9eff6" stroke-width="9" fill="none" stroke-linecap="round"/>' +
+    '<path d="' + brasG.replace(/(\d+(?:\.\d+)?),(\d+(?:\.\d+)?)/g, (m, x, y) => M(+x) + ',' + y) +
+    '" stroke="#e9eff6" stroke-width="9" fill="none" stroke-linecap="round"/>' +
+    (bicepsG ? '<circle cx="' + bicepsG[0] + '" cy="' + bicepsG[1] + '" r="7.5" fill="#e9eff6"/>' +
+               '<circle cx="' + M(bicepsG[0]) + '" cy="' + bicepsG[1] + '" r="7.5" fill="#e9eff6"/>' : '') +
+    '<circle cx="' + poingG[0] + '" cy="' + poingG[1] + '" r="8" fill="#e9eff6"/>' +
+    '<circle cx="' + M(poingG[0]) + '" cy="' + poingG[1] + '" r="8" fill="#e9eff6"/>';
+
+  const yeux = champion
+    ? '<path d="M52,64 q7,-9 14,0" stroke="#101820" stroke-width="4.2" fill="none" stroke-linecap="round"/>' +
+      '<path d="M74,64 q7,-9 14,0" stroke="#101820" stroke-width="4.2" fill="none" stroke-linecap="round"/>'
+    : '<circle cx="59" cy="62" r="5.2" fill="#101820"/><circle cx="81" cy="62" r="5.2" fill="#101820"/>' +
+      '<circle cx="60.9" cy="60.1" r="1.8" fill="#fff"/><circle cx="82.9" cy="60.1" r="1.8" fill="#fff"/>';
+
+  const bouche = champion
+    ? '<path d="M60,73 q10,12 20,0 q-10,4 -20,0 z" fill="#101820"/>'
+    : motive
+      ? '<path d="M61,73 q9,9 18,0" stroke="#101820" stroke-width="4" fill="none" stroke-linecap="round"/>'
+      : mood === 'content'
+        ? '<path d="M63,74 q7,6 14,0" stroke="#101820" stroke-width="3.6" fill="none" stroke-linecap="round"/>'
+        : '<path d="M64,76 h12" stroke="#101820" stroke-width="3.6" fill="none" stroke-linecap="round"/>';
+
+  const etincelles = champion
+    ? '<g fill="#fbbf24"><path d="M70,4 l2.2,5 5,2.2 -5,2.2 -2.2,5 -2.2,-5 -5,-2.2 5,-2.2 z"/>' +
+      '<circle cx="8" cy="52" r="2.8"/><circle cx="132" cy="52" r="2.8"/></g>'
+    : '';
+
+  // basket : semelle blanche débordante, tige verte
+  const basket = (x, flip) =>
+    '<g transform="translate(' + x + ',102)' + (flip ? ' scale(-1,1)' : '') + '">' +
+    '<path d="M0,0 q0,-4 5,-4 h5 q3,0 4,3 l2,5 q1,2 4,3 l5,2 q4,1 4,5 v1 q0,2 -2,2 H-2 q-3,0 -3,-3 z" fill="#10b981"/>' +
+    '<rect x="-6" y="11" width="38" height="6" rx="3" fill="#e9eff6"/></g>';
+
+  return '<svg viewBox="0 0 140 130" xmlns="http://www.w3.org/2000/svg">' +
+    '<defs><linearGradient id="pl" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0" stop-color="#46566a"/><stop offset="1" stop-color="#232e3b"/></linearGradient></defs>' +
+    etincelles + bras +
+    // jambes, bien écartées pour que les baskets ne se touchent pas
+    '<path d="M60,84 L48,101 M80,84 L92,101" stroke="#e9eff6" stroke-width="9" stroke-linecap="round"/>' +
+    basket(34, false) + basket(106, true) +
+    // barre centrale : c'est elle qui porte le visage
+    '<rect x="34" y="52" width="72" height="34" rx="16" fill="#e9eff6"/>' +
+    // disques de l'haltère, posés par-dessus la barre
+    '<rect x="14" y="34" width="26" height="62" rx="9" fill="url(#pl)"/>' +
+    '<rect x="100" y="34" width="26" height="62" rx="9" fill="url(#pl)"/>' +
+    '<rect x="19" y="39" width="16" height="52" rx="6" fill="none" stroke="#5f7186" stroke-width="2" opacity=".55"/>' +
+    '<rect x="105" y="39" width="16" height="52" rx="6" fill="none" stroke="#5f7186" stroke-width="2" opacity=".55"/>' +
+    // le visage vient au-dessus de tout
+    '<rect x="40" y="52" width="60" height="34" rx="15" fill="#e9eff6"/>' +
+    '<rect x="40" y="52" width="60" height="34" rx="15" fill="none" stroke="' + rim + '" stroke-width="2.5" opacity=".6"/>' +
+    yeux + bouche +
+    '</svg>';
 }
 
 function esc(s) {
@@ -1314,7 +1510,7 @@ function openEditor(entry, ctx) {
       save();
       curDate = entry.date;
       closeSheet(); renderToday(); renderHistory();
-      toast(isNew ? 'Repas enregistré' : 'Modifications enregistrées');
+      toast(isNew ? encouragement() : 'Modifications enregistrées');
     };
     const del = el.querySelector('#eDel');
     if (del) del.onclick = () => {
@@ -2119,7 +2315,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.13');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v1.14');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
