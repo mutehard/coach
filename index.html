@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.19</title>
+<title>Coach v2.20</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.20 — Les vignettes de repas ne sont plus conservées : une fois le repas validé, la photo
+           n'a plus d'usage, et c'étaient elles qui remplissaient le stockage — l'horizon passe
+           de quelques mois à plusieurs années. Les vignettes existantes sont purgées, le
+           réglage disparaît. Répare aussi l'import de sauvegarde, cassé en v2.19 : la
+           suppression de l'export CSV avait emporté la fonction d'assainissement voisine.
+
    v2.19 — Retrait de l'export CSV, inutilisé. La sauvegarde JSON reste l'unique export.
 
    v2.18 — Trois corrections : la clé API ne figure plus dans les sauvegardes exportées ;
@@ -595,17 +601,6 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
     </div>
 
     <div class="card">
-      <h2>Photos</h2>
-      <div class="row between">
-        <div class="grow">
-          <div style="font-size:14.5px;font-weight:600">Conserver les vignettes</div>
-          <div class="tiny" style="margin-top:2px">Miniature de chaque repas dans le journal</div>
-        </div>
-        <div class="sw" id="swPhotos"><i></i></div>
-      </div>
-    </div>
-
-    <div class="card">
       <h2>Données</h2>
       <button class="btn sm" id="btnExpJson" style="width:100%">⬇ Sauvegarde complète (.json)</button>
       <p class="tiny" style="margin:7px 0 12px">Tout est dedans : repas, pesées, objectifs, profil, compléments, repas habituels, aliments favoris et volumes. C'est le seul fichier qui permet de tout restaurer.</p>
@@ -616,7 +611,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.19 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.20 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -653,7 +648,6 @@ const DEFAULTS = {
     apiKey: '',
     model: 'qwen/qwen3.6-27b',
     models: [],
-    keepPhotos: true,
     lastExport: 0,
     remindAfter: 0,
     weightRemind: 0,
@@ -698,6 +692,12 @@ let DB;
 try { DB = deepMerge(DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}')); }
 catch (e) { DB = deepMerge(DEFAULTS, {}); }
 const S = () => DB.settings;
+
+/* v2.20 : les vignettes ne sont plus conservées — validé le repas, la photo n'a plus
+   d'usage, et c'étaient elles qui remplissaient le stockage (~22 Ko pièce contre
+   ~0,7 Ko de données par repas). On purge celles des versions précédentes. */
+(function(){ let n = 0; (DB.entries || []).forEach(e => { if (e.thumb) { delete e.thumb; n++; } });
+  if (n) try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} })();
 
 /* Les modèles Llama 4 ont été retirés du catalogue Groq : on rebascule les
    installations qui en avaient un enregistré vers le modèle par défaut. */
@@ -1468,7 +1468,7 @@ function renderToday() {
         const st = sumItems(e.items);
         const names = (e.items || []).map(i => i.name).join(', ');
         return '<div class="entry" data-id="' + esc(e.id) + '">' +
-          (e.thumb ? '<img class="th" src="' + esc(e.thumb) + '" alt="">' : '<div class="th ph">' + m.ico + '</div>') +
+          '<div class="th ph">' + m.ico + '</div>' +
           '<div class="grow"><div class="nm">' + esc(e.title) + '</div><div class="dt">' + esc(names || '—') + '</div></div>' +
           '<div class="kc">' + r0(st.kcal) + '<small>kcal</small></div></div>';
       }).join('') + '</div>';
@@ -2173,7 +2173,7 @@ async function runAnalysis() {
     const corrections = [];
     openEditor(
       { id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(),
-        title: res.titre, items: res.items, thumb: S().keepPhotos ? shots[0].thumb : undefined },
+        title: res.titre, items: res.items },
       { isNew: true, photos: shots.map(s => s.thumb), confiance: res.confiance, remarque: res.remarque,
         corrections: corrections,
         reanalyse: async (correction, previous) => {
@@ -2424,7 +2424,6 @@ function renderSettings() {
   const g = S().goals;
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#gWater').value = g.water;
-  $('#swPhotos').classList.toggle('on', !!S().keepPhotos);
   renderFoodsSettings();
   renderTplsSettings();
   renderSuppsSettings();
@@ -2434,7 +2433,7 @@ function renderSettings() {
     DB.entries.length + ' repas · ' + DB.weights.length + ' pesées · ' +
     (S().templates || []).length + ' repas habituels · ' + (S().foods || []).length + ' aliments · ' +
     (S().supps || []).length + ' compléments · ' + (S().waterPresets || []).length + ' volumes\n' +
-    (bytes / 1024).toFixed(0) + ' Ko utilisés sur ~5000 Ko\n' +
+    (bytes / 1024).toFixed(0) + ' Ko utilisés — sans photos stockées, plusieurs années de journal tiennent dans l\'espace du navigateur\n' +
     'Dernière sauvegarde : ' + (le ? new Date(le).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'jamais');
   $('#storInfo').style.whiteSpace = 'pre-line';
 }
@@ -2478,8 +2477,6 @@ $('#sTest').onclick = async () => {
     S().goals[k] = r0(e.target.value); save(); renderToday();
   };
 });
-
-$('#swPhotos').onclick = () => { S().keepPhotos = !S().keepPhotos; save(); renderSettings(); };
 
 /* Valeurs typiques d'une dose courante, à ajuster selon le produit réellement utilisé :
    seule l'étiquette du pot fait foi. */
@@ -2826,6 +2823,94 @@ async function exportJson() {
 }
 $('#btnExpJson').onclick = exportJson;
 
+/* Une sauvegarde est un fichier arbitraire : on ne recopie jamais ses champs tels quels
+   dans le modèle de données. Chaque valeur est ramenée à son type attendu, et la vignette
+   n'est conservée que si c'est réellement une image encodée en data-URI. */
+function sanitizeBackup(inc) {
+  const txt = (v, max) => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : '').slice(0, max);
+  const num = v => { const n = Math.round(Number(v)); return isFinite(n) ? Math.max(-1e6, Math.min(1e6, n)) : 0; };
+  // grandeurs physiques : toujours positives et plafonnées, sans quoi une sauvegarde
+  // corrompue rend les graphiques et les jauges illisibles
+  const pos = (v, max, def) => { const n = num(v); return n > 0 ? Math.min(n, max) : (def || 0); };
+  const mealIds = ALL_MEALS;
+  const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+  const entries = (inc.entries || []).filter(e => e && typeof e === 'object').map(e => {
+    const o = {
+      id: /^[A-Za-z0-9_-]{1,40}$/.test(e.id) ? e.id : uid(),
+      ts: isFinite(Number(e.ts)) ? Number(e.ts) : Date.now(),
+      date: isDate(e.date) ? e.date : TODAY(),
+      meal: mealIds.indexOf(e.meal) >= 0 ? e.meal : 'collation',
+      title: txt(e.title, 80) || 'Repas',
+      items: (Array.isArray(e.items) ? e.items : []).filter(i => i && typeof i === 'object').map(i => ({
+        name: txt(i.name, 60) || 'Aliment', qty: pos(i.qty, 50000), kcal: pos(i.kcal, 50000),
+        prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000), water: pos(i.water, 20000)
+      }))
+    };
+    if (/^[A-Za-z0-9_-]{1,40}$/.test(e.supp || '')) o.supp = e.supp;
+    return o;
+  });
+
+  // même plage que la saisie manuelle : une pesée hors bornes casserait l'échelle de la courbe
+  const weights = (inc.weights || [])
+    .filter(w => w && isDate(w.date) && Number(w.kg) >= 20 && Number(w.kg) <= 400)
+    .map(w => ({ date: w.date, kg: Math.round(Number(w.kg) * 10) / 10 }));
+
+  const s = inc.settings || {};
+  const g = s.goals || {}, p = s.profile || {};
+  return {
+    version: 1,
+    settings: {
+      apiKey: /^[A-Za-z0-9_-]{0,200}$/.test(s.apiKey || '') ? (s.apiKey || '') : '',
+      model: txt(s.model, 120) || DEFAULTS.settings.model,
+      models: (Array.isArray(s.models) ? s.models : []).slice(0, 200).map(m => txt(m, 120)),
+      foods: (Array.isArray(s.foods) ? s.foods : []).slice(0, 300)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 60) || 'Aliment', qty: pos(x.qty, 50000, 100),
+          kcal: pos(x.kcal, 50000), prot: pos(x.prot, 5000), carb: pos(x.carb, 5000),
+          fat: pos(x.fat, 5000), water: pos(x.water, 20000)
+        })),
+      templates: (Array.isArray(s.templates) ? s.templates : []).slice(0, 60)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 40) || 'Repas type',
+          meal: MEALS.map(m => m.id).indexOf(x.meal) >= 0 ? x.meal : 'petit-dej',
+          items: (Array.isArray(x.items) ? x.items : []).filter(i => i && typeof i === 'object').map(i => ({
+            name: txt(i.name, 60) || 'Aliment', qty: pos(i.qty, 50000), kcal: pos(i.kcal, 50000),
+            prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000), water: pos(i.water, 20000)
+          })),
+          supps: (Array.isArray(x.supps) ? x.supps : []).filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 30)
+        })),
+      waterPresets: (Array.isArray(s.waterPresets) ? s.waterPresets : []).slice(0, 30)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 30) || 'Volume', ml: clamp(num(x.ml), 1, 5000)
+        })),
+      supps: (Array.isArray(s.supps) ? s.supps : []).slice(0, 60)
+        .filter(x => x && typeof x === 'object').map(x => ({
+          id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
+          name: txt(x.name, 40) || 'Complément', dose: txt(x.dose, 30),
+          kcal: pos(x.kcal, 5000), prot: pos(x.prot, 1000), carb: pos(x.carb, 1000), fat: pos(x.fat, 1000)
+        })),
+      lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
+      // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
+      goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
+      goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
+               carb: pos(g.carb, 2000), fat: pos(g.fat, 1000),
+               water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
+      profile: { sex: p.sex === 'f' ? 'f' : 'h',
+                 age: clamp(pos(p.age, 120, 35), 10, 120),
+                 height: clamp(pos(p.height, 250, 175), 100, 250),
+                 weight: clamp(Number(p.weight) || 75, 20, 400),
+                 act: clamp(Number(p.act) || 1.55, 1, 2.5),
+                 aim: clamp(num(p.aim), -1500, 1500) }
+    },
+    entries: entries,
+    weights: weights
+  };
+}
+
 $('#btnImp').onclick = () => $('#fImp').click();
 $('#fImp').onchange = e => {
   const f = e.target.files && e.target.files[0];
@@ -2940,7 +3025,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.19');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.20');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
