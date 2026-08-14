@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.5</title>
+<title>Coach v2.6</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.6 — Trois ajouts pour la recomposition : tendance de poids par régression linéaire avec
+           rythme en kg/semaine, plutôt que la lecture du poids brut ; proposition de recalcul
+           des objectifs dès que le poids s'écarte de 2 kg de celui du dernier calcul ;
+           protéines exprimées en grammes par kilo et réparties par repas.
+
     v2.5 — Coach plus vivant : formulations alternées de façon déterministe selon le jour et
            l'état, et faits contextuels ajoutés au message — moment de repas manquant, palier
            de série, petit-déjeuner matinal, avance des protéines, comparaison à la moyenne
@@ -211,6 +216,9 @@ h1,h2,h3,p{margin:0}
 .celeb span{display:block;font-size:12.5px;color:#9fd9c2;margin-top:3px;line-height:1.4}
 .celeb .x{margin-left:auto;color:#4d8f74;font-size:15px;padding:6px;align-self:flex-start}
 
+.protinfo{font-size:11.5px;color:var(--dim2);margin-top:13px;padding-top:11px;border-top:1px solid var(--line);line-height:1.4}
+.protinfo:empty{display:none}
+.protinfo b{color:var(--prot);font-weight:800;font-size:13px}
 .macro .hd b .ok{color:var(--acc-l);font-size:11px;margin-left:4px}
 .bar i.full{box-shadow:0 0 9px currentColor}
 .bar.big{height:12px;border-radius:6px}
@@ -343,6 +351,9 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .kpi b{display:block;font-size:19px;font-weight:700;letter-spacing:-.5px}
 .kpi span{font-size:9.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
 
+.rate{display:block;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;margin-top:3px}
+.rate b{font-weight:800;font-size:12.5px}
+.rate span{color:var(--dim2);font-weight:500;margin-left:5px}
 .dayrow{display:flex;align-items:center;gap:11px;padding:11px 2px;border-bottom:1px solid var(--line)}
 .dayrow:last-child{border-bottom:0}
 .dayrow .d{font-size:13.5px;font-weight:600}
@@ -391,6 +402,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
   <section id="view-today">
     <div id="backupNag" class="hidden"></div>
     <div id="weightNag" class="hidden"></div>
+    <div id="goalsNag" class="hidden"></div>
     <div class="datenav">
       <button id="dPrev" aria-label="Jour précédent">‹</button>
       <div class="lbl grow" id="dLbl"></div>
@@ -415,6 +427,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
         </div>
         <div class="grow" id="macros"></div>
       </div>
+      <div id="protInfo" class="protinfo"></div>
     </div>
 
     <div id="hydra"></div>
@@ -447,7 +460,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
     </div>
     <div class="card">
       <div class="row between" style="margin-bottom:12px">
-        <h2 style="margin:0">Poids</h2>
+        <h2 style="margin:0">Poids <span id="wRate" class="rate"></span></h2>
         <button class="btn sm" id="btnWeight">+ Saisir</button>
       </div>
       <div id="chartWeight"></div>
@@ -534,7 +547,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.5 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.6 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -575,6 +588,7 @@ const DEFAULTS = {
     lastExport: 0,
     remindAfter: 0,
     weightRemind: 0,
+    goalsWeight: 0,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -1111,6 +1125,56 @@ $('#celeb').onclick = e => { if (e.target.closest('[data-celebx]')) $('#celeb').
    enregistré tant qu'aucun export n'a eu lieu. */
 /* Rappel de pesée hebdomadaire, saisissable sur place : envoyer l'utilisateur dans
    l'onglet Historique pour trois chiffres ferait perdre le geste. */
+/* Les cibles sont calculées à un poids donné. Perdre 5 kg fait baisser la dépense et
+   la cible protéique : sans recalcul, on stagne avec des objectifs périmés sans
+   comprendre pourquoi. On propose, on n'impose pas. */
+function goalsBanner() {
+  const box = $('#goalsNag');
+  if (!box) return;
+  const hide = () => { box.className = 'hidden'; box.innerHTML = ''; };
+  const ref = S().goalsWeight || 0, p = S().profile || {};
+  if (curDate !== TODAY() || !ref || !p.weight) return hide();
+  const ecart = p.weight - ref;
+  if (Math.abs(ecart) < 2) return hide();
+
+  const n = { kcal: 0, prot: 0 };
+  const bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
+  n.kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
+  n.prot = Math.round(p.weight * (p.aim < 0 ? 2.0 : 1.7));
+
+  box.className = '';
+  box.innerHTML = '<div class="nag info"><div class="grow"><b>Objectifs à réajuster</b><span>' +
+    'Tu as ' + (ecart < 0 ? 'perdu ' : 'pris ') + Math.abs(ecart).toFixed(1).replace('.', ',') +
+    ' kg depuis le calcul de tes cibles. Recalculées, elles passeraient à ' +
+    n.kcal + ' kcal et ' + n.prot + ' g de protéines.</span>' +
+    '<div class="wrow"><button class="btn sm" id="gnOk">Recalculer</button>' +
+    '<button class="btn sm gho" id="gnKeep">Garder</button></div></div>' +
+    '<button class="nagX" id="gnLater" aria-label="Plus tard">✕</button>';
+}
+
+$('#goalsNag').onclick = e => {
+  const p = S().profile;
+  if (e.target.closest('#gnOk')) {
+    const bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
+    const kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
+    const prot = Math.round(p.weight * (p.aim < 0 ? 2.0 : 1.7));
+    const fat = Math.round(p.weight * 0.9);
+    S().goals = { kcal: kcal, prot: prot, fat: fat,
+                  carb: Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4)),
+                  water: eauObjectif(p.weight, p.act) };
+    S().goalsWeight = p.weight;
+    save(); renderToday(); renderHistory(); renderSettings();
+    toast('Objectifs recalculés : ' + kcal + ' kcal, ' + prot + ' g de protéines');
+  } else if (e.target.closest('#gnKeep')) {
+    S().goalsWeight = p.weight;   // on prend acte du poids sans toucher aux cibles
+    save(); goalsBanner();
+    toast('Objectifs conservés');
+  } else if (e.target.closest('#gnLater')) {
+    hideGoalsNag();
+  }
+};
+function hideGoalsNag() { const b = $('#goalsNag'); b.className = 'hidden'; b.innerHTML = ''; }
+
 function weightBanner() {
   const box = $('#weightNag');
   if (!box) return;
@@ -1173,6 +1237,7 @@ function renderToday() {
 
   backupBanner();
   weightBanner();
+  goalsBanner();
   renderTpls();
   renderSupps();
 
@@ -1202,6 +1267,14 @@ function renderToday() {
     ['Glucides', t.carb, g.carb, 'var(--carb)'],
     ['Lipides', t.fat, g.fat, 'var(--fat)']
   ];
+  const poids = (S().profile || {}).weight || 0;
+  const parRepas = repasDuJour.slice().sort((a, b) => a.ts - b.ts)
+    .map(e => r0(sumItems(e.items).prot)).filter(x => x > 0);
+  $('#protInfo').innerHTML = (poids && t.prot)
+    ? '<b>' + (t.prot / poids).toFixed(1).replace('.', ',') + '</b> / ' +
+      (g.prot / poids).toFixed(1).replace('.', ',') + ' g de protéines par kilo' +
+      (parRepas.length > 1 ? ' &nbsp;·&nbsp; ' + parRepas.join(' · ') + ' g par repas' : '')
+    : '';
   $('#macros').innerHTML = defs.map(([n, v, gl, col]) => {
     const plein = gl > 0 && v >= gl;
     return '<div class="macro"><div class="hd"><b>' + n + (plein ? '<span class="ok">✓</span>' : '') +
@@ -2008,6 +2081,28 @@ function barChart(days, vals, goal, unite, c1, c2) {
     (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">— — objectif ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
 }
 
+/* Régression linéaire sur les pesées : avec une pesée hebdomadaire, une moyenne mobile
+   sur 7 jours n'a aucun sens — il n'y a qu'un point par fenêtre. Les moindres carrés
+   fonctionnent sur données éparses comme sur données quotidiennes.
+   Le poids brut varie de 1 à 2 kg par jour pour des raisons étrangères à la masse grasse ;
+   c'est la pente, pas la dernière valeur, qui dit si quelque chose bouge. */
+function tendancePoids(pts) {
+  if (pts.length < 3) return null;
+  const t0 = parseD(pts[0].date).getTime();
+  const xs = pts.map(p => (parseD(p.date).getTime() - t0) / DAY);
+  const ys = pts.map(p => p.kg);
+  const jours = xs[xs.length - 1] - xs[0];
+  if (jours < 10) return null;   // trop court pour distinguer une tendance du bruit
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (ys[i] - my); den += (xs[i] - mx) * (xs[i] - mx); }
+  if (!den) return null;
+  const pente = num / den;                       // kg par jour
+  return { pente: pente, rythme: pente * 7, n: n, jours: Math.round(jours),
+           debut: my + pente * (xs[0] - mx), fin: my + pente * (xs[n - 1] - mx) };
+}
+
 function lineChart(pts) {
   if (pts.length < 2) return '<div class="empty" style="padding:20px">Saisis ton poids au moins deux fois pour voir la courbe.</div>';
   const xs = pts.map(p => parseD(p.date).getTime());
@@ -2021,8 +2116,14 @@ function lineChart(pts) {
   const d = pts.map((p, i) => (i ? 'L' : 'M') + X(xs[i]).toFixed(2) + ' ' + Y(p.kg).toFixed(2)).join(' ');
   const dots = pts.map((p, i) => '<circle cx="' + X(xs[i]).toFixed(2) + '" cy="' + Y(p.kg).toFixed(2) + '" r="3" fill="#34d399"/>').join('');
   const delta = ys[ys.length - 1] - ys[0];
+  const tr = tendancePoids(pts);
+  const ligneTendance = tr
+    ? '<line x1="' + X(x0).toFixed(2) + '" y1="' + Y(tr.debut).toFixed(2) +
+      '" x2="' + X(x1).toFixed(2) + '" y2="' + Y(tr.fin).toFixed(2) +
+      '" stroke="#8b9bad" stroke-width="1.6" stroke-dasharray="5 4"/>'
+    : '';
   return '<svg class="chart" viewBox="0 0 ' + CW + ' 150">' +
-    '<line class="gl" x1="0" y1="' + CBASE + '" x2="' + CW + '" y2="' + CBASE + '"/>' +
+    '<line class="gl" x1="0" y1="' + CBASE + '" x2="' + CW + '" y2="' + CBASE + '"/>' + ligneTendance +
     '<path d="' + d + '" fill="none" stroke="#34d399" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>' + dots +
     '<text class="gt" x="0" y="' + CLAB + '">' + ys[0].toFixed(1) + ' kg</text>' +
     '<text class="gt" x="' + (CW / 2) + '" y="' + CLAB + '" text-anchor="middle" fill="' + (delta <= 0 ? '#34d399' : '#fb923c') + '">' +
@@ -2049,6 +2150,17 @@ function renderHistory() {
 
   const wpts = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).filter(w => w.date >= days[0]);
   $('#chartWeight').innerHTML = lineChart(wpts);
+  /* Le rythme se lit sur une fenêtre fixe de 8 semaines, indépendante du sélecteur :
+     une tendance calculée sur 7 jours ne serait que du bruit, et la valeur ne doit pas
+     changer quand on bascule entre 7, 30 et 90 jours. */
+  const fenetre = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
+    .filter(w => w.date >= shiftD(TODAY(), -56));
+  const tr = tendancePoids(fenetre);
+  $('#wRate').innerHTML = tr
+    ? '<b style="color:' + (tr.rythme <= 0 ? '#34d399' : '#fb923c') + '">' +
+      (tr.rythme > 0 ? '+' : '−') + Math.abs(tr.rythme).toFixed(2).replace('.', ',') + ' kg/sem.</b>' +
+      '<span> tendance sur ' + tr.n + ' pesées, ' + tr.jours + ' jours</span>'
+    : '<span>tendance : pas assez de recul</span>';
 
   const rows = days.slice().reverse().filter((d, i) => sumEntries(entriesOf(d)).kcal > 0);
   $('#dayList').innerHTML = rows.length ? rows.map(d => {
@@ -2474,6 +2586,7 @@ $('#btnCalc').onclick = () => {
       el.querySelector('#cOk').onclick = () => {
         DB.settings.profile = cur.v;
         DB.settings.goals = { kcal: cur.kcal, prot: cur.prot, carb: cur.carb, fat: cur.fat, water: cur.water };
+        DB.settings.goalsWeight = cur.v.weight;
         save(); closeSheet(); renderSettings(); renderToday(); renderHistory();
         toast('Objectifs mis à jour');
       };
@@ -2598,6 +2711,7 @@ function sanitizeBackup(inc) {
           kcal: pos(x.kcal, 5000), prot: pos(x.prot, 1000), carb: pos(x.carb, 1000), fat: pos(x.fat, 1000)
         })),
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
+      goalsWeight: pos(s.goalsWeight, 400),
       goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
                carb: pos(g.carb, 2000), fat: pos(g.fat, 1000),
                water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
@@ -2663,7 +2777,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.5');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.6');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
@@ -2690,6 +2804,10 @@ try {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && curDate !== TODAY() && !$('.sheet')) { curDate = TODAY(); renderToday(); }
 });
+
+// installations antérieures à la v2.6 : on ancre la référence sur le poids courant,
+// sinon le bandeau de réajustement se déclencherait sans raison au premier lancement
+if (!S().goalsWeight && S().profile && S().profile.weight) { S().goalsWeight = S().profile.weight; save(); }
 
 renderAll();
 showTab('today');
