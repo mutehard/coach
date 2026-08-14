@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.4</title>
+<title>Coach v2.5</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.5 — Coach plus vivant : formulations alternées de façon déterministe selon le jour et
+           l'état, et faits contextuels ajoutés au message — moment de repas manquant, palier
+           de série, petit-déjeuner matinal, avance des protéines, comparaison à la moyenne
+           des derniers jours. Chaque fait n'est énoncé que s'il est vérifiable à l'écran.
+
     v2.4 — Correction des messages du coach : ils annonçaient un ordinal de repas sans jamais
            consulter le nombre de repas, et le compteur transmis incluait les compléments et
            les ajouts d'eau. Chaque message énonce désormais le nombre réel de repas et le
@@ -529,7 +534,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.5 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -947,60 +952,135 @@ function streak() {
 
 /* Message du coach. Deux règles de fond : ne jamais culpabiliser un dépassement,
    et toujours proposer la prochaine action plutôt que de commenter le passé. */
-function coachState(t, g, nb) {
+/* Choix déterministe : le message doit rester stable tant que rien ne change dans la
+   journée, et varier d'un jour à l'autre. La graine mêle la date et l'état courant. */
+function graine(s) { let x = 7; for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) >>> 0; return x; }
+const tirer = (arr, g) => arr[g % arr.length];
+
+/* Moments de repas encore absents. La collation n'en fait pas partie : elle est
+   facultative, l'annoncer manquante serait faux. */
+function momentsManquants(list) {
+  const faits = {};
+  list.forEach(e => { faits[e.meal] = 1; });
+  return MEALS.filter(m => m.id !== 'collation' && !faits[m.id]);
+}
+
+/* Moyenne des journées complètes précédentes, aujourd'hui exclu. Renvoie 0 si l'on
+   n'a pas assez de recul pour que la comparaison veuille dire quelque chose. */
+function moyenneRecente(n) {
+  const vals = [];
+  for (let i = 1; i <= n; i++) {
+    const k = sumEntries(entriesOf(shiftD(TODAY(), -i))).kcal;
+    if (k > 0) vals.push(k);
+  }
+  return vals.length >= 3 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+}
+
+/* Faits contextuels : chacun n'est ajouté QUE s'il est vrai et vérifiable sur l'écran. */
+function faitsDuJour(t, g, nb, list, h, st) {
+  const f = [];
+  const pk = g.kcal > 0 ? t.kcal / g.kcal : 0;
+  const pp = g.prot > 0 ? t.prot / g.prot : 0;
+
+  if ([3, 7, 14, 21, 30, 60, 100, 200, 365].indexOf(st) >= 0)
+    f.push(st + ' jours de suite, l\'habitude est là.');
+
+  const manquants = momentsManquants(list);
+  if (h >= 17 && manquants.length === 1 && manquants[0].id === 'diner')
+    f.push('Il te reste le dîner.');
+  else if (h >= 13 && h < 17 && manquants.some(m => m.id === 'dejeuner'))
+    f.push('Le déjeuner n\'est pas encore enregistré.');
+  else if (nb && !manquants.length)
+    f.push('Les trois repas sont au compteur.');
+
+  const premier = list.slice().sort((a, b) => a.ts - b.ts)[0];
+  if (premier && h < 12 && new Date(premier.ts).getHours() < 9)
+    f.push('Petit-déjeuner assuré avant 9 h.');
+
+  if (pp >= 0.75 && pk < 0.6)
+    f.push('Les protéines ont de l\'avance sur les calories.');
+
+  if (h >= 20) {
+    const moy = moyenneRecente(7);
+    if (moy && Math.abs(t.kcal - moy) / moy > 0.15)
+      f.push('Ta moyenne des derniers jours est de ' + r0(moy) + ' kcal.');
+  }
+  return f;
+}
+
+function coachState(t, g, nb, list) {
+  list = list || [];
   const ph = g.water > 0 ? t.water / g.water : 1;
   const pk = g.kcal > 0 ? t.kcal / g.kcal : 0;
   const pp = g.prot > 0 ? t.prot / g.prot : 0;
   const h = new Date().getHours();
+  const st = streak();
   const resteP = Math.max(0, r0(g.prot - t.prot));
   const resteK = Math.max(0, r0(g.kcal - t.kcal));
 
   /* Tout message doit être vérifiable sur l'écran : on énonce le nombre réel de repas
-     et ce qu'il reste, jamais un ordinal supposé. Un « deuxième repas quand tu veux »
-     affiché après deux repas enregistrés discrédite tout le reste. */
+     et ce qu'il reste, jamais un ordinal supposé. */
   const bilan = nb + ' repas enregistré' + (nb > 1 ? 's' : '');
   const reste = resteK && resteP ? 'reste ' + resteK + ' kcal et ' + resteP + ' g de protéines'
               : resteK ? 'reste ' + resteK + ' kcal'
               : resteP ? 'reste ' + resteP + ' g de protéines'
               : 'objectifs couverts';
 
-  if (!nb) return h < 11
-    ? { mood: 'repos', t: 'Nouvelle journée', s: 'Ta première assiette t\'attend. On commence fort.' }
-    : { mood: 'repos', t: 'Rien d\'enregistré', s: 'Une photo suffit pour lancer la journée.' };
+  const gr = graine(curDate + '|' + nb + '|' + Math.round(pk * 20));
+  const faits = faitsDuJour(t, g, nb, list, h, st);
+  const sel = faits.length ? ' ' + tirer(faits, gr) : '';
+
+  if (!nb) {
+    if (h < 11) return { mood: 'repos', t: tirer(['Nouvelle journée', 'On y va', 'Premier round'], gr),
+      s: tirer(['Ta première assiette t\'attend.', 'Une photo et c\'est parti.', 'La journée est vierge, à toi de jouer.'], gr) };
+    if (h < 18) return { mood: 'repos', t: tirer(['Rien d\'enregistré', 'Compteur à zéro'], gr),
+      s: 'Une photo suffit pour lancer la journée.' };
+    return { mood: 'repos', t: 'Journée non enregistrée', s: 'Il est encore temps de rattraper les repas de la journée.' };
+  }
 
   if (pk >= 0.9 && pk <= 1.1 && pp >= 1)
     return ph >= 1
-      ? { mood: 'champion', t: 'Journée parfaite', s: bilan + '. Calories, protéines et hydratation : tout y est.' }
-      : { mood: 'champion', t: 'Objectif atteint', s: 'Reste ' + r0(g.water - t.water) + ' ml à boire pour boucler la journée.' };
+      ? { mood: 'champion', t: tirer(['Journée parfaite', 'Sans faute', 'Carton plein'], gr),
+          s: bilan + '. Calories, protéines et hydratation : tout y est.' + sel }
+      : { mood: 'champion', t: tirer(['Objectif atteint', 'C\'est validé'], gr),
+          s: 'Reste ' + r0(g.water - t.water) + ' ml à boire pour boucler la journée.' };
 
   if (pk > 1.15)
-    return { mood: 'gene', t: 'Journée copieuse', s: bilan + ', ' + r0(t.kcal) + ' kcal au compteur. Ça arrive, et ça compte moins que la régularité.' };
+    return { mood: 'gene', t: tirer(['Journée copieuse', 'Journée généreuse'], gr),
+      s: bilan + ', ' + r0(t.kcal) + ' kcal au compteur. Ça arrive, et ça compte moins que la régularité.' };
 
   if (pp >= 1 && pk < 0.9)
-    return { mood: 'motive', t: 'Protéines validées', s: bilan + ', il te reste ' + resteK + ' kcal à placer.' };
+    return { mood: 'motive', t: tirer(['Protéines validées', 'Protéines dans la boîte'], gr),
+      s: bilan + ', il te reste ' + resteK + ' kcal à placer.' + sel };
 
   if (h >= 20 && pk < 0.7)
-    return { mood: 'content', t: 'Journée légère', s: bilan + ', ' + reste + ' si tu veux boucler.' };
+    return { mood: 'content', t: tirer(['Journée légère', 'Journée courte'], gr),
+      s: bilan + ', ' + reste + ' si tu veux boucler.' + sel };
 
   /* Seuil volontairement strict : sous 40 % à 14 h, presque toutes les après-midis
      déclencheraient ce message et masqueraient l'avancement des repas. */
   if (ph < 0.3 && h >= 16)
-    return { mood: 'motive', t: 'Pense à boire', s: bilan + ', mais seulement ' + r0(t.water) + ' ml bus sur ' + r0(g.water) + '.' };
+    return { mood: 'motive', t: tirer(['Pense à boire', 'Un verre s\'impose'], gr),
+      s: bilan + ', mais seulement ' + r0(t.water) + ' ml bus sur ' + r0(g.water) + '.' };
 
   if (pk >= 0.75)
-    return { mood: 'motive', t: 'Dernière ligne droite', s: bilan + ', ' + reste + '.' };
+    return { mood: 'motive', t: tirer(['Dernière ligne droite', 'Plus grand-chose', 'Tu y es presque'], gr),
+      s: bilan + ', ' + reste + '.' + sel };
 
   if (pk >= 0.5)
-    return { mood: 'motive', t: 'Plus de la moitié', s: bilan + ', ' + reste + '.' };
+    return { mood: 'motive', t: tirer(['Plus de la moitié', 'À mi-parcours', 'Le rythme est bon'], gr),
+      s: bilan + ', ' + reste + '.' + sel };
 
   if (pk >= 0.25)
-    return { mood: 'content', t: 'Bien lancé', s: bilan + ', ' + reste + '.' };
+    return { mood: 'content', t: tirer(['Bien lancé', 'En route', 'Ça avance'], gr),
+      s: bilan + ', ' + reste + '.' + sel };
 
-  return { mood: 'content', t: 'C\'est parti', s: bilan + ', ' + reste + '.' };
+  return { mood: 'content', t: tirer(['C\'est parti', 'Premier jalon'], gr),
+    s: bilan + ', ' + reste + '.' + sel };
 }
 
-function renderCoach(t, g, nb) {
-  const c = coachState(t, g, nb);
+function renderCoach(t, g, nb, list) {
+  const c = coachState(t, g, nb, list);
   const st = streak();
   $('#coach').innerHTML =
     '<div class="av bob">' + avatarSvg(c.mood, g.kcal > 0 ? t.kcal / g.kcal : 0) + '</div>' +
@@ -1112,7 +1192,8 @@ function renderToday() {
   $('#ringSub').textContent = left >= 0 ? ('reste ' + left) : ('+' + (-left) + ' kcal');
 
   renderHydra(t, g);
-  const c = renderCoach(t, g, list.filter(e => e.meal !== SUPP && e.meal !== DRINK).length);
+  const repasDuJour = list.filter(e => e.meal !== SUPP && e.meal !== DRINK);
+  const c = renderCoach(t, g, repasDuJour.length, repasDuJour);
   celebrate(c);
 
   // barres macros
@@ -2582,7 +2663,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.4');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.5');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
