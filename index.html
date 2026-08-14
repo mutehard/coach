@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.11</title>
+<title>Coach v2.12</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,14 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.12 — Correction : deepMerge partageait ses structures avec les valeurs par défaut, si bien
+           que sur un stockage vide toute écriture de réglage modifiait DEFAULTS lui-même.
+           « Remplacer » effaçait par ailleurs les repas habituels, aliments favoris et volumes
+           quand le fichier importé provenait d'une version antérieure à ces fonctions. Une clé
+           absente du fichier est désormais traitée comme une absence d'information, non comme
+           une suppression. L'écran d'import affiche l'inventaire exact du fichier avant toute
+           action, et signale ce qu'il ne contient pas.
+
    v2.11 — Les deux exports portent désormais des noms sans ambiguïté : « Sauvegarde complète »
            pour le JSON, qui seul restaure tout, et « Tableur des repas » pour le CSV, qui ne
            contient ni réglages ni favoris. L'import énonce précisément ce qu'il a restauré,
@@ -238,6 +246,10 @@ h1,h2,h3,p{margin:0}
 .celeb span{display:block;font-size:12.5px;color:#9fd9c2;margin-top:3px;line-height:1.4}
 .celeb .x{margin-left:auto;color:#4d8f74;font-size:15px;padding:6px;align-self:flex-start}
 
+.inv{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 13px}
+.inv div{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12.5px}
+.inv span{color:var(--dim)}
+.inv b{font-weight:800;font-variant-numeric:tabular-nums}
 .protinfo{font-size:11.5px;color:var(--dim);margin-top:12px;padding-top:10px;border-top:1px solid var(--line);line-height:1.45}
 .protinfo:empty{display:none}
 .protinfo b{color:var(--prot);font-weight:800;font-size:13.5px}
@@ -570,7 +582,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.11 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -625,6 +637,14 @@ const DEFAULTS = {
 
 function deepMerge(base, over) {
   const out = Array.isArray(base) ? base.slice() : Object.assign({}, base);
+  /* `Object.assign` ne copie que le premier niveau : sans ce détachement, les
+     conteneurs hérités de `base` restent partagés. Sur un stockage vide,
+     DB.settings était littéralement DEFAULTS.settings, et toute écriture allait
+     modifier les valeurs par défaut de l'application. */
+  for (const k in out) {
+    if (Array.isArray(out[k])) out[k] = out[k].slice();
+    else if (out[k] && typeof out[k] === 'object') out[k] = deepMerge(out[k], {});
+  }
   for (const k in over) {
     const v = over[k];
     out[k] = (v && typeof v === 'object' && !Array.isArray(v) && typeof base[k] === 'object' && base[k])
@@ -2801,16 +2821,38 @@ $('#fImp').onchange = e => {
   if (!f) return;
   const rd = new FileReader();
   rd.onload = () => {
-    let inc;
-    try { inc = JSON.parse(rd.result); } catch (err) { toast('Fichier JSON illisible'); return; }
-    if (!inc || !Array.isArray(inc.entries)) { toast('Ce fichier n\'est pas une sauvegarde Coach'); return; }
-    inc = sanitizeBackup(inc);
+    let brut;
+    try { brut = JSON.parse(rd.result); } catch (err) { toast('Fichier JSON illisible'); return; }
+    if (!brut || !Array.isArray(brut.entries)) { toast('Ce fichier n\'est pas une sauvegarde Coach'); return; }
+
+    /* Une clé absente du fichier n'est PAS une liste vide : c'est une sauvegarde
+       antérieure à la fonction. On mémorise donc la présence réelle de chaque clé
+       AVANT l'assainissement, qui, lui, crée systématiquement des listes vides. */
+    const brutS = brut.settings || {};
+    const fourni = k => brutS[k] !== undefined && brutS[k] !== null;
+    const inc = sanitizeBackup(brut);
+
+    const inv = [
+      ['repas', inc.entries.length, true],
+      ['pesées', (inc.weights || []).length, true],
+      ['repas habituels', (inc.settings.templates || []).length, fourni('templates')],
+      ['aliments favoris', (inc.settings.foods || []).length, fourni('foods')],
+      ['compléments', (inc.settings.supps || []).length, fourni('supps')],
+      ['volumes d\'eau', (inc.settings.waterPresets || []).length, fourni('waterPresets')],
+      ['objectifs', fourni('goals') ? 1 : 0, fourni('goals')]
+    ];
+    const manquants = inv.filter(x => !x[2]).map(x => x[0]);
+
     sheet('Importer',
-      '<p class="muted" style="margin-bottom:14px">La sauvegarde contient <b>' + inc.entries.length + ' repas</b> et <b>' +
-      ((inc.weights || []).length) + ' pesées</b>.</p>' +
-      '<p class="tiny" style="margin-bottom:12px">La fusion ajoute les repas et pesées absents, ' +
-      'et restaure objectifs, profil, compléments, repas habituels, aliments et volumes. ' +
-      'Ta clé API en place n\'est pas remplacée.</p>' +
+      '<p class="muted" style="margin-bottom:10px">Ce fichier contient :</p>' +
+      '<div class="inv">' + inv.map(x =>
+        '<div><span>' + x[0] + '</span><b>' + (x[2] ? (x[0] === 'objectifs' ? 'oui' : x[1]) : '—') + '</b></div>').join('') +
+      '</div>' +
+      (manquants.length
+        ? '<p class="tiny" style="margin:11px 0 12px;color:#fbbf24">Ce fichier ne contient pas : ' + manquants.join(', ') +
+          '. Il a été créé par une version antérieure. Ces éléments seront <b>conservés</b> tels quels, jamais effacés.</p>'
+        : '<p class="tiny" style="margin:11px 0 12px">La fusion ajoute les repas et pesées absents et restaure la configuration. ' +
+          'Ta clé API en place n\'est pas remplacée.</p>') +
       '<button class="btn pri" id="iMerge">Fusionner avec mes données</button>' +
       '<button class="btn dan gho" id="iRepl" style="margin-top:9px">Remplacer toutes mes données</button>',
       el => {
@@ -2857,10 +2899,15 @@ $('#fImp').onchange = e => {
         };
         el.querySelector('#iRepl').onclick = () => {
           if (!confirm('Remplacer définitivement toutes tes données actuelles ?')) return;
-          const key = S().apiKey;
+          const avant = JSON.parse(JSON.stringify(DB.settings));
           DB = deepMerge(DEFAULTS, inc);
-          if (!DB.settings.apiKey) DB.settings.apiKey = key;
-          save(); closeSheet(); renderAll(); toast('Données remplacées');
+          /* Remplacer ne veut pas dire effacer ce dont le fichier ne parle pas :
+             une sauvegarde antérieure aux repas habituels ne doit pas les supprimer. */
+          ['templates', 'foods', 'supps', 'waterPresets', 'goals', 'profile', 'goalsWeight', 'model']
+            .forEach(k => { if (!fourni(k) && avant[k] !== undefined) DB.settings[k] = avant[k]; });
+          if (!DB.settings.apiKey) DB.settings.apiKey = avant.apiKey;
+          save(); closeSheet(); renderAll();
+          toast(manquants.length ? 'Données remplacées · ' + manquants.join(', ') + ' conservés' : 'Données remplacées');
         };
       });
   };
@@ -2881,7 +2928,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.11');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.12');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
