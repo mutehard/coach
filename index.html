@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.6</title>
+<title>Coach v2.7</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.7 — Seuil de réajustement des objectifs ramené de 2 kg à 500 g. La comparaison porte
+           désormais sur le poids lissé par la régression et non sur la dernière pesée,
+           sans quoi le bruit quotidien de 1 à 2 kg déclencherait le bandeau en permanence.
+
     v2.6 — Trois ajouts pour la recomposition : tendance de poids par régression linéaire avec
            rythme en kg/semaine, plutôt que la lecture du poids brut ; proposition de recalcul
            des objectifs dès que le poids s'écarte de 2 kg de celui du dernier calcul ;
@@ -547,7 +551,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.6 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.7 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1128,25 +1132,39 @@ $('#celeb').onclick = e => { if (e.target.closest('[data-celebx]')) $('#celeb').
 /* Les cibles sont calculées à un poids donné. Perdre 5 kg fait baisser la dépense et
    la cible protéique : sans recalcul, on stagne avec des objectifs périmés sans
    comprendre pourquoi. On propose, on n'impose pas. */
+/* Poids de référence pour le pilotage des objectifs. On prend la valeur LISSÉE par la
+   régression, jamais la dernière pesée : à 500 g de seuil, le bruit quotidien de 1 à 2 kg
+   ferait sonner le bandeau en permanence et les cibles oscilleraient sans raison. */
+function poidsCourant() {
+  const w = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
+    .filter(x => x.date >= shiftD(TODAY(), -56));
+  const tr = tendancePoids(w);
+  if (tr) return { kg: Math.round(tr.fin * 10) / 10, lisse: true };
+  const dernier = w[w.length - 1];
+  return { kg: dernier ? dernier.kg : ((S().profile || {}).weight || 0), lisse: false };
+}
+
 function goalsBanner() {
   const box = $('#goalsNag');
   if (!box) return;
   const hide = () => { box.className = 'hidden'; box.innerHTML = ''; };
   const ref = S().goalsWeight || 0, p = S().profile || {};
-  if (curDate !== TODAY() || !ref || !p.weight) return hide();
-  const ecart = p.weight - ref;
-  if (Math.abs(ecart) < 2) return hide();
+  const pc = poidsCourant();
+  if (curDate !== TODAY() || !ref || !pc.kg) return hide();
+  const ecart = pc.kg - ref;
+  if (Math.abs(ecart) < 0.5) return hide();
 
   const n = { kcal: 0, prot: 0 };
-  const bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
+  const bmr = 10 * pc.kg + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
   n.kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
-  n.prot = Math.round(p.weight * (p.aim < 0 ? 2.0 : 1.7));
+  n.prot = Math.round(pc.kg * (p.aim < 0 ? 2.0 : 1.7));
 
   box.className = '';
   box.innerHTML = '<div class="nag info"><div class="grow"><b>Objectifs à réajuster</b><span>' +
-    'Tu as ' + (ecart < 0 ? 'perdu ' : 'pris ') + Math.abs(ecart).toFixed(1).replace('.', ',') +
-    ' kg depuis le calcul de tes cibles. Recalculées, elles passeraient à ' +
-    n.kcal + ' kcal et ' + n.prot + ' g de protéines.</span>' +
+    (ecart < 0 ? 'Tu as perdu ' : 'Tu as pris ') + Math.abs(ecart).toFixed(1).replace('.', ',') +
+    ' kg depuis le calcul de tes cibles' +
+    (pc.lisse ? ', d\'après ta tendance (' + pc.kg.toFixed(1).replace('.', ',') + ' kg)' : '') +
+    '. Recalculées, elles passeraient à ' + n.kcal + ' kcal et ' + n.prot + ' g de protéines.</span>' +
     '<div class="wrow"><button class="btn sm" id="gnOk">Recalculer</button>' +
     '<button class="btn sm gho" id="gnKeep">Garder</button></div></div>' +
     '<button class="nagX" id="gnLater" aria-label="Plus tard">✕</button>';
@@ -1154,19 +1172,20 @@ function goalsBanner() {
 
 $('#goalsNag').onclick = e => {
   const p = S().profile;
+  const pc = poidsCourant();
   if (e.target.closest('#gnOk')) {
-    const bmr = 10 * p.weight + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
+    const bmr = 10 * pc.kg + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
     const kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
-    const prot = Math.round(p.weight * (p.aim < 0 ? 2.0 : 1.7));
-    const fat = Math.round(p.weight * 0.9);
+    const prot = Math.round(pc.kg * (p.aim < 0 ? 2.0 : 1.7));
+    const fat = Math.round(pc.kg * 0.9);
     S().goals = { kcal: kcal, prot: prot, fat: fat,
                   carb: Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4)),
-                  water: eauObjectif(p.weight, p.act) };
-    S().goalsWeight = p.weight;
+                  water: eauObjectif(pc.kg, p.act) };
+    S().goalsWeight = pc.kg;
     save(); renderToday(); renderHistory(); renderSettings();
     toast('Objectifs recalculés : ' + kcal + ' kcal, ' + prot + ' g de protéines');
   } else if (e.target.closest('#gnKeep')) {
-    S().goalsWeight = p.weight;   // on prend acte du poids sans toucher aux cibles
+    S().goalsWeight = pc.kg;   // on prend acte du poids sans toucher aux cibles
     save(); goalsBanner();
     toast('Objectifs conservés');
   } else if (e.target.closest('#gnLater')) {
@@ -2777,7 +2796,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.6');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.7');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
