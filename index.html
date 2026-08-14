@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.14</title>
+<title>Coach v2.15</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,8 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.15 — Logo de l'en-tête : un shaker, en remplacement de l'assiette et des couverts.
+
    v2.14 — Logo de l'en-tête : l'assiette et les couverts, identiques à l'icône de l'écran
            d'accueil, en remplacement de la tête de mascotte.
 
@@ -596,7 +598,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.14 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.15 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1490,22 +1492,22 @@ function avatarSvg(mood, t) {
     visage + '</g></svg>';
 }
 
-/* Logo de l'en-tête : l'assiette et les couverts, le même signe que l'icône posée
-   sur l'écran d'accueil. Continuité entre l'icône que l'on touche et l'app qui
-   s'ouvre. Testé à 22, 30 et 110 px — la mascotte et le carré de couleur ont été
-   écartés, l'une trop chargée à cette taille, l'autre muet. */
+/* Logo de l'en-tête : un shaker. Le signe le plus parlant pour une app de suivi
+   sportif, et cohérent avec le moment « Shaker » du journal.
+   Corps plein plutôt que contour : à 22 px, la masse tient mieux que le trait.
+   Les deux graduations sont évidées en `var(--bg)` — elles doivent donc se fondre
+   dans le fond OPAQUE de la barre de titre. */
 function logoSvg() {
   return '<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
     '<defs><linearGradient id="lgo" x1="0" y1="0" x2="1" y2="1">' +
     '<stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#059669"/></linearGradient></defs>' +
     '<g fill="url(#lgo)">' +
-    '<circle cx="20" cy="20" r="10.5"/><circle cx="20" cy="20" r="5.6" fill="var(--bg)"/>' +
-    '<rect x="2.2" y="7.5" width="2.4" height="8.5" rx="1.2"/>' +
-    '<rect x="6" y="7.5" width="2.4" height="8.5" rx="1.2"/>' +
-    '<rect x="2.2" y="14.5" width="6.2" height="3.4" rx="1.7"/>' +
-    '<rect x="4.1" y="17" width="2.4" height="15.5" rx="1.2"/>' +
-    '<path d="M33.2,7.5 q3.4,0 3.4,5.4 t-3.4,5.4 z"/>' +
-    '<rect x="33.2" y="17" width="2.4" height="15.5" rx="1.2"/>' +
+    '<rect x="13.6" y="2.5" width="12.8" height="5.6" rx="2.4"/>' +
+    '<rect x="15.4" y="8.4" width="9.2" height="2.2"/>' +
+    '<path d="M12,11 h16 a2.4,2.4 0 0 1 2.4,2.6 l-1,19.8 a3.2,3.2 0 0 1 -3.2,3 ' +
+    'h-12.4 a3.2,3.2 0 0 1 -3.2,-3 l-1,-19.8 a2.4,2.4 0 0 1 2.4,-2.6 z"/>' +
+    '<rect x="13.6" y="19.4" width="12.8" height="2.6" rx="1.3" fill="var(--bg)"/>' +
+    '<rect x="13.6" y="25" width="8" height="2.6" rx="1.3" fill="var(--bg)"/>' +
     '</g></svg>';
 }
 
@@ -2961,7 +2963,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.14');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.15');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
