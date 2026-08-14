@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.7</title>
+<title>Coach v2.8</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v2.8 — Le coach distingue repas, collations et shakers : une collation n'est pas un repas.
+           Nouveau moment « Shaker ». L'import en fusion restaure désormais objectifs, profil
+           et listes de réglages — il ne reprenait que les repas et les pesées, obligeant à
+           tout ressaisir après une restauration.
+
     v2.7 — Seuil de réajustement des objectifs ramené de 2 kg à 500 g. La comparaison porte
            désormais sur le poids lissé par la régression et non sur la dernière pesée,
            sans quoi le bruit quotidien de 1 à 2 kg déclencherait le bandeau en permanence.
@@ -551,7 +556,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.7 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.8 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -667,8 +672,14 @@ const MEALS = [
   { id: 'petit-dej', label: 'Petit-déjeuner', ico: '☕' },
   { id: 'dejeuner', label: 'Déjeuner', ico: '🍽' },
   { id: 'diner', label: 'Dîner', ico: '🌙' },
-  { id: 'collation', label: 'Collation', ico: '🍎' }
+  { id: 'collation', label: 'Collation', ico: '🍎' },
+  { id: 'shaker', label: 'Shaker', ico: '🥤' }
 ];
+
+/* Un repas est un repas ; une collation et un shaker n'en sont pas. Le coach doit
+   respecter cette distinction, sinon son décompte ne reflète pas la journée réelle. */
+const REPAS_PRINCIPAUX = ['petit-dej', 'dejeuner', 'diner'];
+const estRepas = m => REPAS_PRINCIPAUX.indexOf(m) >= 0;
 
 const ALL_MEALS = MEALS.map(m => m.id).concat([SUPP, DRINK]);
 const mealLabel = id => id === SUPP ? 'Complément' : id === DRINK ? 'Boisson'
@@ -980,7 +991,23 @@ const tirer = (arr, g) => arr[g % arr.length];
 function momentsManquants(list) {
   const faits = {};
   list.forEach(e => { faits[e.meal] = 1; });
-  return MEALS.filter(m => m.id !== 'collation' && !faits[m.id]);
+  return MEALS.filter(m => estRepas(m.id) && !faits[m.id]);
+}
+
+/* Décompte en clair, sans piège d'accord : « 2 repas et 1 collation au compteur ». */
+function bilanPrises(list) {
+  const n = { repas: 0, collation: 0, shaker: 0 };
+  list.forEach(e => {
+    if (estRepas(e.meal)) n.repas++;
+    else if (e.meal === 'shaker') n.shaker++;
+    else if (e.meal === 'collation') n.collation++;
+  });
+  const p = [];
+  if (n.repas) p.push(n.repas + ' repas');
+  if (n.collation) p.push(n.collation + ' collation' + (n.collation > 1 ? 's' : ''));
+  if (n.shaker) p.push(n.shaker + ' shaker' + (n.shaker > 1 ? 's' : ''));
+  const txt = p.length > 1 ? p.slice(0, -1).join(', ') + ' et ' + p[p.length - 1] : p[0] || '';
+  return { n: n, txt: txt ? txt + ' au compteur' : '' };
 }
 
 /* Moyenne des journées complètes précédentes, aujourd'hui exclu. Renvoie 0 si l'on
@@ -995,7 +1022,7 @@ function moyenneRecente(n) {
 }
 
 /* Faits contextuels : chacun n'est ajouté QUE s'il est vrai et vérifiable sur l'écran. */
-function faitsDuJour(t, g, nb, list, h, st) {
+function faitsDuJour(t, g, nb, list, h, st) {   // nb = repas principaux uniquement
   const f = [];
   const pk = g.kcal > 0 ? t.kcal / g.kcal : 0;
   const pp = g.prot > 0 ? t.prot / g.prot : 0;
@@ -1009,7 +1036,7 @@ function faitsDuJour(t, g, nb, list, h, st) {
   else if (h >= 13 && h < 17 && manquants.some(m => m.id === 'dejeuner'))
     f.push('Le déjeuner n\'est pas encore enregistré.');
   else if (nb && !manquants.length)
-    f.push('Les trois repas sont au compteur.');
+    f.push('Petit-déjeuner, déjeuner et dîner sont couverts.');
 
   const premier = list.slice().sort((a, b) => a.ts - b.ts)[0];
   if (premier && h < 12 && new Date(premier.ts).getHours() < 9)
@@ -1026,8 +1053,11 @@ function faitsDuJour(t, g, nb, list, h, st) {
   return f;
 }
 
-function coachState(t, g, nb, list) {
+function coachState(t, g, nbIgnore, list) {
   list = list || [];
+  const bp = bilanPrises(list);
+  const nb = bp.n.repas;              // seuls les repas principaux comptent comme repas
+  const rien = !list.length;
   const ph = g.water > 0 ? t.water / g.water : 1;
   const pk = g.kcal > 0 ? t.kcal / g.kcal : 0;
   const pp = g.prot > 0 ? t.prot / g.prot : 0;
@@ -1038,17 +1068,17 @@ function coachState(t, g, nb, list) {
 
   /* Tout message doit être vérifiable sur l'écran : on énonce le nombre réel de repas
      et ce qu'il reste, jamais un ordinal supposé. */
-  const bilan = nb + ' repas enregistré' + (nb > 1 ? 's' : '');
+  const bilan = bp.txt;
   const reste = resteK && resteP ? 'reste ' + resteK + ' kcal et ' + resteP + ' g de protéines'
               : resteK ? 'reste ' + resteK + ' kcal'
               : resteP ? 'reste ' + resteP + ' g de protéines'
               : 'objectifs couverts';
 
-  const gr = graine(curDate + '|' + nb + '|' + Math.round(pk * 20));
+  const gr = graine(curDate + '|' + list.length + '|' + Math.round(pk * 20));
   const faits = faitsDuJour(t, g, nb, list, h, st);
   const sel = faits.length ? ' ' + tirer(faits, gr) : '';
 
-  if (!nb) {
+  if (rien) {
     if (h < 11) return { mood: 'repos', t: tirer(['Nouvelle journée', 'On y va', 'Premier round'], gr),
       s: tirer(['Ta première assiette t\'attend.', 'Une photo et c\'est parti.', 'La journée est vierge, à toi de jouer.'], gr) };
     if (h < 18) return { mood: 'repos', t: tirer(['Rien d\'enregistré', 'Compteur à zéro'], gr),
@@ -1097,8 +1127,8 @@ function coachState(t, g, nb, list) {
     s: bilan + ', ' + reste + '.' + sel };
 }
 
-function renderCoach(t, g, nb, list) {
-  const c = coachState(t, g, nb, list);
+function renderCoach(t, g, list) {
+  const c = coachState(t, g, 0, list);
   const st = streak();
   $('#coach').innerHTML =
     '<div class="av bob">' + avatarSvg(c.mood, g.kcal > 0 ? t.kcal / g.kcal : 0) + '</div>' +
@@ -1277,7 +1307,7 @@ function renderToday() {
 
   renderHydra(t, g);
   const repasDuJour = list.filter(e => e.meal !== SUPP && e.meal !== DRINK);
-  const c = renderCoach(t, g, repasDuJour.length, repasDuJour);
+  const c = renderCoach(t, g, repasDuJour);
   celebrate(c);
 
   // barres macros
@@ -1292,7 +1322,7 @@ function renderToday() {
   $('#protInfo').innerHTML = (poids && t.prot)
     ? '<b>' + (t.prot / poids).toFixed(1).replace('.', ',') + '</b> / ' +
       (g.prot / poids).toFixed(1).replace('.', ',') + ' g de protéines par kilo' +
-      (parRepas.length > 1 ? ' &nbsp;·&nbsp; ' + parRepas.join(' · ') + ' g par repas' : '')
+      (parRepas.length > 1 ? ' &nbsp;·&nbsp; ' + parRepas.join(' · ') + ' g par prise' : '')
     : '';
   $('#macros').innerHTML = defs.map(([n, v, gl, col]) => {
     const plein = gl > 0 && v >= gl;
@@ -2730,7 +2760,8 @@ function sanitizeBackup(inc) {
           kcal: pos(x.kcal, 5000), prot: pos(x.prot, 1000), carb: pos(x.carb, 1000), fat: pos(x.fat, 1000)
         })),
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
-      goalsWeight: pos(s.goalsWeight, 400),
+      // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
+      goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
                carb: pos(g.carb, 2000), fat: pos(g.fat, 1000),
                water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
@@ -2760,6 +2791,9 @@ $('#fImp').onchange = e => {
     sheet('Importer',
       '<p class="muted" style="margin-bottom:14px">La sauvegarde contient <b>' + inc.entries.length + ' repas</b> et <b>' +
       ((inc.weights || []).length) + ' pesées</b>.</p>' +
+      '<p class="tiny" style="margin-bottom:12px">La fusion ajoute les repas et pesées absents, ' +
+      'et restaure objectifs, profil, compléments, repas habituels, aliments et volumes. ' +
+      'Ta clé API en place n\'est pas remplacée.</p>' +
       '<button class="btn pri" id="iMerge">Fusionner avec mes données</button>' +
       '<button class="btn dan gho" id="iRepl" style="margin-top:9px">Remplacer toutes mes données</button>',
       el => {
@@ -2768,7 +2802,27 @@ $('#fImp').onchange = e => {
           inc.entries.forEach(x => { if (!have.has(x.id)) DB.entries.push(x); });
           const hw = new Set(DB.weights.map(w => w.date));
           (inc.weights || []).forEach(w => { if (!hw.has(w.date)) DB.weights.push(w); });
-          save(); closeSheet(); renderAll(); toast('Sauvegarde fusionnée');
+
+          /* Une sauvegarde sert aussi à ne pas retaper sa configuration. La fusion
+             restaure donc objectifs et profil, et complète les listes par identifiant
+             sans écraser ce qui existe déjà en local. */
+          const s = inc.settings || {};
+          const compl = (loc, imp) => {
+            const ids = {}; (loc || []).forEach(x => { ids[x.id] = 1; });
+            return (loc || []).concat((imp || []).filter(x => !ids[x.id]));
+          };
+          if (s.goals) DB.settings.goals = s.goals;
+          if (s.profile) DB.settings.profile = s.profile;
+          if (s.goalsWeight) DB.settings.goalsWeight = s.goalsWeight;
+          if (s.model) DB.settings.model = s.model;
+          DB.settings.supps = compl(DB.settings.supps, s.supps);
+          DB.settings.templates = compl(DB.settings.templates, s.templates);
+          DB.settings.foods = compl(DB.settings.foods, s.foods);
+          DB.settings.waterPresets = compl(DB.settings.waterPresets, s.waterPresets);
+          if (!DB.settings.apiKey && s.apiKey) DB.settings.apiKey = s.apiKey;
+
+          save(); closeSheet(); renderAll();
+          toast('Sauvegarde fusionnée · objectifs et réglages restaurés');
         };
         el.querySelector('#iRepl').onclick = () => {
           if (!confirm('Remplacer définitivement toutes tes données actuelles ?')) return;
@@ -2796,7 +2850,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.7');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.8');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
