@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.13</title>
+<title>Coach v2.14</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,9 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.14 — Logo de l'en-tête : l'assiette et les couverts, identiques à l'icône de l'écran
+           d'accueil, en remplacement de la tête de mascotte.
+
    v2.13 — La barre de titre passait sous l'horloge de l'iPhone au défilement : la zone de
            sécurité est désormais portée par la barre elle-même et non par le body. Le carré
            vert de l'en-tête est remplacé par la tête de la mascotte.
@@ -593,7 +596,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.13 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.14 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1487,17 +1490,23 @@ function avatarSvg(mood, t) {
     visage + '</g></svg>';
 }
 
-/* Logo de l'en-tête : la tête de la mascotte, pour que l'identité de l'app
-   soit la même en haut de l'écran et dans la carte du jour. */
+/* Logo de l'en-tête : l'assiette et les couverts, le même signe que l'icône posée
+   sur l'écran d'accueil. Continuité entre l'icône que l'on touche et l'app qui
+   s'ouvre. Testé à 22, 30 et 110 px — la mascotte et le carré de couleur ont été
+   écartés, l'une trop chargée à cette taille, l'autre muet. */
 function logoSvg() {
   return '<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
-    '<circle cx="20" cy="20" r="18" fill="' + teint(1) + '"/>' +
-    '<circle cx="20" cy="20" r="18" fill="none" stroke="rgba(150,80,20,.3)" stroke-width="1.6"/>' +
-    '<circle cx="14.2" cy="17.5" r="2.9" fill="#101820"/>' +
-    '<circle cx="25.8" cy="17.5" r="2.9" fill="#101820"/>' +
-    '<circle cx="15.3" cy="16.4" r="1" fill="#fff"/><circle cx="26.9" cy="16.4" r="1" fill="#fff"/>' +
-    '<path d="M13.5,25 q6.5,6 13,0" stroke="#101820" stroke-width="2.6" fill="none" stroke-linecap="round"/>' +
-    '</svg>';
+    '<defs><linearGradient id="lgo" x1="0" y1="0" x2="1" y2="1">' +
+    '<stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#059669"/></linearGradient></defs>' +
+    '<g fill="url(#lgo)">' +
+    '<circle cx="20" cy="20" r="10.5"/><circle cx="20" cy="20" r="5.6" fill="var(--bg)"/>' +
+    '<rect x="2.2" y="7.5" width="2.4" height="8.5" rx="1.2"/>' +
+    '<rect x="6" y="7.5" width="2.4" height="8.5" rx="1.2"/>' +
+    '<rect x="2.2" y="14.5" width="6.2" height="3.4" rx="1.7"/>' +
+    '<rect x="4.1" y="17" width="2.4" height="15.5" rx="1.2"/>' +
+    '<path d="M33.2,7.5 q3.4,0 3.4,5.4 t-3.4,5.4 z"/>' +
+    '<rect x="33.2" y="17" width="2.4" height="15.5" rx="1.2"/>' +
+    '</g></svg>';
 }
 
 function esc(s) {
@@ -2952,7 +2961,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.13');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.14');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
