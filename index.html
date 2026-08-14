@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.9</title>
+<title>Coach v2.10</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,9 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.10 — Retrait de la répartition des protéines par prise : elle alourdissait la carte du
+           jour. Les protéines en grammes par kilo sont conservées, sur une seule ligne.
+
     v2.9 — Répartition des protéines rendue lisible : chaque valeur porte l'icône de sa prise,
            plus aucune prise n'est filtrée — les repas sans protéines disparaissaient, si bien
            que le nombre de valeurs ne correspondait plus au nombre de repas — et les
@@ -230,9 +233,8 @@ h1,h2,h3,p{margin:0}
 .celeb span{display:block;font-size:12.5px;color:#9fd9c2;margin-top:3px;line-height:1.4}
 .celeb .x{margin-left:auto;color:#4d8f74;font-size:15px;padding:6px;align-self:flex-start}
 
-.protinfo{font-size:11.5px;color:var(--dim);margin-top:13px;padding-top:11px;border-top:1px solid var(--line);line-height:1.55}
+.protinfo{font-size:11.5px;color:var(--dim);margin-top:12px;padding-top:10px;border-top:1px solid var(--line);line-height:1.45}
 .protinfo:empty{display:none}
-.protinfo span{display:block}
 .protinfo b{color:var(--prot);font-weight:800;font-size:13.5px}
 .protinfo em{font-style:normal;color:var(--dim2)}
 .macro .hd b .ok{color:var(--acc-l);font-size:11px;margin-left:4px}
@@ -563,7 +565,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.9 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.10 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1323,23 +1325,13 @@ function renderToday() {
     ['Glucides', t.carb, g.carb, 'var(--carb)'],
     ['Lipides', t.fat, g.fat, 'var(--fat)']
   ];
-  /* Répartition des protéines. Trois règles pour qu'elle soit lisible :
-     chaque nombre porte l'icône de sa prise, aucune prise n'est filtrée — sans quoi
-     le nombre de valeurs ne correspond plus au nombre de repas affichés — et les
-     compléments y figurent, puisqu'ils comptent dans le total. La somme des valeurs
-     doit toujours égaler le total de protéines du jour. */
+  /* Protéines en grammes par kilo : la seule unité qui ait un sens pour la prise de
+     muscle. La répartition par prise a existé en v2.6 puis v2.9 ; retirée en v2.10,
+     elle alourdissait la carte pour un gain de lecture faible au quotidien. */
   const poids = (S().profile || {}).weight || 0;
   const fr1 = v => v.toFixed(1).replace('.', ',');
-  const prises = repasDuJour.slice().sort((a, b) => a.ts - b.ts)
-    .map(e => ({ ico: (MEALS.find(m => m.id === e.meal) || {}).ico || '•', p: r0(sumItems(e.items).prot) }));
-  const protSupp = r0(sumItems(list.filter(e => e.meal === SUPP)
-    .reduce((a, e) => a.concat(e.items || []), [])).prot);
-  if (protSupp) prises.push({ ico: '💊', p: protSupp });
   $('#protInfo').innerHTML = (poids && t.prot)
-    ? '<span><b>' + fr1(t.prot / poids) + ' g/kg</b> de protéines<em> · objectif ' + fr1(g.prot / poids) + ' g/kg</em></span>' +
-      (prises.length > 1
-        ? '<span>Réparties ' + prises.map(x => x.ico + ' ' + x.p).join(' · ') + ' g</span>'
-        : '')
+    ? '<b>' + fr1(t.prot / poids) + ' g/kg</b> de protéines<em> · objectif ' + fr1(g.prot / poids) + ' g/kg</em>'
     : '';
   $('#macros').innerHTML = defs.map(([n, v, gl, col]) => {
     const plein = gl > 0 && v >= gl;
@@ -2867,7 +2859,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.9');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.10');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
