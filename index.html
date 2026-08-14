@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.17</title>
+<title>Coach v2.18</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.18 — Trois corrections : la clé API ne figure plus dans les sauvegardes exportées ;
+           la feuille de partage iOS ne produit plus de fichier texte parasite à côté du
+           JSON ; budget de tokens ramené sous le plafond par minute du palier gratuit de
+           Groq, que la v2.17 faisait dépasser — l'analyse photo était bloquée — avec
+           détection de cette limite et nouvel essai automatique au budget minimal.
+
    v2.17 — Estimation des portions : repères de taille chiffrés, raisonnement en volume et non
            en surface, conversion volume-masse, interdiction du 100 g par défaut, et repère
            retenu annoncé dans la remarque. Le raisonnement du modèle est réactivé pour
@@ -610,7 +616,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.17 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.18 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -977,6 +983,10 @@ async function groq(body) {
     }
     if (res.status === 401) throw new Error('Clé API refusée (401). Vérifie-la dans Réglages.');
     if (res.status === 429) throw new Error('Quota atteint (429). Réessaie dans un moment.');
+    if (/request too large|tokens per minute|TPM/i.test(m)) {
+      const e = new Error('Limite du palier gratuit Groq atteinte pour cette minute. Attends 60 secondes et relance.');
+      e.tooLarge = true; throw e;
+    }
     if (/image/i.test(m) && /(too many|maximum|max |limit|number of|at most)/i.test(m)) {
       throw new Error('Trop de photos pour ce modèle. Retires-en une et relance. (' + m + ')');
     }
@@ -1026,6 +1036,10 @@ async function analyseAvecRepli(corps) {
   try {
     return extractJson(await groqTry(corps, JSON_REFLEXION));
   } catch (e) {
+    if (e && e.tooLarge) {
+      // requête au-dessus du plafond par minute : on retente au budget minimal, sans réflexion
+      return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1200 }), JSON_SANS_REFLEXION));
+    }
     if (!e || e.raw === undefined) throw e;
     return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 2400 }), JSON_SANS_REFLEXION));
   }
@@ -1035,15 +1049,19 @@ async function analysePhotos(dataUrls, hint) {
   const imgs = dataUrls.slice(0, MAX_PHOTOS);
   const content = [{ type: 'text', text: promptPhotos(imgs.length) + (hint ? '\n\n' + hint : '') }];
   imgs.forEach(u => content.push({ type: 'image_url', image_url: { url: u } }));
+  /* Plafond du palier gratuit Groq : 8000 tokens par minute, image et max_tokens
+     compris. Une photo 1024 px consomme à elle seule ~2500-3000 tokens : un budget
+     de 5000 faisait dépasser (constaté : 8315 demandés pour 8000). 2500 laisse la
+     réflexion travailler tout en restant sous la limite. */
   return analyseAvecRepli({
-    model: S().model, temperature: 0.2, max_tokens: 5000,
+    model: S().model, temperature: 0.2, max_tokens: 2500,
     messages: [{ role: 'user', content: content }]
   });
 }
 
 async function analyseText(desc) {
   return analyseAvecRepli({
-    model: S().model, temperature: 0.2, max_tokens: 4000,
+    model: S().model, temperature: 0.2, max_tokens: 2500,
     messages: [{ role: 'user', content: promptTexte(desc) }]
   });
 }
@@ -2778,7 +2796,9 @@ async function deliver(filename, text, mime) {
   const file = new File([text], filename, { type: mime });
   // Sur iPhone, la feuille de partage permet d'enregistrer dans Fichiers ou d'envoyer.
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: filename }); return true; }
+    /* Fichier seul, sans `title` : sur iOS, un titre joint à un partage de fichier
+       est traité comme un contenu texte supplémentaire et produit un second fichier. */
+    try { await navigator.share({ files: [file] }); return true; }
     catch (e) { if (e && e.name === 'AbortError') return false; }
   }
   const url = URL.createObjectURL(file);
@@ -2791,7 +2811,12 @@ async function deliver(filename, text, mime) {
 }
 
 async function exportJson() {
-  const ok = await deliver('coach-' + TODAY() + '.json', JSON.stringify(DB, null, 2), 'application/json');
+  /* La clé API ne quitte JAMAIS l'appareil dans une sauvegarde : le fichier est fait
+     pour être rangé dans Fichiers ou iCloud, envoyé, parfois partagé — il ne doit
+     contenir aucun secret. À l'import, la clé locale est conservée telle quelle. */
+  const sansCle = JSON.parse(JSON.stringify(DB));
+  delete sansCle.settings.apiKey;
+  const ok = await deliver('coach-' + TODAY() + '.json', JSON.stringify(sansCle, null, 2), 'application/json');
   if (ok) {
     S().lastExport = Date.now();
     S().remindAfter = 0;
@@ -3020,7 +3045,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.17');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.18');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
