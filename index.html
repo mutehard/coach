@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.16</title>
+<title>Coach v2.17</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,13 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.17 — Estimation des portions : repères de taille chiffrés, raisonnement en volume et non
+           en surface, conversion volume-masse, interdiction du 100 g par défaut, et repère
+           retenu annoncé dans la remarque. Le raisonnement du modèle est réactivé pour
+           l'analyse — il avait été coupé en v1.4 pour un bug d'extraction corrigé depuis —
+           avec repli sans réflexion si la réponse est tronquée. Garde-fou contre les valeurs
+           inventées pour un produit de marque dont l'étiquette n'est pas lisible.
+
    v2.16 — Identité visuelle : shaker redessiné d'après l'anatomie réelle, avec anse de
            transport, clapet et graduations fines. Le même tracé sert au logo de l'en-tête
            et à l'icône de l'écran d'accueil. Centrage optique et non géométrique, l'anse
@@ -603,7 +610,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.16 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.17 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -847,13 +854,14 @@ const PROMPT_REGLES = `Réponds UNIQUEMENT par un objet JSON valide, sans aucun 
 
 Règles :
 - une ligne par aliment identifiable (viande, féculent, légume, sauce, boisson, pain...) ;
-- estime la portion visible en grammes (ou en millilitres pour un liquide) en te servant des repères de taille de l'assiette et des couverts ;
+- estime la portion visible en grammes (ou en millilitres pour un liquide) ;
 - les valeurs kcal, proteines_g, glucides_g et lipides_g correspondent à la quantité estimée, PAS à 100 g ;
 - nombres entiers uniquement, pas d'unité dans les nombres, pas d'intervalle ;
 - "hydratation_ml" : volume de liquide RÉELLEMENT BU, en millilitres. Un café, un thé, une infusion, \
 un verre d'eau, un jus, un soda, un bouillon ou une soupe comptent pour leur volume estimé. Le café et le thé \
 comptent en entier, ils ne déshydratent pas. Un aliment solide vaut 0, même s'il contient de l'eau ;
-- "confiance" vaut "haute", "moyenne" ou "basse" ;
+- "confiance" vaut "haute", "moyenne" ou "basse". Réserve "haute" aux cas où les valeurs sont lues sur \
+une étiquette ou où le repère de taille est franc ; descends dès que tu extrapoles ;
 - tous les textes en français ;
 - si aucun aliment n'est identifiable, renvoie une liste "aliments" vide et explique dans "remarque".`;
 
@@ -864,7 +872,28 @@ const PROMPT_ETIQUETTES = `Si une photo montre une étiquette, un emballage ou u
 nutritionnelles, ces valeurs FONT AUTORITÉ et remplacent toute estimation visuelle pour l'aliment concerné.
 Attention : ces tableaux sont presque toujours donnés pour 100 g ou 100 ml. Convertis-les à la quantité \
 réellement consommée, déduite des autres photos ou du poids net indiqué sur l'emballage. Ne crée pas de \
-ligne "étiquette" ou "emballage" dans la liste des aliments : l'étiquette décrit un aliment, elle n'en est pas un.`;
+ligne "étiquette" ou "emballage" dans la liste des aliments : l'étiquette décrit un aliment, elle n'en est pas un.
+
+Si tu reconnais un produit de marque SANS que son tableau nutritionnel soit lisible sur la photo, \
+n'invente pas ses valeurs : tu n'as aucun moyen de les vérifier. Utilise les valeurs typiques de la \
+catégorie de produit, écris explicitement dans "remarque" que les valeurs sont estimées et non lues, \
+et abaisse "confiance" à "moyenne" ou "basse". Une valeur mémorisée ne vaut jamais une valeur lue.`;
+
+/* Calibration de l'estimation des portions. Une consigne unique — « sers-toi de
+   l'assiette » — laissait le modèle sans échelle de référence. On lui donne des
+   dimensions réelles, on lui impose de raisonner en volume et non en surface, et on
+   lui demande d'annoncer le repère retenu : l'estimation devient vérifiable, et
+   l'exercice d'explicitation améliore le résultat. */
+const PROMPT_PORTIONS = `Pour chiffrer les quantités, appuie-toi sur un repère de taille visible, \
+et indique lequel dans "remarque".
+Dimensions habituelles : assiette plate 26 à 28 cm, assiette creuse 20 à 22 cm, fourchette ou couteau \
+19 à 21 cm, cuillère à soupe 16 à 18 cm, verre 200 à 250 ml, canette 33 cl, bol 300 à 400 ml, \
+main d'adulte 18 à 19 cm.
+Raisonne en VOLUME, pas en surface occupée : à surface égale, une assiette bombée contient deux à trois \
+fois plus qu'une assiette rase. Estime l'épaisseur autant que l'étendue.
+Convertis ensuite le volume en masse selon l'aliment : féculents cuits et légumes proches de 1 g/ml, \
+viandes et poissons un peu au-dessus, salades, chips et céréales soufflées très en dessous.
+N'utilise jamais 100 g comme valeur par défaut : une portion réelle tombe rarement sur un chiffre rond.`;
 
 const PROMPT_MULTI = `Les photos montrent toutes LE MÊME repas : angles différents, détails, ou emballages \
 des produits consommés. Ne compte jamais deux fois un aliment qui apparaît sur plusieurs photos.`;
@@ -872,12 +901,12 @@ des produits consommés. Ne compte jamais deux fois un aliment qui apparaît sur
 function promptPhotos(n) {
   return 'Tu es un nutritionniste. Analyse ce repas à partir ' +
     (n > 1 ? 'des ' + n + ' photos fournies.' : 'de la photo fournie.') + '\n\n' +
-    (n > 1 ? PROMPT_MULTI + '\n\n' : '') + PROMPT_ETIQUETTES + '\n\n' + PROMPT_REGLES;
+    (n > 1 ? PROMPT_MULTI + '\n\n' : '') + PROMPT_PORTIONS + '\n\n' + PROMPT_ETIQUETTES + '\n\n' + PROMPT_REGLES;
 }
 
 function promptTexte(desc) {
   return 'Tu es un nutritionniste. Estime la composition nutritionnelle de ce repas décrit par ' +
-    'l\'utilisateur : « ' + desc + ' ».\n\n' + PROMPT_REGLES;
+    'l\'utilisateur : « ' + desc + ' ».\n\n' + PROMPT_PORTIONS + '\n\n' + PROMPT_REGLES;
 }
 
 /* Liste les objets JSON de premier niveau présents dans une chaîne, en tenant compte
@@ -960,8 +989,15 @@ async function groq(body) {
 /* Deux options très utiles mais propres à certains modèles : masquer le raisonnement
    (sinon le bloc <think> pollue la réponse et consomme les tokens) et forcer une sortie
    JSON. Si le modèle sélectionné les refuse, on rejoue la requête sans elles. */
-const NO_REASONING = { reasoning_format: 'hidden', reasoning_effort: 'none' };
-const JSON_OUT = Object.assign({ response_format: { type: 'json_object' } }, NO_REASONING);
+/* Le raisonnement est ACTIF pour l'analyse d'un repas : estimer une portion est une tâche
+   à étapes — trouver un repère, en déduire l'échelle, estimer le volume, convertir en masse.
+   Il avait été coupé en v1.4 pour régler un bug d'extraction, alors que la même version
+   rendait l'extracteur capable d'écarter le bloc <think> : la raison de le couper avait
+   disparu. `reasoning_format: 'hidden'` conserve une réponse propre.
+   Conséquence à ne pas oublier : les tokens de réflexion s'imputent sur max_tokens. */
+const SANS_REFLEXION = { reasoning_format: 'hidden', reasoning_effort: 'none' };
+const JSON_REFLEXION = { response_format: { type: 'json_object' }, reasoning_format: 'hidden' };
+const JSON_SANS_REFLEXION = Object.assign({ response_format: { type: 'json_object' } }, SANS_REFLEXION);
 
 async function groqTry(body, opts) {
   try { return await groq(Object.assign({}, body, opts)); }
@@ -983,23 +1019,33 @@ function correctionHint(previous, corrections) {
     'Réponds au même format JSON, sans commentaire.';
 }
 
+/* Repli : si la réflexion a consommé la réponse et qu'aucun JSON n'en sort, on rejoue
+   sans réflexion. On ne rejoue QUE sur un échec d'extraction — une erreur réseau ou une
+   clé refusée ne doit pas déclencher un second appel facturé. */
+async function analyseAvecRepli(corps) {
+  try {
+    return extractJson(await groqTry(corps, JSON_REFLEXION));
+  } catch (e) {
+    if (!e || e.raw === undefined) throw e;
+    return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 2400 }), JSON_SANS_REFLEXION));
+  }
+}
+
 async function analysePhotos(dataUrls, hint) {
   const imgs = dataUrls.slice(0, MAX_PHOTOS);
   const content = [{ type: 'text', text: promptPhotos(imgs.length) + (hint ? '\n\n' + hint : '') }];
   imgs.forEach(u => content.push({ type: 'image_url', image_url: { url: u } }));
-  const raw = await groqTry({
-    model: S().model, temperature: 0.2, max_tokens: 2400,
+  return analyseAvecRepli({
+    model: S().model, temperature: 0.2, max_tokens: 5000,
     messages: [{ role: 'user', content: content }]
-  }, JSON_OUT);
-  return extractJson(raw);
+  });
 }
 
 async function analyseText(desc) {
-  const raw = await groqTry({
-    model: S().model, temperature: 0.2, max_tokens: 2000,
+  return analyseAvecRepli({
+    model: S().model, temperature: 0.2, max_tokens: 4000,
     messages: [{ role: 'user', content: promptTexte(desc) }]
-  }, JSON_OUT);
-  return extractJson(raw);
+  });
 }
 
 /* Normalise la réponse du modèle en liste d'aliments internes */
@@ -2398,7 +2444,7 @@ $('#sModelLoad').onclick = async () => {
 $('#sTest').onclick = async () => {
   loader(true, 'Test de la clé…');
   try {
-    const out = await groqTry({ model: S().model, max_tokens: 200, messages: [{ role: 'user', content: 'Réponds exactement : OK' }] }, NO_REASONING);
+    const out = await groqTry({ model: S().model, max_tokens: 200, messages: [{ role: 'user', content: 'Réponds exactement : OK' }] }, SANS_REFLEXION);
     loader(false); toast('Clé et modèle valides (' + out.trim().slice(0, 20) + ')');
   } catch (e) {
     loader(false);
@@ -2974,7 +3020,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.16');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.17');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
