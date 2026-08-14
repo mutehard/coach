@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.10</title>
+<title>Coach v2.11</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.11 — Les deux exports portent désormais des noms sans ambiguïté : « Sauvegarde complète »
+           pour le JSON, qui seul restaure tout, et « Tableur des repas » pour le CSV, qui ne
+           contient ni réglages ni favoris. L'import énonce précisément ce qu'il a restauré,
+           et les réglages affichent le décompte de chaque liste enregistrée.
+
    v2.10 — Retrait de la répartition des protéines par prise : elle alourdissait la carte du
            jour. Les protéines en grammes par kilo sont conservées, sur une seule ligne.
 
@@ -554,10 +559,10 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>Données</h2>
-      <div class="grid2" style="margin-bottom:10px">
-        <button class="btn sm" id="btnExpJson" style="width:100%">⬇ Export JSON</button>
-        <button class="btn sm" id="btnExpCsv" style="width:100%">⬇ Export CSV</button>
-      </div>
+      <button class="btn sm" id="btnExpJson" style="width:100%">⬇ Sauvegarde complète (.json)</button>
+      <p class="tiny" style="margin:7px 0 12px">Tout est dedans : repas, pesées, objectifs, profil, compléments, repas habituels, aliments favoris et volumes. C'est le seul fichier qui permet de tout restaurer.</p>
+      <button class="btn sm" id="btnExpCsv" style="width:100%">⬇ Tableur des repas (.csv)</button>
+      <p class="tiny" style="margin:7px 0 12px">Pour analyser tes repas dans un tableur. Ne contient ni tes réglages ni tes favoris : ce n'est pas une sauvegarde.</p>
       <button class="btn sm" id="btnImp" style="width:100%;margin-bottom:10px">⬆ Importer une sauvegarde</button>
       <button class="btn sm dan" id="btnWipe" style="width:100%">Effacer toutes les données</button>
       <p class="tiny" style="margin-top:11px" id="storInfo"></p>
@@ -565,7 +570,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.10 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.11 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -2295,8 +2300,11 @@ function renderSettings() {
   renderSuppsSettings();
   const bytes = new Blob([JSON.stringify(DB)]).size;
   const le = S().lastExport;
-  $('#storInfo').textContent = DB.entries.length + ' repas · ' + DB.weights.length + ' pesées · ' +
-    (bytes / 1024).toFixed(0) + ' Ko utilisés (limite ~5000 Ko)\n' +
+  $('#storInfo').textContent =
+    DB.entries.length + ' repas · ' + DB.weights.length + ' pesées · ' +
+    (S().templates || []).length + ' repas habituels · ' + (S().foods || []).length + ' aliments · ' +
+    (S().supps || []).length + ' compléments · ' + (S().waterPresets || []).length + ' volumes\n' +
+    (bytes / 1024).toFixed(0) + ' Ko utilisés sur ~5000 Ko\n' +
     'Dernière sauvegarde : ' + (le ? new Date(le).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'jamais');
   $('#storInfo').style.whiteSpace = 'pre-line';
 }
@@ -2808,9 +2816,10 @@ $('#fImp').onchange = e => {
       el => {
         el.querySelector('#iMerge').onclick = () => {
           const have = new Set(DB.entries.map(x => x.id));
-          inc.entries.forEach(x => { if (!have.has(x.id)) DB.entries.push(x); });
+          let nR = 0, nP = 0;
+          inc.entries.forEach(x => { if (!have.has(x.id)) { DB.entries.push(x); nR++; } });
           const hw = new Set(DB.weights.map(w => w.date));
-          (inc.weights || []).forEach(w => { if (!hw.has(w.date)) DB.weights.push(w); });
+          (inc.weights || []).forEach(w => { if (!hw.has(w.date)) { DB.weights.push(w); nP++; } });
 
           /* Une sauvegarde sert aussi à ne pas retaper sa configuration. La fusion
              restaure donc objectifs et profil, et complète les listes par identifiant
@@ -2824,14 +2833,27 @@ $('#fImp').onchange = e => {
           if (s.profile) DB.settings.profile = s.profile;
           if (s.goalsWeight) DB.settings.goalsWeight = s.goalsWeight;
           if (s.model) DB.settings.model = s.model;
+          const avC = (DB.settings.supps || []).length, avT = (DB.settings.templates || []).length;
+          const avA = (DB.settings.foods || []).length, avV = (DB.settings.waterPresets || []).length;
           DB.settings.supps = compl(DB.settings.supps, s.supps);
           DB.settings.templates = compl(DB.settings.templates, s.templates);
           DB.settings.foods = compl(DB.settings.foods, s.foods);
           DB.settings.waterPresets = compl(DB.settings.waterPresets, s.waterPresets);
+          const nC = DB.settings.supps.length - avC, nT = DB.settings.templates.length - avT;
+          const nA = DB.settings.foods.length - avA, nV = DB.settings.waterPresets.length - avV;
           if (!DB.settings.apiKey && s.apiKey) DB.settings.apiKey = s.apiKey;
 
           save(); closeSheet(); renderAll();
-          toast('Sauvegarde fusionnée · objectifs et réglages restaurés');
+          /* On énonce ce qui est revenu : c'est le seul moyen de constater qu'un
+             élément manque, plutôt que de s'en apercevoir des jours plus tard. */
+          const bilan = [];
+          if (nR) bilan.push(nR + ' repas');
+          if (nP) bilan.push(nP + ' pesée' + (nP > 1 ? 's' : ''));
+          if (nT) bilan.push(nT + ' repas habituel' + (nT > 1 ? 's' : ''));
+          if (nA) bilan.push(nA + ' aliment' + (nA > 1 ? 's' : ''));
+          if (nC) bilan.push(nC + ' complément' + (nC > 1 ? 's' : ''));
+          if (nV) bilan.push(nV + ' volume' + (nV > 1 ? 's' : ''));
+          toast(bilan.length ? 'Restauré : ' + bilan.join(', ') : 'Rien de nouveau à restaurer');
         };
         el.querySelector('#iRepl').onclick = () => {
           if (!confirm('Remplacer définitivement toutes tes données actuelles ?')) return;
@@ -2859,7 +2881,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.10');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.11');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
