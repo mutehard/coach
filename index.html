@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.12</title>
+<title>Coach v2.13</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,10 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.13 — La barre de titre passait sous l'horloge de l'iPhone au défilement : la zone de
+           sécurité est désormais portée par la barre elle-même et non par le body. Le carré
+           vert de l'en-tête est remplacé par la tête de la mascotte.
+
    v2.12 — Correction : deepMerge partageait ses structures avec les valeurs par défaut, si bien
            que sur un stockage vide toute écriture de réglage modifiait DEFAULTS lui-même.
            « Remplacer » effaçait par ailleurs les repas habituels, aliments favoris et volumes
@@ -186,7 +190,7 @@
 html,body{margin:0;padding:0;background:var(--bg);color:var(--txt);overscroll-behavior-y:none}
 body{
   font:400 16px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;
-  -webkit-font-smoothing:antialiased; padding-top:var(--sat);
+  -webkit-font-smoothing:antialiased;
 }
 input,select,textarea,button{font:inherit;color:inherit}
 button{background:none;border:0;cursor:pointer}
@@ -196,9 +200,16 @@ h1,h2,h3,p{margin:0}
 
 /* ---------- structure ---------- */
 #app{max-width:560px;margin:0 auto;padding:0 16px calc(84px + var(--sab));min-height:100vh}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:14px 0 10px;position:sticky;top:0;background:linear-gradient(var(--bg) 72%,transparent);z-index:20}
+/* La zone de sécurité est portée par la barre elle-même : sur un body en
+   `padding-top`, une barre `sticky top:0` vient se coller au bord du viewport
+   et passe sous l'horloge de l'iPhone dès qu'on fait défiler. */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:calc(var(--sat) + 14px) 0 10px;position:sticky;top:0;background:var(--bg);z-index:20}
+.topbar::after{content:'';position:absolute;left:-16px;right:-16px;top:100%;height:16px;
+  background:linear-gradient(var(--bg),transparent);pointer-events:none}
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.3px;font-size:19px}
-.brand .dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(160deg,var(--acc-l),var(--acc-d));flex:none}
+.brand .logo{width:30px;height:30px;flex:none;display:block}
+.brand .logo svg{width:100%;height:100%;display:block}
 .sub{font-size:12px;color:var(--dim2);font-weight:500}
 
 /* ---------- cartes ---------- */
@@ -429,7 +440,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
 <div id="app">
   <div class="topbar">
-    <div class="brand"><span class="dot"></span>Coach</div>
+    <div class="brand"><span class="logo" id="brandLogo"></span>Coach</div>
     <div class="sub" id="topRight"></div>
   </div>
 
@@ -582,7 +593,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.13 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1474,6 +1485,19 @@ function avatarSvg(mood, t) {
     '<circle cx="60" cy="58" r="32" fill="' + peau + '"/>' +
     '<circle cx="60" cy="58" r="32" fill="none" stroke="' + ombre + '" stroke-width="2"/>' +
     visage + '</g></svg>';
+}
+
+/* Logo de l'en-tête : la tête de la mascotte, pour que l'identité de l'app
+   soit la même en haut de l'écran et dans la carte du jour. */
+function logoSvg() {
+  return '<svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">' +
+    '<circle cx="20" cy="20" r="18" fill="' + teint(1) + '"/>' +
+    '<circle cx="20" cy="20" r="18" fill="none" stroke="rgba(150,80,20,.3)" stroke-width="1.6"/>' +
+    '<circle cx="14.2" cy="17.5" r="2.9" fill="#101820"/>' +
+    '<circle cx="25.8" cy="17.5" r="2.9" fill="#101820"/>' +
+    '<circle cx="15.3" cy="16.4" r="1" fill="#fff"/><circle cx="26.9" cy="16.4" r="1" fill="#fff"/>' +
+    '<path d="M13.5,25 q6.5,6 13,0" stroke="#101820" stroke-width="2.6" fill="none" stroke-linecap="round"/>' +
+    '</svg>';
 }
 
 function esc(s) {
@@ -2928,7 +2952,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.12');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.13');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
@@ -2959,6 +2983,8 @@ document.addEventListener('visibilitychange', () => {
 // installations antérieures à la v2.6 : on ancre la référence sur le poids courant,
 // sinon le bandeau de réajustement se déclencherait sans raison au premier lancement
 if (!S().goalsWeight && S().profile && S().profile.weight) { S().goalsWeight = S().profile.weight; save(); }
+
+$('#brandLogo').innerHTML = logoSvg();
 
 renderAll();
 showTab('today');
