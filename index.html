@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v5.3</title>
+<title>Coach v5.4</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,15 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v5.4 — Nouveau moment « Apero », distinct des repas principaux : il n'est jamais annonce
+           comme manquant et le coach le compte a part. Cible horaire 18 h - 19 h 30 pour la
+           detection automatique du moment.
+           Retrait de la ligne de repartition des proteines. Sa formulation — « 3 prises sur 6
+           atteignent 23 g, viser 3 a 4 prises » — se lisait comme un reproche alors que
+           l'objectif etait tenu, melangeait un seuil et un decompte, et laissait croire qu'il
+           fallait REDUIRE le nombre de prises. Le principe nutritionnel reste juste, mais une
+           information incomprise ne sert a rien. Deuxieme retrait apres celui de la v2.10.
+
     v5.3 — Le poids du profil ne suit plus que la pesee la PLUS RECENTE. La feuille de
            saisie propose un champ Date libre, et rattraper une pesee oubliee faisait
            adopter cette vieille valeur comme poids actuel : a 80,5 kg saisis contre 78
@@ -812,7 +821,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v5.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v5.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1195,6 +1204,7 @@ const MEALS = [
   { id: 'dejeuner', label: 'Déjeuner', ico: '🍽' },
   { id: 'diner', label: 'Dîner', ico: '🌙' },
   { id: 'collation', label: 'Collation', ico: '🍎' },
+  { id: 'apero', label: 'Apéro', ico: '🍷' },
   { id: 'shaker', label: 'Shaker', ico: '🥤' }
 ];
 
@@ -1231,6 +1241,7 @@ function guessMeal() {
   if (h < 10.5) return 'petit-dej';
   if (h < 15) return 'dejeuner';
   if (h < 18) return 'collation';
+  if (h < 19.5) return 'apero';
   if (h < 23) return 'diner';
   return 'collation';
 }
@@ -1806,15 +1817,17 @@ function momentsManquants(list) {
 
 /* Décompte en clair, sans piège d'accord : « 2 repas et 1 collation au compteur ». */
 function bilanPrises(list) {
-  const n = { repas: 0, collation: 0, shaker: 0 };
+  const n = { repas: 0, collation: 0, apero: 0, shaker: 0 };
   list.forEach(e => {
     if (estRepas(e.meal)) n.repas++;
     else if (e.meal === 'shaker') n.shaker++;
+    else if (e.meal === 'apero') n.apero++;
     else if (e.meal === 'collation') n.collation++;
   });
   const p = [];
   if (n.repas) p.push(n.repas + ' repas');
   if (n.collation) p.push(n.collation + ' collation' + (n.collation > 1 ? 's' : ''));
+  if (n.apero) p.push(n.apero + ' apéro' + (n.apero > 1 ? 's' : ''));
   if (n.shaker) p.push(n.shaker + ' shaker' + (n.shaker > 1 ? 's' : ''));
   const txt = p.length > 1 ? p.slice(0, -1).join(', ') + ' et ' + p[p.length - 1] : p[0] || '';
   return { n: n, txt: txt ? txt + ' au compteur' : '' };
@@ -2282,27 +2295,20 @@ function renderToday() {
         ' kcal sur la journée.</b> C\'est ce chiffre qui décide de ton poids : il passe avant les fourchettes ci-dessous.</div>'
       : '<div class="prio ok"><b>Énergie tenue.</b> Les fourchettes affinent la composition.</div>';
 
-  /* Protéines : grammes par kilo, et RÉPARTITION dans la journée. Trois à quatre
-     prises d'environ 0,3 g/kg stimulent la synthèse protéique mieux qu'un total
-     identique concentré sur un seul repas — le total quotidien seul est un
-     indicateur incomplet. Cette répartition avait existé en v2.6 puis v2.9 et
-     avait été retirée en v2.10 comme trop lourde ; elle revient ici réduite à une
-     seule phrase, sans le détail par prise qui alourdissait la carte. */
+  /* Protéines en grammes par kilo, la seule unité qui ait un sens pour la prise de muscle.
+
+     La RÉPARTITION par prise a été retirée en v5.4, après l'avoir été une première fois
+     en v2.10. Sa formulation — « 3 prises sur 6 atteignent 23 g · viser 3 à 4 prises » —
+     se lisait comme un reproche alors que l'objectif était tenu, mélangeait un seuil
+     (23 g) et un décompte, et laissait croire qu'il fallait RÉDUIRE le nombre de prises.
+     Le principe nutritionnel est juste, mais une information qu'on ne comprend pas ne
+     sert à rien. Ne pas la réintroduire sans une formulation testée. */
   const poids = (S().profile || {}).weight || 0;
   const fr1 = v => v.toFixed(1).replace('.', ',');
   let info = '';
   if (poids && t.prot) {
     info = '<b>' + fr1(t.prot / poids) + ' g/kg</b> de protéines<em> · zone ' + fr1(g.min.prot / poids) +
            (g.max.prot > 0 ? ' à ' + fr1(g.max.prot / poids) : '') + ' g/kg</em>';
-    const seuil = poids * 0.3;
-    const prises = list.filter(e => e.meal !== DRINK)
-      .reduce((a, e) => { const p = sumItems(e.items).prot; if (p > 0) a.push(p); return a; }, []);
-    const bonnes = prises.filter(p => p >= seuil).length;
-    if (prises.length) {
-      info += '<br><b>' + bonnes + ' prise' + (bonnes > 1 ? 's' : '') + ' sur ' + prises.length +
-              '</b> ' + (bonnes > 1 ? 'atteignent' : 'atteint') + ' ' + r0(seuil) + ' g' +
-              '<em> · viser 3 à 4 prises dans la journée</em>';
-    }
   }
   /* L'alcool apporte 7 kcal/g sans être ni glucide, ni lipide, ni protéine : dès
      qu'il y en a, l'anneau cesse d'égaler 4P + 4G + 9L et les fourchettes décrochent
@@ -4345,7 +4351,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.3');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.4');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
