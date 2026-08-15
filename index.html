@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.21</title>
+<title>Coach v2.22</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.22 — Diagnostic des quotas Groq : un refus 429 affichait « Réessaie dans un moment » sans
+           distinguer une limite par minute d'une limite journalière, et jetait le détail fourni
+           par Groq. Le message nomme désormais la limite atteinte, indique quand elle se libère
+           et joint le message d'origine. Les compteurs restants sont mémorisés à chaque appel
+           et affichés dans les réglages.
+
    v2.21 — Correction de l'échec « Failed to validate JSON » : quand la réflexion tronquait la
            réponse, le validateur de Groq rejetait tout et l'erreur arrivait brute, sans nouvel
            essai. La sortie rejetée est d'abord récupérée telle quelle quand elle contient un
@@ -567,6 +573,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <label class="f"><span>Modèle vision</span>
         <select class="in" id="sModel"></select>
       </label>
+      <div id="quotaInfo" class="tiny" style="margin-bottom:10px"></div>
       <div class="row" style="gap:9px">
         <button class="btn sm grow" id="sModelLoad">↻ Charger les modèles</button>
         <button class="btn sm grow" id="sTest">Tester la clé</button>
@@ -617,7 +624,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.21 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.22 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -980,6 +987,18 @@ async function groq(body) {
     });
   } catch (e) { throw new Error('Pas de connexion à api.groq.com'); }
 
+  /* Les en-têtes de quota arrivent sur TOUTES les réponses, réussies comme refusées.
+     On les mémorise : c'est le seul moyen de savoir combien il reste avant de buter,
+     et de distinguer une limite par minute d'une limite journalière. */
+  try {
+    const g = n => res.headers.get(n);
+    const q = { reqL: g('x-ratelimit-limit-requests'), reqR: g('x-ratelimit-remaining-requests'),
+                reqZ: g('x-ratelimit-reset-requests'), tokL: g('x-ratelimit-limit-tokens'),
+                tokR: g('x-ratelimit-remaining-tokens'), tokZ: g('x-ratelimit-reset-tokens'),
+                quand: Date.now() };
+    if (q.reqL || q.tokL) { DB.settings.quota = q; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} }
+  } catch (e) { /* en-têtes non exposés par CORS : on se rabat sur le message d'erreur */ }
+
   const txt = await res.text();
   let j = null; try { j = JSON.parse(txt); } catch (e) {}
   if (!res.ok) {
@@ -999,7 +1018,23 @@ async function groq(body) {
       const e = new Error(m); e.unsupportedParam = true; throw e;
     }
     if (res.status === 401) throw new Error('Clé API refusée (401). Vérifie-la dans Réglages.');
-    if (res.status === 429) throw new Error('Quota atteint (429). Réessaie dans un moment.');
+    if (res.status === 429) {
+      /* Le message de Groq nomme la limite atteinte et l'usage : on ne le jette plus.
+         Une limite journalière ne se débloque pas en attendant quelques minutes — c'est
+         ce qui rendait l'ancien message trompeur. */
+      const parJour = /per day|\bRPD\b|\bTPD\b/i.test(m);
+      const ra = parseInt(res.headers.get('retry-after') || '0', 10);
+      let quand = '';
+      if (ra > 0) {
+        quand = ra >= 3600 ? ' Réessaie dans ' + Math.ceil(ra / 3600) + ' h.'
+              : ' Réessaie dans ' + Math.max(1, Math.ceil(ra / 60)) + ' min.';
+      } else if (parJour) {
+        quand = ' Elle se réinitialise à minuit UTC, soit 2 h du matin en France.';
+      }
+      const e = new Error((parJour ? 'Limite JOURNALIÈRE de ton compte Groq atteinte.' : 'Limite par minute atteinte.') + quand);
+      e.quota = true; e.raw = m;
+      throw e;
+    }
     if (/request too large|tokens per minute|TPM/i.test(m)) {
       const e = new Error('Limite du palier gratuit Groq atteinte pour cette minute. Attends 60 secondes et relance.');
       e.tooLarge = true; throw e;
@@ -2446,6 +2481,13 @@ function fillModels() {
 function renderSettings() {
   $('#sKey').value = S().apiKey;
   fillModels();
+  const q = S().quota;
+  $('#quotaInfo').innerHTML = q
+    ? 'Quota Groq au dernier appel — requêtes : <b>' + (q.reqR || '?') + '</b> sur ' + (q.reqL || '?') +
+      (q.reqZ ? ' (retour dans ' + esc(q.reqZ) + ')' : '') +
+      '<br>jetons : <b>' + (q.tokR || '?') + '</b> sur ' + (q.tokL || '?') +
+      (q.tokZ ? ' (retour dans ' + esc(q.tokZ) + ')' : '')
+    : '';
   const g = S().goals;
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#gWater').value = g.water;
@@ -2921,6 +2963,7 @@ function sanitizeBackup(inc) {
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
+      quota: null,
       goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
                carb: pos(g.carb, 2000), fat: pos(g.fat, 1000),
                water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
@@ -3050,7 +3093,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.21');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.22');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
