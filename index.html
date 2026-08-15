@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v5.4</title>
+<title>Coach v6.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,26 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v6.0 — Eradication des refus « limite par minute ». Trois causes cumulees, identifiees
+           par la mesure et non par estimation.
+
+           1. Le RAISONNEMENT consommait 1543 jetons de reponse, imposant de reserver 2000
+              sur les 8000 de la minute. Reservation totale 4927, soit 62 % du budget : deux
+              analyses ne pouvaient jamais tenir dans une minute, et toute photo prise moins
+              de 23 s apres la precedente etait refusee. Il est coupe sur l'appel principal
+              et ne subsiste qu'en repli, si l'extraction echoue.
+           2. Le garde-fou preventif de la v4.2 etait du CODE MORT : Groq ne renvoie aucun
+              `access-control-expose-headers`, les en-tetes `x-ratelimit-*` sont donc
+              invisibles au JavaScript. Verifie par une requete OPTIONS. Il est remplace par
+              une comptabilite LOCALE des reservations sur fenetre glissante de 60 s, qui
+              predit un refus avant de l'essuyer sans rien attendre du serveur.
+           3. Le prompt est allege de 592 caracteres a consignes constantes.
+
+           Resultat mesure : reservation ramenee de 4927 a ~3700, deux analyses d'affilee
+           sans aucune attente, la troisieme annoncant son delai exact. Definition 512 px
+           ajoutee pour aller plus loin. Bornes du budget de reponse revisees, les
+           anciennes encodant l'hypothese d'une reponse contenant de la reflexion.
+
     v5.4 — Nouveau moment « Apero », distinct des repas principaux : il n'est jamais annonce
            comme manquant et le coach le compte a part. Cible horaire 18 h - 19 h 30 pour la
            detection automatique du moment.
@@ -755,7 +775,8 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
       </label>
       <label class="f"><span>Définition des photos envoyées</span>
         <select class="in" id="sImgPx">
-          <option value="768">Économique — 768 px, moitié moins de jetons</option>
+          <option value="512">Minimale — 512 px, deux fois moins qu'en 768</option>
+          <option value="768">Équilibrée — 768 px, recommandée</option>
           <option value="1024">Détaillée — 1024 px, pour lire les petites étiquettes</option>
         </select>
       </label>
@@ -821,7 +842,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v5.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v6.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -865,6 +886,7 @@ const DEFAULTS = {
     quota: null,
     dernierCout: null,
     coutsRep: [],
+    journalQuota: [],
     quotaUntil: 0,
     quotaJour: false,
     imgPx: 768,
@@ -1411,16 +1433,12 @@ une étiquette ou où le repère de taille est franc ; descends dès que tu extr
 /* Consigne sur les étiquettes nutritionnelles. C'est le cas d'usage qui apporte le plus de
    précision : une valeur lue sur l'emballage vaut infiniment mieux qu'une estimation à l'œil.
    Le piège à désamorcer explicitement est que ces tableaux sont donnés pour 100 g. */
-const PROMPT_ETIQUETTES = `Si une photo montre une étiquette, un emballage ou un tableau de valeurs \
-nutritionnelles, ces valeurs FONT AUTORITÉ et remplacent toute estimation visuelle pour l'aliment concerné.
-Attention : ces tableaux sont presque toujours donnés pour 100 g ou 100 ml. Convertis-les à la quantité \
-réellement consommée, déduite des autres photos ou du poids net indiqué sur l'emballage. Ne crée pas de \
-ligne "étiquette" ou "emballage" dans la liste des aliments : l'étiquette décrit un aliment, elle n'en est pas un.
-
-Si tu reconnais un produit de marque SANS que son tableau nutritionnel soit lisible sur la photo, \
-n'invente pas ses valeurs : tu n'as aucun moyen de les vérifier. Utilise les valeurs typiques de la \
-catégorie de produit, écris explicitement dans "remarque" que les valeurs sont estimées et non lues, \
-et abaisse "confiance" à "moyenne" ou "basse". Une valeur mémorisée ne vaut jamais une valeur lue.`;
+const PROMPT_ETIQUETTES = `Une étiquette, un emballage ou un tableau nutritionnel visible FAIT AUTORITÉ \
+et remplace l'estimation visuelle pour l'aliment concerné. Ces tableaux étant donnés pour 100 g ou 100 ml, \
+convertis-les à la quantité réellement consommée, déduite des autres photos ou du poids net indiqué. \
+Ne crée jamais de ligne "étiquette" : elle décrit un aliment, elle n'en est pas un.
+Si tu reconnais un produit de marque SANS que son tableau soit lisible, n'invente pas ses valeurs : prends \
+celles de la catégorie, écris dans "remarque" qu'elles sont estimées et non lues, et abaisse "confiance".`;
 
 /* Calibration de l'estimation des portions. Une consigne unique — « sers-toi de
    l'assiette » — laissait le modèle sans échelle de référence. On lui donne des
@@ -1429,14 +1447,11 @@ et abaisse "confiance" à "moyenne" ou "basse". Une valeur mémorisée ne vaut j
    l'exercice d'explicitation améliore le résultat. */
 const PROMPT_PORTIONS = `Pour chiffrer les quantités, appuie-toi sur un repère de taille visible, \
 et indique lequel dans "remarque".
-Dimensions habituelles : assiette plate 26 à 28 cm, assiette creuse 20 à 22 cm, fourchette ou couteau \
-19 à 21 cm, cuillère à soupe 16 à 18 cm, verre 200 à 250 ml, canette 33 cl, bol 300 à 400 ml, \
-main d'adulte 18 à 19 cm.
-Raisonne en VOLUME, pas en surface occupée : à surface égale, une assiette bombée contient deux à trois \
+Repères : assiette plate 26-28 cm, assiette creuse 20-22 cm, couvert 19-21 cm, cuillère à soupe \
+16-18 cm, verre 200-250 ml, canette 33 cl, bol 300-400 ml, main d'adulte 18-19 cm.
+Raisonne en VOLUME et non en surface : à surface égale, une assiette bombée contient deux à trois \
 fois plus qu'une assiette rase. Estime l'épaisseur autant que l'étendue.
-Convertis ensuite le volume en masse selon l'aliment : féculents cuits et légumes proches de 1 g/ml, \
-viandes et poissons un peu au-dessus, salades, chips et céréales soufflées très en dessous.
-N'utilise jamais 100 g comme valeur par défaut : une portion réelle tombe rarement sur un chiffre rond.`;
+Sans aucun repère fiable, donne la portion usuelle du plat et abaisse "confiance".`;
 
 const PROMPT_MULTI = `Les photos montrent toutes LE MÊME repas : angles différents, détails, ou emballages \
 des produits consommés. Ne compte jamais deux fois un aliment qui apparaît sur plusieurs photos.`;
@@ -1479,6 +1494,8 @@ function balancedObjects(s) {
    <think> contenant du texte libre, souvent avec des accolades et des blocs de code.
    On écarte ce bloc, puis on retient le dernier objet JSON qui parse ET qui a la forme
    attendue — la réponse finale vient toujours après le raisonnement. */
+/* Marque les échecs d'extraction, pour que `analyseAvecRepli` sache qu'un second essai
+   AVEC réflexion a une chance d'aboutir — au contraire d'une erreur réseau ou de quota. */
 function extractJson(txt) {
   let t = String(txt || '');
   t = t.replace(/<think>[\s\S]*?<\/think>/gi, ' ');
@@ -1496,12 +1513,20 @@ function extractJson(txt) {
   }
   const err = new Error("Le modèle n'a pas renvoyé de JSON exploitable.");
   err.raw = String(txt || '').trim();
+  err.extraction = true;
   throw err;
 }
 
 async function groq(body) {
   const key = S().apiKey.trim();
   if (!key) throw new Error('Aucune clé API. Renseigne-la dans Réglages.');
+  /* Réservation posée AVANT l'envoi : si la réponse n'arrive jamais (réseau coupé),
+     le quota a tout de même été consommé côté Groq et doit rester compté. */
+  const estim = (body.max_tokens || 0) + ((body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0)
+    ? ((S().dernierCout && S().dernierCout.photo && S().dernierCout.p) || 3000) : 800);
+  noterReservation(estim);
+  DERNIERE_RESERVATION = (S().journalQuota || [])[(S().journalQuota || []).length - 1] || null;
+
   let res;
   try {
     res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -1568,6 +1593,13 @@ async function groq(body) {
          d'aboutir. Deux sources, dans l'ordre de fiabilité : l'en-tête `retry-after`,
          puis le délai que Groq écrit en clair dans son message (« try again in 14.07s »). */
       const secs = ra > 0 ? ra : (parseFloat((m.match(/try again in ([\d.]+)\s*s/i) || [])[1]) || 0);
+      /* Une requête REFUSÉE n'est pas traitée : elle ne consomme rien. On retire donc
+         la réservation posée juste avant l'envoi, sans quoi la comptabilité locale
+         gonflerait à chaque refus et imposerait des attentes imaginaires. */
+      if (DERNIERE_RESERVATION) {
+        S().journalQuota = (S().journalQuota || []).filter(x => x !== DERNIERE_RESERVATION);
+        DERNIERE_RESERVATION = null;
+      }
       if (secs > 0) poserVerrou(secs, parJour);
       const e = new Error((parJour ? 'Limite JOURNALIÈRE de ton compte Groq atteinte.' : 'Limite par minute atteinte.') + quand);
       e.quota = true; e.raw = m; e.parJour = parJour; e.attendre = secs;
@@ -1595,7 +1627,16 @@ async function groq(body) {
                           t: r0(u.total_tokens), quand: Date.now(),
                           reserve: r0(u.prompt_tokens) + r0(body && body.max_tokens || 0),
                           photo: estPhoto };
-      if (estPhoto) noterCoutReponse(u.completion_tokens);
+      /* La calibration n'apprend QUE du chemin qu'elle configure. Un repli AVEC
+         réflexion génère ~1400 jetons ; les compter ferait remonter la marge de
+         l'appel principal, qui tourne pourtant sans réflexion et n'en produit que
+         400 à 600. Une seule analyse difficile suffirait à gonfler durablement la
+         réservation de toutes les suivantes. */
+      const sansReflexion = body && body.reasoning_effort === 'none';
+      if (estPhoto && sansReflexion) noterCoutReponse(u.completion_tokens);
+      /* Réservation réellement opposée par Groq : prompt mesuré + budget demandé.
+         On corrige l'estimation posée avant l'envoi, désormais qu'on a le vrai prompt. */
+      corrigerReservation(r0(u.prompt_tokens) + r0(body && body.max_tokens || 0));
       try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
     }
   } catch (e) {}
@@ -1636,6 +1677,82 @@ function correctionHint(previous, corrections) {
 }
 
 /* -------------------------------------------------------------------------
+   Comptabilité LOCALE du quota (v6.0)
+   -------------------------------------------------------------------------
+   Groq ne renvoie AUCUN en-tête `access-control-expose-headers`. Les en-têtes
+   `x-ratelimit-*` sont donc invisibles au JavaScript : le navigateur ne peut lire que
+   les six en-têtes de la liste blanche CORS. Le garde-fou préventif de la v4.2, bâti
+   sur `x-ratelimit-remaining-tokens`, n'a jamais pu fonctionner — vérifié le 15 août
+   2026 par une requête OPTIONS sur l'API, et confirmé par l'absence de la ligne
+   « Quota Groq » dans les réglages depuis son ajout.
+
+   L'application tient donc SA PROPRE comptabilité. Elle sait exactement ce qu'elle a
+   demandé et quand : c'est suffisant pour reproduire la fenêtre glissante de 60 s et
+   prédire un refus avant de l'essuyer, sans dépendre de quoi que ce soit du serveur.
+
+   Convention : on compte la RÉSERVATION (`prompt + max_tokens`), pas la consommation
+   réelle, parce que c'est elle que Groq oppose à l'admission — « Requested 4937 » pour
+   un prompt de 2927 et un budget de 2000. Compter la consommation ferait sous-estimer
+   et ramènerait les refus. */
+let DERNIERE_RESERVATION = null;
+
+/* La réservation est d'abord estimée, puis corrigée dès que Groq annonce le vrai
+   prompt. Sans cette correction, l'estimation initiale — 3000 par défaut — resterait
+   fausse pendant toute la fenêtre et fausserait le calcul d'attente. */
+function corrigerReservation(reel) {
+  if (!DERNIERE_RESERVATION || !(reel > 0)) return;
+  DERNIERE_RESERVATION.n = r0(reel);
+  DERNIERE_RESERVATION = null;
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+}
+
+const TPM_LIMITE = 8000;
+const TPM_FENETRE = 60000;
+
+/* Purge les réservations sorties de la fenêtre et renvoie le total encore imputé. */
+function quotaUtilise() {
+  const t = Date.now();
+  const j = (S().journalQuota || []).filter(x => x && t - x.t < TPM_FENETRE);
+  S().journalQuota = j;
+  return j.reduce((a, x) => a + (x.n || 0), 0);
+}
+
+function noterReservation(tokens) {
+  if (!(tokens > 0)) return;
+  const j = S().journalQuota || (S().journalQuota = []);
+  j.push({ t: Date.now(), n: r0(tokens) });
+  quotaUtilise();
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+}
+
+/* Secondes à attendre pour qu'une requête de `cout` jetons passe, 0 si la voie est
+   libre. On cherche le moment où assez de réservations anciennes seront sorties de la
+   fenêtre — calcul exact, puisqu'on connaît l'instant de chacune. */
+function attenteNecessaire(cout) {
+  const t = Date.now();
+  const j = (S().journalQuota || []).filter(x => x && t - x.t < TPM_FENETRE)
+                                    .sort((a, b) => a.t - b.t);
+  let total = j.reduce((a, x) => a + x.n, 0);
+  if (total + cout <= TPM_LIMITE) return 0;
+  for (let i = 0; i < j.length; i++) {
+    total -= j[i].n;
+    if (total + cout <= TPM_LIMITE) {
+      /* +1 s de marge : les horloges du navigateur et de Groq ne sont pas synchronisées. */
+      return Math.max(1, Math.ceil((j[i].t + TPM_FENETRE - t) / 1000) + 1);
+    }
+  }
+  return Math.ceil(TPM_FENETRE / 1000);
+}
+
+/* Coût prévisionnel d'une analyse photo : dernier prompt mesuré, à défaut une valeur
+   de départ prudente, plus la marge de réponse. */
+function coutPrevu() {
+  const dc = S().dernierCout;
+  const prompt = (dc && dc.photo && dc.p > 0) ? dc.p : 3000;
+  return prompt + budgetReponse();
+}
+
+/* -------------------------------------------------------------------------
    Budget de réponse auto-calibré (v5.2)
    -------------------------------------------------------------------------
    `max_tokens` est RÉSERVÉ sur le quota par minute, pas seulement consommé : Groq
@@ -1660,8 +1777,13 @@ function correctionHint(previous, corrections) {
    valeur haute pour que le budget remonte et que le cas ne se reproduise pas. */
 function budgetReponse() {
   const obs = (S().coutsRep || []).filter(n => n > 0);
-  if (!obs.length) return 1600;
-  return clamp(Math.round(Math.max.apply(null, obs) * 2), 1000, 2000);
+  /* Bornes révisées en v6.0, le raisonnement étant coupé sur l'appel principal : une
+     réponse ne contient plus que le JSON, de l'ordre de 400 à 600 jetons au lieu des
+     1543 mesurés avec réflexion. Les anciennes bornes (défaut 1600, plafond 2000)
+     encodaient l'hypothèse inverse et faisaient dépasser le budget dès la deuxième
+     analyse. Le repli AVEC réflexion demande 2000 explicitement, il n'est pas concerné. */
+  if (!obs.length) return 1100;
+  return clamp(Math.round(Math.max.apply(null, obs) * 2), 900, 1600);
 }
 
 /* Douze dernières tailles de réponse : assez pour absorber un repas exceptionnellement
@@ -1710,10 +1832,25 @@ let ANNULER_REPRISE = false;
 /* Repli : si la réflexion a consommé la réponse et qu'aucun JSON n'en sort, on rejoue
    sans réflexion. On ne rejoue QUE sur un échec d'extraction — une erreur réseau ou une
    clé refusée ne doit pas déclencher un second appel facturé. */
+/* Le raisonnement est COUPÉ sur l'appel principal depuis la v6.0.
+
+   Mesure décisive du 15 août 2026 : une analyse photo générait **1543 jetons de
+   réponse**, très majoritairement de la réflexion, imposant de réserver 2000 sur les
+   8000 de la minute. Réservation totale 4927, soit 62 % du budget : deux analyses ne
+   pouvaient jamais tenir dans la même minute, et toute photo prise moins de 23 s après
+   la précédente était refusée.
+
+   Le raisonnement avait été activé en v2.17 pour affiner l'estimation des portions.
+   Son apport n'a jamais été mesuré ; son coût, lui, l'est désormais, et il rendait
+   l'application inutilisable. Le prompt demande déjà au modèle d'annoncer son repère
+   de taille et de raisonner en volume — l'essentiel du bénéfice attendu.
+
+   La réflexion reste disponible en REPLI : si l'extraction échoue, on rejoue avec elle.
+   Et le champ de correction permet toujours de relancer une analyse insatisfaisante. */
 async function analyseAvecRepli(corps, essai) {
   const n = essai || 0;
   try {
-    return extractJson(await groqTry(corps, JSON_REFLEXION));
+    return extractJson(await groqTry(corps, JSON_SANS_REFLEXION));
   } catch (e) {
     /* Limite PAR MINUTE : on attend le délai annoncé par Groq, puis on relance seul.
        Une limite journalière ou une attente déraisonnable rendent la main. */
@@ -1730,11 +1867,16 @@ async function analyseAvecRepli(corps, essai) {
     }
     if (e && e.jsonFail) {
       /* Réponse tronquée : la marge était trop courte. On enregistre le budget courant
-         comme taille observée, ce qui le fait remonter d'un facteur 2 au prochain appel. */
+         comme taille observée, ce qui le fait remonter au prochain appel. */
       noterCoutReponse(budgetReponse());
       // la sortie rejetée par le validateur contient souvent un JSON exploitable : essai gratuit d'abord
       if (e.genRatee) { try { return extractJson(e.genRatee); } catch (_) {} }
       return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
+    }
+    /* Extraction impossible sans réflexion : on rejoue AVEC, seul cas qui la justifie
+       encore. Budget élargi, la réflexion consommant l'essentiel de la réponse. */
+    if (e && e.extraction && n === 0) {
+      return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 2000 }), JSON_REFLEXION));
     }
     /* JAMAIS de second appel sur un quota dépassé. La fenêtre par minute ne se libère
        pas en quelques millisecondes : le réessai est certain d'échouer, et il repart
@@ -1746,8 +1888,7 @@ async function analyseAvecRepli(corps, essai) {
        décider de réessayer. Un champ ajouté pour l'affichage avait donc changé le flux
        de contrôle. Le test porte désormais sur l'intention, pas sur un effet de bord. */
     if (e && e.quota) throw e;
-    if (!e || e.raw === undefined) throw e;
-    return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
+    throw e;
   }
 }
 
@@ -3042,7 +3183,12 @@ async function addPhoto(input) {
    friction principal. Seule une limite journalière rend la main, l'attente n'y pouvant
    rien avant la réinitialisation. */
 async function verrouLibre() {
-  const r = verrouRestant();
+  /* Deux sources d'attente, on retient la plus longue :
+       — le verrou posé par un refus 429 déjà essuyé (réactif) ;
+       — la comptabilité LOCALE, qui prédit le refus avant de l'essuyer (préventif).
+     C'est ce second mécanisme qui remplace le garde-fou de la v4.2, inopérant faute
+     d'en-têtes exposés par Groq. */
+  const r = Math.max(verrouRestant(), attenteNecessaire(coutPrevu()));
   if (!r) return true;
   if (!S().quotaJour && r <= ATTENTE_MAX) {
     ANNULER_REPRISE = false;
@@ -3431,18 +3577,19 @@ function renderSettings() {
   /* Coût RÉEL de la dernière requête, rapporté par Groq. C'est la seule mesure fiable
      du budget : tout le reste n'était qu'estimation à partir du nombre de caractères. */
   const dc = S().dernierCout;
-  const q = S().quota;
   $('#quotaInfo').innerHTML =
     (dc ? 'Dernière analyse' + (dc.photo ? ' photo' : ' texte') + ' — <b>' + dc.p + '</b> envoyés, <b>' +
           dc.c + '</b> générés.<br>Réservé sur le quota : <b>' + (dc.reserve || dc.t) + ' / 8000</b> par minute' +
           ' · marge de réponse actuelle ' + budgetReponse() + '.<br>' : '') +
-    (q ? '' : '');
-  $('#quotaInfo').innerHTML += q
-    ? 'Quota Groq au dernier appel — requêtes : <b>' + (q.reqR || '?') + '</b> sur ' + (q.reqL || '?') +
-      (q.reqZ ? ' (retour dans ' + esc(q.reqZ) + ')' : '') +
-      '<br>jetons : <b>' + (q.tokR || '?') + '</b> sur ' + (q.tokL || '?') +
-      (q.tokZ ? ' (retour dans ' + esc(q.tokZ) + ')' : '')
-    : '';
+    '';
+  /* Comptabilité LOCALE : Groq n'expose pas ses en-têtes de quota au navigateur,
+     l'application tient donc son propre compte. */
+  const util = quotaUtilise(), prevu = coutPrevu(), att = attenteNecessaire(prevu);
+  $('#quotaInfo').innerHTML +=
+    'Sur la dernière minute : <b>' + util + ' / ' + TPM_LIMITE + '</b> jetons engagés · ' +
+    'prochaine analyse estimée à <b>' + prevu + '</b>.<br>' +
+    (att ? '<span style="color:var(--warn)">Attente nécessaire : ' + att + ' s.</span>'
+         : '<span style="color:var(--acc-l)">Voie libre.</span>');
   const g = S().goals, gx = S().goalsMax || {};
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#gFiber').value = g.fiber; $('#gWater').value = g.water;
@@ -3469,7 +3616,9 @@ $('#sKeyEye').onclick = () => { const i = $('#sKey'); i.type = i.type === 'passw
 $('#sModel').onchange = e => { S().model = e.target.value; save(); toast('Modèle : ' + e.target.value); };
 $('#sImgPx').onchange = e => {
   S().imgPx = +e.target.value; save();
-  toast(S().imgPx === 768 ? 'Photos en 768 px — consommation réduite' : 'Photos en 1024 px — étiquettes plus lisibles');
+  toast('Photos en ' + S().imgPx + ' px' +
+        (S().imgPx === 512 ? ' — consommation minimale' :
+         S().imgPx === 768 ? ' — réglage recommandé' : ' — étiquettes plus lisibles'));
 };
 
 $('#sModelLoad').onclick = async () => {
@@ -4035,10 +4184,10 @@ function sanitizeBackup(inc) {
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
-      dernierCout: null, coutsRep: [],
+      dernierCout: null, coutsRep: [], journalQuota: [],
       /* le verrou est un état de session, jamais restauré depuis un fichier */
       quotaUntil: 0, quotaJour: false,
-      imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
+      imgPx: [512, 768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
       activites: (function () {
         /* On repart TOUJOURS du catalogue par défaut et on ne reprend du fichier que
            les valeurs réglables. Une activité inconnue importée n'aurait ni icône ni
@@ -4351,7 +4500,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.4');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v6.0');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
