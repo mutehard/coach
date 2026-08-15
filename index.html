@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.22</title>
+<title>Coach v2.23</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+   v2.23 — Consommation de jetons fortement réduite pour tenir dans le quota journalier du
+           palier gratuit : photos envoyées en 768 px au lieu de 1024 — réglable, la définition
+           détaillée restant disponible pour lire une petite étiquette — et budgets de réponse
+           resserrés, `max_tokens` étant réservé sur le quota et non seulement consommé.
+
    v2.22 — Diagnostic des quotas Groq : un refus 429 affichait « Réessaie dans un moment » sans
            distinguer une limite par minute d'une limite journalière, et jetait le détail fourni
            par Groq. Le message nomme désormais la limite atteinte, indique quand elle se libère
@@ -573,6 +578,12 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <label class="f"><span>Modèle vision</span>
         <select class="in" id="sModel"></select>
       </label>
+      <label class="f"><span>Définition des photos envoyées</span>
+        <select class="in" id="sImgPx">
+          <option value="768">Économique — 768 px, moitié moins de jetons</option>
+          <option value="1024">Détaillée — 1024 px, pour lire les petites étiquettes</option>
+        </select>
+      </label>
       <div id="quotaInfo" class="tiny" style="margin-bottom:10px"></div>
       <div class="row" style="gap:9px">
         <button class="btn sm grow" id="sModelLoad">↻ Charger les modèles</button>
@@ -624,7 +635,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.22 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v2.23 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -665,6 +676,8 @@ const DEFAULTS = {
     remindAfter: 0,
     weightRemind: 0,
     goalsWeight: 0,
+    quota: null,
+    imgPx: 768,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -1095,10 +1108,10 @@ async function analyseAvecRepli(corps) {
     if (e && e.jsonFail) {
       // la sortie rejetée par le validateur contient souvent un JSON exploitable : essai gratuit d'abord
       if (e.genRatee) { try { return extractJson(e.genRatee); } catch (_) {} }
-      return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 2400 }), JSON_SANS_REFLEXION));
+      return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
     }
     if (!e || e.raw === undefined) throw e;
-    return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 2400 }), JSON_SANS_REFLEXION));
+    return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
   }
 }
 
@@ -1113,15 +1126,18 @@ async function analysePhotos(dataUrls, hint) {
   /* 3000 et non 2500 : la réflexion partage ce budget avec la réponse, et à 2500 elle
      la tronquait parfois entièrement (erreur json_validate_failed). ~3300 tokens de
      requête + 3000 = ~6300, toujours sous le plafond de 8000/minute du palier gratuit. */
+  /* `max_tokens` est RÉSERVÉ sur le quota, pas seulement consommé : le refus TPM parlait
+     de « Requested 8315 » alors que la réponse fait quelques centaines de jetons. Le
+     resserrer réduit donc directement la facture de chaque analyse. */
   return analyseAvecRepli({
-    model: S().model, temperature: 0.2, max_tokens: 3000,
+    model: S().model, temperature: 0.2, max_tokens: 2000,
     messages: [{ role: 'user', content: content }]
   });
 }
 
 async function analyseText(desc) {
   return analyseAvecRepli({
-    model: S().model, temperature: 0.2, max_tokens: 2500,
+    model: S().model, temperature: 0.2, max_tokens: 1500,
     messages: [{ role: 'user', content: promptTexte(desc) }]
   });
 }
@@ -2206,7 +2222,9 @@ async function addPhoto(input) {
   if (!file || pending.length >= MAX_PHOTOS) return;
   try {
     const bmp = await loadBitmap(file);
-    pending.push({ big: toJpeg(bmp, 1024, 0.82), thumb: toJpeg(bmp, 220, 0.6) });
+    /* La consommation de jetons d'un modèle vision suit la définition de l'image :
+       c'est le premier levier quand le quota journalier est la contrainte. */
+    pending.push({ big: toJpeg(bmp, S().imgPx || 768, 0.82), thumb: toJpeg(bmp, 220, 0.6) });
     if (bmp.close) bmp.close();
     renderTray();
   } catch (err) {
@@ -2481,6 +2499,7 @@ function fillModels() {
 function renderSettings() {
   $('#sKey').value = S().apiKey;
   fillModels();
+  $('#sImgPx').value = String(S().imgPx || 768);
   const q = S().quota;
   $('#quotaInfo').innerHTML = q
     ? 'Quota Groq au dernier appel — requêtes : <b>' + (q.reqR || '?') + '</b> sur ' + (q.reqL || '?') +
@@ -2508,6 +2527,10 @@ function renderSettings() {
 $('#sKey').oninput = e => { S().apiKey = e.target.value.trim(); save(); };
 $('#sKeyEye').onclick = () => { const i = $('#sKey'); i.type = i.type === 'password' ? 'text' : 'password'; };
 $('#sModel').onchange = e => { S().model = e.target.value; save(); toast('Modèle : ' + e.target.value); };
+$('#sImgPx').onchange = e => {
+  S().imgPx = +e.target.value; save();
+  toast(S().imgPx === 768 ? 'Photos en 768 px — consommation réduite' : 'Photos en 1024 px — étiquettes plus lisibles');
+};
 
 $('#sModelLoad').onclick = async () => {
   if (!S().apiKey.trim()) { toast('Renseigne d\'abord la clé API'); return; }
@@ -2964,6 +2987,7 @@ function sanitizeBackup(inc) {
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
+      imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
       goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
                carb: pos(g.carb, 2000), fat: pos(g.fat, 1000),
                water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
@@ -3093,7 +3117,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.22');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.23');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
