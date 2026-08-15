@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v5.0</title>
+<title>Coach v5.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,19 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v5.1 — Reprise automatique apres une limite par minute. La fenetre de Groq est
+           GLISSANTE sur 60 s : elle finit toujours par se liberer, et Groq indique
+           lui-meme le delai. Faire echouer l'analyse etait donc le mauvais choix.
+           L'application attend le delai annonce et relance seule, avec un compte a
+           rebours et un bouton d'annulation. Distinction avec le reessai immediat
+           supprime en v4.2 : celui-la etait certain d'echouer. Bornes : deux reprises
+           au maximum, jamais sur une limite JOURNALIERE, jamais au-dela de 90 s.
+           Le verrou de quota n'echoue plus non plus : il attend puis laisse passer.
+           Le cout REEL de chaque requete est desormais lu dans le champ `usage` de la
+           reponse et affiche dans les reglages — jusqu'ici l'application estimait ce
+           budget d'apres le nombre de caracteres du prompt sans jamais le confronter
+           aux chiffres exacts, pourtant presents dans chaque reponse.
+
     v5.0 — L'energie d'un jour d'entrainement n'est plus un nombre saisi a la main, identique
            quel que soit le sport : elle est DEDUITE du profil, du type d'activite et du
            volume reel de la seance. Musculation et course a pied ne se valent pas — a 78 kg,
@@ -590,7 +603,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 #loader{position:fixed;inset:0;z-index:80;background:#0b0f14e8;backdrop-filter:blur(6px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
 .spin{width:44px;height:44px;border:3px solid #2b3644;border-top-color:var(--acc-l);border-radius:50%;animation:sp .8s linear infinite}
 @keyframes sp{to{transform:rotate(360deg)}}
-#loader p{font-size:14px;color:var(--dim);text-align:center;padding:0 30px}
+#loader p{font-size:14px;color:var(--dim);text-align:center;padding:0 30px;white-space:pre-line;line-height:1.5}
 .err{background:#2a1518;border:1px solid #4a2229;color:#fca5a5;border-radius:12px;padding:12px;font-size:13px;margin-bottom:12px;word-break:break-word}
 .nag{display:flex;align-items:flex-start;gap:10px;background:#241d12;border:1px solid #4a3a1c;border-radius:14px;padding:11px 12px;margin-bottom:12px}
 .nag b{display:block;font-size:13.5px;font-weight:700;color:#fbbf24}
@@ -780,7 +793,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v5.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v5.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -822,6 +835,7 @@ const DEFAULTS = {
     weightRemind: 0,
     goalsWeight: 0,
     quota: null,
+    dernierCout: null,
     quotaUntil: 0,
     quotaJour: false,
     imgPx: 768,
@@ -1211,16 +1225,20 @@ function toast(msg) {
   toastT = setTimeout(() => el.remove(), 2800);
 }
 
-function loader(on, msg) {
+function loader(on, msg, annulable) {
   let el = $('#loader');
   if (!on) { if (el) el.remove(); return; }
   if (!el) {
     el = document.createElement('div');
     el.id = 'loader';
-    el.innerHTML = '<div class="spin"></div><p></p>';
+    el.innerHTML = '<div class="spin"></div><p></p><button class="btn gho" id="ldCancel" style="display:none;max-width:220px">Annuler</button>';
     document.body.appendChild(el);
+    el.querySelector('#ldCancel').onclick = () => { ANNULER_REPRISE = true; };
   }
   el.querySelector('p').textContent = msg || '';
+  /* Une attente n'est acceptable que si l'on peut en sortir : sans ce bouton,
+     un compte à rebours de 90 secondes serait une impasse. */
+  el.querySelector('#ldCancel').style.display = annulable ? '' : 'none';
 }
 
 /* Totaux nutritionnels d'une liste d'aliments ou d'entrées */
@@ -1521,7 +1539,7 @@ async function groq(body) {
       const secs = ra > 0 ? ra : (parseFloat((m.match(/try again in ([\d.]+)\s*s/i) || [])[1]) || 0);
       if (secs > 0) poserVerrou(secs, parJour);
       const e = new Error((parJour ? 'Limite JOURNALIÈRE de ton compte Groq atteinte.' : 'Limite par minute atteinte.') + quand);
-      e.quota = true; e.raw = m;
+      e.quota = true; e.raw = m; e.parJour = parJour; e.attendre = secs;
       throw e;
     }
     if (/request too large|tokens per minute|TPM/i.test(m)) {
@@ -1534,6 +1552,19 @@ async function groq(body) {
     if (res.status === 404 || /model/i.test(m)) throw new Error('Modèle indisponible : ' + m);
     throw new Error(m);
   }
+  /* Consommation RÉELLE de la requête, telle que Groq la rapporte. Jusqu'ici l'app
+     estimait ce coût à partir du nombre de caractères du prompt, sans jamais confronter
+     l'estimation aux chiffres exacts — alors qu'ils arrivent dans chaque réponse. On les
+     conserve : ils pilotent le garde-fou et s'affichent dans les réglages. */
+  try {
+    const u = j && j.usage;
+    if (u && u.total_tokens) {
+      S().dernierCout = { p: r0(u.prompt_tokens), c: r0(u.completion_tokens),
+                          t: r0(u.total_tokens), quand: Date.now(),
+                          photo: !!(body && body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0) };
+      try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+    }
+  } catch (e) {}
   return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
 }
 
@@ -1570,13 +1601,57 @@ function correctionHint(previous, corrections) {
     'Réponds au même format JSON, sans commentaire.';
 }
 
+/* -------------------------------------------------------------------------
+   Reprise automatique après une limite par minute (v5.1)
+   -------------------------------------------------------------------------
+   La fenêtre de Groq est GLISSANTE sur 60 secondes : une limite par minute finit
+   toujours par se libérer, et Groq indique lui-même dans combien de temps. Faire
+   échouer l'analyse et rendre la main à l'utilisateur était donc le mauvais choix —
+   il ne lui restait qu'à attendre au jugé puis à tout recommencer.
+
+   L'application attend désormais le délai annoncé et relance seule. Distinction
+   essentielle avec le réessai IMMÉDIAT supprimé en v4.2 : celui-là était certain
+   d'échouer, puisque la fenêtre ne se libère pas en quelques millisecondes. Ici on
+   attend le temps que Groq a lui-même indiqué.
+
+   Bornes : deux reprises au maximum, jamais sur une limite JOURNALIÈRE — attendre
+   n'y changerait rien — et jamais plus de 90 secondes d'attente, au-delà desquelles
+   mieux vaut rendre la main. */
+const REPRISES_MAX = 2;
+const ATTENTE_MAX = 90;
+
+/* Attente interruptible, avec compte à rebours affiché dans le voile de chargement. */
+function attendreAvecCompteur(secondes, libelle) {
+  return new Promise(resolve => {
+    let reste = Math.ceil(secondes);
+    const peindre = () => loader(true, libelle + '\nReprise automatique dans ' + reste + ' s…', true);
+    peindre();
+    const t = setInterval(() => {
+      reste--;
+      if (reste <= 0 || ANNULER_REPRISE) { clearInterval(t); resolve(); return; }
+      peindre();
+    }, 1000);
+  });
+}
+let ANNULER_REPRISE = false;
+
 /* Repli : si la réflexion a consommé la réponse et qu'aucun JSON n'en sort, on rejoue
    sans réflexion. On ne rejoue QUE sur un échec d'extraction — une erreur réseau ou une
    clé refusée ne doit pas déclencher un second appel facturé. */
-async function analyseAvecRepli(corps) {
+async function analyseAvecRepli(corps, essai) {
+  const n = essai || 0;
   try {
     return extractJson(await groqTry(corps, JSON_REFLEXION));
   } catch (e) {
+    /* Limite PAR MINUTE : on attend le délai annoncé par Groq, puis on relance seul.
+       Une limite journalière ou une attente déraisonnable rendent la main. */
+    if (e && e.quota && !e.parJour && n < REPRISES_MAX &&
+        e.attendre > 0 && e.attendre <= ATTENTE_MAX && !ANNULER_REPRISE) {
+      await attendreAvecCompteur(e.attendre + 1, 'Quota par minute atteint.');
+      if (ANNULER_REPRISE) throw e;
+      loader(true, 'Reprise de l\'analyse…');
+      return analyseAvecRepli(corps, n + 1);
+    }
     if (e && e.tooLarge) {
       // requête au-dessus du plafond par minute : on retente au budget minimal, sans réflexion
       return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1200 }), JSON_SANS_REFLEXION));
@@ -2901,11 +2976,20 @@ async function addPhoto(input) {
   }
 }
 
-/* Voie libre ? Sinon on affiche l'attente restante, avec un décompte qui se met à
-   jour, plutôt que d'envoyer une requête dont le refus est certain. */
-function verrouLibre() {
+/* Voie libre ? Sur une limite par minute on ATTEND puis on laisse passer : la fenêtre
+   de Groq est glissante, elle finit toujours par se libérer. Refuser obligerait
+   l'utilisateur à revenir plus tard et à tout relancer lui-même — c'était le point de
+   friction principal. Seule une limite journalière rend la main, l'attente n'y pouvant
+   rien avant la réinitialisation. */
+async function verrouLibre() {
   const r = verrouRestant();
   if (!r) return true;
+  if (!S().quotaJour && r <= ATTENTE_MAX) {
+    ANNULER_REPRISE = false;
+    await attendreAvecCompteur(r, 'Quota par minute atteint.');
+    if (ANNULER_REPRISE) { loader(false); toast('Analyse annulée'); return false; }
+    return true;
+  }
   if (S().quotaJour) {
     sheet('Quota journalier atteint',
       '<div class="err">La limite JOURNALIÈRE de ton compte Groq est atteinte.</div>' +
@@ -2940,7 +3024,8 @@ function verrouLibre() {
 async function runAnalysis() {
   /* Le verrou est consulté AVANT de fermer la feuille : les photos préparées restent
      ainsi en place, et il n'y a rien à refaire une fois l'attente écoulée. */
-  if (!verrouLibre()) return;
+  ANNULER_REPRISE = false;
+  if (!(await verrouLibre())) return;
   const shots = pending.slice();
   closeSheet();
   loader(true, shots.length > 1
@@ -2986,7 +3071,8 @@ $('#btnManual').onclick = () => {
         const d = el.querySelector('#mDesc').value.trim();
         if (!d) { toast('Décris d\'abord ton repas'); return; }
         if (!S().apiKey.trim()) { closeSheet(); toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
-        if (!verrouLibre()) return;
+        ANNULER_REPRISE = false;
+        if (!(await verrouLibre())) return;
         closeSheet(); loader(true, 'Estimation en cours…');
         try {
           const res = normalise(await analyseText(d));
@@ -3272,8 +3358,15 @@ function renderSettings() {
   $('#sKey').value = S().apiKey;
   fillModels();
   $('#sImgPx').value = String(S().imgPx || 768);
+  /* Coût RÉEL de la dernière requête, rapporté par Groq. C'est la seule mesure fiable
+     du budget : tout le reste n'était qu'estimation à partir du nombre de caractères. */
+  const dc = S().dernierCout;
   const q = S().quota;
-  $('#quotaInfo').innerHTML = q
+  $('#quotaInfo').innerHTML =
+    (dc ? 'Dernière analyse' + (dc.photo ? ' photo' : ' texte') + ' — coût réel <b>' + dc.t + ' tokens</b> ' +
+          '(' + dc.p + ' envoyés, ' + dc.c + ' générés) sur 8000 par minute.<br>' : '') +
+    (q ? '' : '');
+  $('#quotaInfo').innerHTML += q
     ? 'Quota Groq au dernier appel — requêtes : <b>' + (q.reqR || '?') + '</b> sur ' + (q.reqL || '?') +
       (q.reqZ ? ' (retour dans ' + esc(q.reqZ) + ')' : '') +
       '<br>jetons : <b>' + (q.tokR || '?') + '</b> sur ' + (q.tokL || '?') +
@@ -3871,6 +3964,7 @@ function sanitizeBackup(inc) {
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
+      dernierCout: null,
       /* le verrou est un état de session, jamais restauré depuis un fichier */
       quotaUntil: 0, quotaJour: false,
       imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
@@ -4186,7 +4280,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.0');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.1');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
