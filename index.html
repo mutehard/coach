@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v5.1</title>
+<title>Coach v5.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,17 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v5.2 — Budget de reponse auto-calibre sur les tailles REELLEMENT observees, au lieu
+           d'une constante choisie au juge. Mesure sur un repas reel : prompt 2929,
+           reponse 452, max_tokens 2000 — soit 4929 reserves sur 8000, dont 1548 jamais
+           utilises. `max_tokens` etant RESERVE sur le quota et non seulement consomme,
+           19 % du budget de la minute partait a la poubelle a chaque photo, ce qui
+           interdisait toute seconde analyse. Le budget vaut desormais deux fois la plus
+           grande reponse observee sur les douze dernieres, borne entre 1000 et 2000 :
+           deux analyses tiennent dans la minute (2 x 3929 = 7858). Il remonte seul si
+           les repas se complexifient, et une reponse tronquee le fait remonter aussitot.
+           Les reglages affichent le montant RESERVE, seul chiffre qui decide du refus.
+
     v5.1 — Reprise automatique apres une limite par minute. La fenetre de Groq est
            GLISSANTE sur 60 s : elle finit toujours par se liberer, et Groq indique
            lui-meme le delai. Faire echouer l'analyse etait donc le mauvais choix.
@@ -793,7 +804,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v5.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v5.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -836,6 +847,7 @@ const DEFAULTS = {
     goalsWeight: 0,
     quota: null,
     dernierCout: null,
+    coutsRep: [],
     quotaUntil: 0,
     quotaJour: false,
     imgPx: 768,
@@ -1559,9 +1571,12 @@ async function groq(body) {
   try {
     const u = j && j.usage;
     if (u && u.total_tokens) {
+      const estPhoto = !!(body && body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0);
       S().dernierCout = { p: r0(u.prompt_tokens), c: r0(u.completion_tokens),
                           t: r0(u.total_tokens), quand: Date.now(),
-                          photo: !!(body && body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0) };
+                          reserve: r0(u.prompt_tokens) + r0(body && body.max_tokens || 0),
+                          photo: estPhoto };
+      if (estPhoto) noterCoutReponse(u.completion_tokens);
       try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
     }
   } catch (e) {}
@@ -1599,6 +1614,44 @@ function correctionHint(previous, corrections) {
     '\n\nReprends l\'analyse complète en tenant compte de ces corrections. ' +
     'Corrige aussi les quantités et les valeurs nutritionnelles des aliments concernés. ' +
     'Réponds au même format JSON, sans commentaire.';
+}
+
+/* -------------------------------------------------------------------------
+   Budget de réponse auto-calibré (v5.2)
+   -------------------------------------------------------------------------
+   `max_tokens` est RÉSERVÉ sur le quota par minute, pas seulement consommé : Groq
+   admet une requête au tarif `prompt + max_tokens`, quelle que soit la longueur réelle
+   de la réponse.
+
+   Mesure faite sur un repas réel : prompt 2929, réponse 452, `max_tokens` 2000.
+   Réservé 4929 sur 8000, dont **1548 jetons jamais utilisés** — 19 % du budget de la
+   minute jeté à chaque photo, ce qui interdisait toute seconde analyse.
+
+   Plutôt qu'une constante choisie au jugé — trois versions l'ont été, toutes fausses —
+   le budget se calibre sur les tailles de réponse RÉELLEMENT observées, avec un facteur
+   2 de marge. Il monte tout seul si les repas deviennent complexes, et redescend sinon.
+
+   Bornes : plancher à 1000, qui garantit deux analyses dans la minute pour un prompt
+   de ~2900 (2 × 3929 = 7858 < 8000) ; plafond à 2000, l'ancienne valeur. Sans aucune
+   mesure, on démarre à 1600, prudent.
+
+   Filet de sécurité si la marge s'avère trop courte : une réponse tronquée déclenche
+   `json_validate_failed`, que `analyseAvecRepli` sait déjà rattraper — souvent
+   gratuitement, la sortie rejetée étant jointe à l'erreur. On enregistre alors une
+   valeur haute pour que le budget remonte et que le cas ne se reproduise pas. */
+function budgetReponse() {
+  const obs = (S().coutsRep || []).filter(n => n > 0);
+  if (!obs.length) return 1600;
+  return clamp(Math.round(Math.max.apply(null, obs) * 2), 1000, 2000);
+}
+
+/* Douze dernières tailles de réponse : assez pour absorber un repas exceptionnellement
+   complexe sans que celui-ci ne gonfle le budget indéfiniment. */
+function noterCoutReponse(n) {
+  if (!(n > 0)) return;
+  const l = S().coutsRep || (S().coutsRep = []);
+  l.push(r0(n));
+  while (l.length > 12) l.shift();
 }
 
 /* -------------------------------------------------------------------------
@@ -1657,6 +1710,9 @@ async function analyseAvecRepli(corps, essai) {
       return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1200 }), JSON_SANS_REFLEXION));
     }
     if (e && e.jsonFail) {
+      /* Réponse tronquée : la marge était trop courte. On enregistre le budget courant
+         comme taille observée, ce qui le fait remonter d'un facteur 2 au prochain appel. */
+      noterCoutReponse(budgetReponse());
       // la sortie rejetée par le validateur contient souvent un JSON exploitable : essai gratuit d'abord
       if (e.genRatee) { try { return extractJson(e.genRatee); } catch (_) {} }
       return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
@@ -1680,18 +1736,8 @@ async function analysePhotos(dataUrls, hint) {
   const imgs = dataUrls.slice(0, MAX_PHOTOS);
   const content = [{ type: 'text', text: promptPhotos(imgs.length) + (hint ? '\n\n' + hint : '') }];
   imgs.forEach(u => content.push({ type: 'image_url', image_url: { url: u } }));
-  /* Plafond du palier gratuit Groq : 8000 tokens par minute, image et max_tokens
-     compris. Une photo 1024 px consomme à elle seule ~2500-3000 tokens : un budget
-     de 5000 faisait dépasser (constaté : 8315 demandés pour 8000). 2500 laisse la
-     réflexion travailler tout en restant sous la limite. */
-  /* 3000 et non 2500 : la réflexion partage ce budget avec la réponse, et à 2500 elle
-     la tronquait parfois entièrement (erreur json_validate_failed). ~3300 tokens de
-     requête + 3000 = ~6300, toujours sous le plafond de 8000/minute du palier gratuit. */
-  /* `max_tokens` est RÉSERVÉ sur le quota, pas seulement consommé : le refus TPM parlait
-     de « Requested 8315 » alors que la réponse fait quelques centaines de jetons. Le
-     resserrer réduit donc directement la facture de chaque analyse. */
   return analyseAvecRepli({
-    model: S().model, temperature: 0.2, max_tokens: 2000,
+    model: S().model, temperature: 0.2, max_tokens: budgetReponse(),
     messages: [{ role: 'user', content: content }]
   });
 }
@@ -3363,8 +3409,9 @@ function renderSettings() {
   const dc = S().dernierCout;
   const q = S().quota;
   $('#quotaInfo').innerHTML =
-    (dc ? 'Dernière analyse' + (dc.photo ? ' photo' : ' texte') + ' — coût réel <b>' + dc.t + ' tokens</b> ' +
-          '(' + dc.p + ' envoyés, ' + dc.c + ' générés) sur 8000 par minute.<br>' : '') +
+    (dc ? 'Dernière analyse' + (dc.photo ? ' photo' : ' texte') + ' — <b>' + dc.p + '</b> envoyés, <b>' +
+          dc.c + '</b> générés.<br>Réservé sur le quota : <b>' + (dc.reserve || dc.t) + ' / 8000</b> par minute' +
+          ' · marge de réponse actuelle ' + budgetReponse() + '.<br>' : '') +
     (q ? '' : '');
   $('#quotaInfo').innerHTML += q
     ? 'Quota Groq au dernier appel — requêtes : <b>' + (q.reqR || '?') + '</b> sur ' + (q.reqL || '?') +
@@ -3964,7 +4011,7 @@ function sanitizeBackup(inc) {
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
-      dernierCout: null,
+      dernierCout: null, coutsRep: [],
       /* le verrou est un état de session, jamais restauré depuis un fichier */
       quotaUntil: 0, quotaJour: false,
       imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
@@ -4280,7 +4327,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.1');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.2');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
