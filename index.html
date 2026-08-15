@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v2.23</title>
+<title>Coach v4.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,41 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v4.0 — Revue critique des fourchettes de la v3.0, sur dix profils et non plus un seul.
+           Trois défauts corrigés à la racine. Les deux bornes des glucides se déduisent
+           désormais de la même logique — le solde énergétique — là où le plancher venait
+           d'un ratio au poids : elles ne peuvent plus se croiser (« 120–120 g ») ni
+           réclamer collectivement plus d'énergie que la cible n'en accorde, ce qui rendait
+           l'objectif inatteignable par construction pour les profils légers en déficit.
+           Les plafonds sont bornés par l'énergie disponible. Les protéines se calculent sur
+           la masse maigre dès que le taux de masse grasse est renseigné. Les plafonds de
+           protéines et de fibres ne déclenchent plus d'alerte : aucun risque connu à les
+           dépasser, et le dépassement est même souhaitable. Un bandeau énonce la hiérarchie
+           des verdicts — l'énergie commande le poids, les fourchettes la composition — quatre
+           fourchettes indépendantes ne pouvant pas contrôler l'énergie à elles seules.
+           Le rythme de variation du poids est enfin jugé, en pourcentage du poids et selon
+           l'objectif déclaré, là où il n'était coloré qu'au signe : −2 kg/semaine s'affichait
+           en vert. Cyclage énergétique par jour d'entraînement, à moyenne hebdomadaire
+           constante. Retour de la répartition des protéines dans la journée, en une ligne.
+           Alcool suivi comme grandeur propre, son énergie n'étant portée par aucune
+           fourchette. Les écarts sont arrondis à 5 g au-delà de 20, l'estimation sur photo
+           ne soutenant pas la précision au gramme.
+
+    v3.0 — Objectifs en fourchettes plutôt qu'en cibles uniques : chaque macronutriment porte
+           désormais un plancher à atteindre et un plafond à ne pas dépasser, la jauge du jour
+           situant l'apport entre les deux et annonçant ce qui manque tant que le plancher
+           n'est pas franchi. Les bornes se déduisent du profil — protéines 1,7 g/kg (2,0 en
+           déficit) à 2,5 ; lipides 0,7 à 1,2 g/kg ; glucides de 2 g/kg au solde énergétique
+           disponible — et restent modifiables une à une, un plafond vidé rendant sa ligne à
+           l'objectif simple. Les fibres deviennent un nutriment suivi à part entière, de la
+           demande faite au modèle jusqu'aux totaux, à l'éditeur, aux aliments favoris, aux
+           compléments et aux sauvegardes, avec une fourchette de 25 à 45 g calée sur 14 g pour
+           1000 kcal. Suppression de plages de journées depuis les Réglages, la liste des jours
+           visés étant affichée avant validation, les pesées n'étant emportées que sur demande
+           explicite et l'absence de sauvegarde couvrant la période étant signalée.
+           Les installations antérieures conservent leurs objectifs, qui deviennent les
+           planchers ; seuls les plafonds sont déduits du profil.
+
    v2.23 — Consommation de jetons fortement réduite pour tenir dans le quota journalier du
            palier gratuit : photos envoyées en 768 px au lieu de 1024 — réglable, la définition
            détaillée restant disponible pour lire une petite étiquette — et budgets de réponse
@@ -231,7 +266,7 @@
   --bg:#0b0f14; --bg2:#0f151d; --card:#151b23; --card2:#1b232d; --line:#25303d;
   --txt:#e9eff6; --dim:#8b9bad; --dim2:#63738a;
   --acc:#10b981; --acc-d:#047857; --acc-l:#34d399;
-  --prot:#60a5fa; --carb:#fbbf24; --fat:#f472b6; --warn:#fb923c; --bad:#ef4444;
+  --prot:#60a5fa; --carb:#fbbf24; --fat:#f472b6; --fib:#a3e635; --warn:#fb923c; --bad:#ef4444;
   --r:16px; --sat:env(safe-area-inset-top); --sab:env(safe-area-inset-bottom);
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -263,6 +298,15 @@ h1,h2,h3,p{margin:0}
 /* ---------- cartes ---------- */
 .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:12px}
 .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);font-weight:700;margin-bottom:12px}
+.card h3.sub{font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);font-weight:700;margin:16px 0 4px}
+/* Saisie des fourchettes : le libellé tient la première colonne, le plancher et le
+   plafond se font face — la comparaison entre les deux doit être immédiate. */
+.fourch{display:grid;gap:7px;margin-bottom:13px}
+.fourch .hdr,.fourch label{display:grid;grid-template-columns:1fr 78px 78px;gap:8px;align-items:center}
+.fourch .hdr span{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--dim2);text-align:center}
+.fourch .hdr span:first-child{text-align:left}
+.fourch label>span{font-size:13.5px;color:var(--txt)}
+.fourch input{text-align:center;font-variant-numeric:tabular-nums}
 .row{display:flex;align-items:center;gap:10px}
 .between{justify-content:space-between}
 .grow{flex:1;min-width:0}
@@ -328,13 +372,52 @@ h1,h2,h3,p{margin:0}
 .ring .ctr span{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.6px}
 
 /* ---------- barres macros ---------- */
-.macro{margin-bottom:11px}
+.macro{margin-bottom:13px}
 .macro:last-child{margin-bottom:0}
 .macro .hd{display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px}
 .macro .hd b{font-weight:600}
 .macro .hd span{color:var(--dim)}
 .bar{height:7px;border-radius:4px;background:#222c38;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:4px;transition:width .35s ease}
+
+/* Jauge à fourchette (v3.0) : la bande claire matérialise la zone entre le
+   plancher et le plafond, le remplissage plein l'apport du jour. Les deux
+   traits marquent les bornes, sans quoi la bande seule reste trop discrète. */
+.rbar{position:relative;height:10px;border-radius:5px;background:#222c38;overflow:hidden}
+.rbar .zone{position:absolute;top:0;bottom:0;background:currentColor;opacity:.22}
+.rbar .fill{position:absolute;top:0;left:0;bottom:0;border-radius:5px;background:currentColor;transition:width .35s ease}
+/* États nommés `bas` / `zon` / `haut` et non `under` / `in` / `over` : `.in` est la
+   classe globale des champs de saisie, et un état nommé ainsi héritait de son cadre. */
+.rbar .fill.bas{opacity:.55}
+.rbar .fill.haut{background:var(--warn);color:var(--warn);box-shadow:0 0 9px currentColor}
+.rbar .fill.zon{box-shadow:0 0 9px currentColor}
+.rbar .tick{position:absolute;top:0;bottom:0;width:2px;background:var(--bg);opacity:.85}
+/* En-tête sur deux niveaux : le nom et les chiffres se partagent la première ligne,
+   l'état ne descend sous la jauge que pour laisser respirer les 375 px de l'iPhone —
+   tout mettre sur une ligne faisait se chevaucher la pastille et les valeurs. */
+.macro .hd span.val{font-variant-numeric:tabular-nums;white-space:nowrap;padding-left:8px;color:var(--dim)}
+.macro .hd span.val b{color:var(--txt);font-weight:700}
+.macro .st{display:block;text-align:right;font-size:11px;font-weight:600;color:var(--dim2);margin-top:3px;letter-spacing:.1px}
+.macro .st.zon{color:var(--acc-l)}
+.macro .st.haut{color:var(--warn)}
+/* L'astérisque signale un plafond qui n'est qu'un repère, jamais une limite. */
+.macro .rep{color:var(--dim2);font-weight:400}
+/* Bandeau de hiérarchie : dit lequel des verdicts gouverne. */
+.prio{font-size:12px;line-height:1.45;padding:9px 11px;border-radius:11px;margin-top:12px;
+  background:#1a212b;color:var(--dim);border:1px solid var(--line)}
+.prio b{color:var(--txt);font-weight:700}
+.prio.ok{background:rgba(52,211,153,.09);border-color:rgba(52,211,153,.28)}
+.prio.ok b{color:var(--acc-l)}
+.prio.warn{background:rgba(251,146,60,.10);border-color:rgba(251,146,60,.30)}
+.prio.warn b{color:var(--warn)}
+/* Bascule « jour d'entraînement ». Pleine largeur et haute de 44 px : c'est un
+   geste quotidien, il doit se faire sans viser. */
+.trainbtn{width:100%;min-height:44px;margin-bottom:11px;border-radius:12px;cursor:pointer;
+  background:var(--card);border:1px solid var(--line);color:var(--dim);
+  font:600 13.5px/1.3 inherit;display:flex;align-items:center;justify-content:center;gap:8px}
+.trainbtn.on{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.38);color:var(--acc-l)}
+.trainbtn small{font-weight:500;opacity:.85}
+#wJuge .prio{margin-top:11px}
 
 /* ---------- repas ---------- */
 .meal{margin-bottom:10px}
@@ -369,6 +452,9 @@ label.f>span{display:block;font-size:12px;color:var(--dim);margin-bottom:5px;fon
 select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overflow:ellipsis;background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);background-position:calc(100% - 17px) 21px,calc(100% - 12px) 21px;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.grid5 .f span{font-size:10.5px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .seg{display:flex;background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:3px;gap:3px}
 .seg button{flex:1;padding:9px 4px;border-radius:9px;font-size:13px;font-weight:600;color:var(--dim)}
 .seg button.on{background:var(--card2);color:var(--txt);box-shadow:0 1px 3px #0006}
@@ -403,10 +489,12 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .t input{flex:1;background:transparent;border:0;font-weight:600;font-size:15px;outline:none;min-width:0;padding:2px 0}
 .item .t button{color:var(--dim2);font-size:19px;padding:0 3px;line-height:1}
 .item .t button[data-fav]{color:#6b5a2a;font-size:16px}
-.item .g{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}
+/* Huit champs : deux rangées de quatre plutôt qu'une rangée de huit. À 375 px,
+   huit colonnes laisseraient 41 px par champ — illisible et intouchable au doigt. */
+.item .g{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .item .g label{display:block}
-.item .g span{display:block;font-size:9px;color:var(--dim2);text-transform:uppercase;letter-spacing:.2px;margin-bottom:3px;text-align:center}
-.item .g input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:7px 1px;text-align:center;font-size:13px;outline:none;font-variant-numeric:tabular-nums}
+.item .g span{display:block;font-size:9.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.2px;margin-bottom:3px;text-align:center}
+.item .g input{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:8px 0;text-align:center;font-size:14px;outline:none;font-variant-numeric:tabular-nums}
 .item .g input:focus{border-color:var(--acc)}
 
 .supps{display:flex;flex-wrap:wrap;gap:7px}
@@ -482,6 +570,11 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
   font:400 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dim);
   white-space:pre-wrap;word-break:break-word;max-height:230px;overflow:auto}
 .note{background:#111d19;border:1px solid #1e3a30;border-radius:12px;padding:12px;font-size:12.5px;color:#9fd9c2;line-height:1.5}
+.chk{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--bg2);border:1px solid var(--line);
+  border-radius:12px;font-size:13.5px;margin-bottom:2px;cursor:pointer}
+.chk input{width:19px;height:19px;accent-color:var(--acc);flex:none;margin:0}
+.btn:disabled{opacity:.4;pointer-events:none}
+input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 </style>
 </head>
 <body>
@@ -502,6 +595,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <div class="lbl grow" id="dLbl"></div>
       <button id="dNext" aria-label="Jour suivant">›</button>
     </div>
+    <button id="btnTrain" class="trainbtn hidden"></button>
 
     <div id="celeb"></div>
 
@@ -521,6 +615,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
         </div>
         <div class="grow" id="macros"></div>
       </div>
+      <div id="macroHead"></div>
       <div id="protInfo" class="protinfo"></div>
     </div>
 
@@ -558,6 +653,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
         <button class="btn sm" id="btnWeight">+ Saisir</button>
       </div>
       <div id="chartWeight"></div>
+      <div id="wJuge"></div>
     </div>
     <div class="card">
       <h2>Détail des journées</h2>
@@ -596,12 +692,25 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <h2>Objectifs quotidiens</h2>
       <div class="grid2">
         <label class="f"><span>Calories (kcal)</span><input class="in" id="gKcal" inputmode="numeric"></label>
-        <label class="f"><span>Protéines (g)</span><input class="in" id="gProt" inputmode="numeric"></label>
-        <label class="f"><span>Glucides (g)</span><input class="in" id="gCarb" inputmode="numeric"></label>
-        <label class="f"><span>Lipides (g)</span><input class="in" id="gFat" inputmode="numeric"></label>
         <label class="f"><span>Hydratation (ml)</span><input class="in" id="gWater" inputmode="numeric"></label>
       </div>
+      <h3 class="sub">Fourchettes des macronutriments</h3>
+      <p class="tiny" style="margin:-2px 0 10px">Un plancher à atteindre et un plafond à ne pas dépasser. Laisse un plafond vide pour revenir à un objectif simple sur cette ligne.</p>
+      <div class="fourch">
+        <div class="hdr"><span></span><span>Mini</span><span>Maxi</span></div>
+        <label><span>Protéines (g)</span><input class="in" id="gProt" inputmode="numeric"><input class="in" id="xProt" inputmode="numeric"></label>
+        <label><span>Glucides (g)</span><input class="in" id="gCarb" inputmode="numeric"><input class="in" id="xCarb" inputmode="numeric"></label>
+        <label><span>Lipides (g)</span><input class="in" id="gFat" inputmode="numeric"><input class="in" id="xFat" inputmode="numeric"></label>
+        <label><span>Fibres (g)</span><input class="in" id="gFiber" inputmode="numeric"><input class="in" id="xFiber" inputmode="numeric"></label>
+      </div>
       <button class="btn sm" id="btnCalc" style="width:100%">🧮 Calculer à partir de mon profil</button>
+      <h3 class="sub">Jours d'entraînement</h3>
+      <p class="tiny" style="margin:-2px 0 10px">Les jours de séance reçoivent plus d'énergie, sous forme de glucides ; les jours de repos en rendent autant. <b>La moyenne de la semaine ne bouge pas</b> — marquer ses séances ne relève pas la cible.</p>
+      <div class="grid2">
+        <label class="f"><span>Séances par semaine</span><input class="in" id="sTrainN" inputmode="numeric"></label>
+        <label class="f"><span>Énergie ajoutée (kcal)</span><input class="in" id="sTrainK" inputmode="numeric"></label>
+      </div>
+      <p class="tiny" id="trainInfo" style="margin-top:-2px"></p>
     </div>
 
     <div class="card">
@@ -629,13 +738,14 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
       <button class="btn sm" id="btnExpJson" style="width:100%">⬇ Sauvegarde complète (.json)</button>
       <p class="tiny" style="margin:7px 0 12px">Tout est dedans : repas, pesées, objectifs, profil, compléments, repas habituels, aliments favoris et volumes. C'est le seul fichier qui permet de tout restaurer.</p>
       <button class="btn sm" id="btnImp" style="width:100%;margin-bottom:10px">⬆ Importer une sauvegarde</button>
+      <button class="btn sm gho" id="btnPurge" style="width:100%;margin-bottom:10px">🗑 Supprimer des journées</button>
       <button class="btn sm dan" id="btnWipe" style="width:100%">Effacer toutes les données</button>
       <p class="tiny" style="margin-top:11px" id="storInfo"></p>
     </div>
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v2.23 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v4.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -682,11 +792,26 @@ const DEFAULTS = {
     waterPresets: [],
     templates: [],
     foods: [],
-    goals: { kcal: 2200, prot: 130, carb: 240, fat: 73, water: 2500 },
-    profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0 }
+    /* `goals` porte, pour les macronutriments, le seuil MINIMUM de la journée ; `goalsMax`
+       porte le plafond. Pour les calories et l'hydratation, `goals` reste une cible unique :
+       l'anneau et la jauge d'eau n'ont pas de sens en fourchette. */
+    goals: { kcal: 2200, prot: 130, carb: 240, fat: 53, fiber: 30, water: 2500 },
+    goalsMax: { prot: 188, carb: 320, fat: 90, fiber: 45 },
+    /* `bodyFat` à 0 signifie « inconnu » : les protéines retombent alors sur le
+       poids total. Renseigné, il fait basculer le calcul sur la masse maigre. */
+    profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0, bodyFat: 0 },
+    /* Cyclage énergétique. `trainDays` = séances par semaine, `trainKcal` = énergie
+       ajoutée un jour de séance. La moyenne hebdomadaire reste égale à la cible :
+       ce qu'un jour d'entraînement reçoit en plus, les jours de repos le rendent. */
+    trainDays: 0,
+    trainKcal: 300
   },
   entries: [],
-  weights: []
+  weights: [],
+  /* Dates marquées « jour d'entraînement ». Un tableau de dates plutôt qu'un
+     drapeau par entrée : une journée est d'entraînement en elle-même, y compris
+     si aucun repas n'y est encore enregistré. */
+  trainings: []
 };
 
 function deepMerge(base, over) {
@@ -714,10 +839,12 @@ let STORAGE_OK = true;
 try { localStorage.setItem(KEY + '.probe', '1'); localStorage.removeItem(KEY + '.probe'); }
 catch (e) { STORAGE_OK = false; }
 
-let DB;
-try { DB = deepMerge(DEFAULTS, JSON.parse(localStorage.getItem(KEY) || '{}')); }
+let DB, BRUT_STOCKE = {};
+try { BRUT_STOCKE = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { BRUT_STOCKE = {}; }
+try { DB = deepMerge(DEFAULTS, BRUT_STOCKE); }
 catch (e) { DB = deepMerge(DEFAULTS, {}); }
 const S = () => DB.settings;
+
 
 /* v2.20 : les vignettes ne sont plus conservées — validé le repas, la photo n'a plus
    d'usage, et c'étaient elles qui remplissaient le stockage (~22 Ko pièce contre
@@ -755,6 +882,148 @@ const $$ = s => Array.from(document.querySelectorAll(s));
 const r0 = n => Math.round(Number(n) || 0);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+/* -------------------------------------------------------------------------
+   Fourchettes nutritionnelles déduites du profil (v3.0)
+   -------------------------------------------------------------------------
+   Chaque macronutriment porte un plancher et un plafond, et non plus une cible
+   unique. Les repères retenus, tous rapportés au poids de corps :
+
+     protéines  1,7 g/kg (2,0 en déficit) à 2,5 g/kg
+     lipides    0,7 g/kg à 1,2 g/kg — en dessous de 0,7, les fonctions
+                hormonales et l'absorption des vitamines liposolubles pâtissent
+     glucides   2 g/kg, plancher absolu 120 g, jusqu'au solde énergétique
+                disponible quand protéines et lipides sont à leur minimum
+     fibres     25 g à 45 g, cible 14 g pour 1000 kcal (repère ANSES : 30 g/jour)
+
+   Ces valeurs sont des repères de population générale, pas une prescription :
+   toutes restent modifiables une à une dans les Réglages. */
+function fourchettesProfil(kg, kcal, deficit, mg) {
+  const p = Math.max(20, kg || 75), k = Math.max(1200, kcal || 2000);
+
+  /* Protéines. Rapportées à la MASSE MAIGRE quand le taux de masse grasse est
+     connu : à 78 kg, 156 g valent 2,35 g/kg de masse maigre à 15 % de gras mais
+     2,86 à 30 %. Même chiffre affiché, besoins réels très différents. Sans cette
+     donnée on retombe sur le poids total, moins juste mais toujours défendable. */
+  const mm = mg > 0 ? p * (1 - mg / 100) : 0;
+  let protMin = mm > 0 ? Math.round(mm * (deficit ? 2.4 : 2.0))
+                       : Math.round(p * (deficit ? 2.0 : 1.7));
+  let protMax = mm > 0 ? Math.round(mm * 3.0) : Math.round(p * 2.5);
+
+  /* Les plafonds sont bornés par l'énergie disponible, sans quoi, chez un profil
+     léger ou en gros déficit, protéines et lipides au maximum consommaient à eux
+     seuls la quasi-totalité du budget et ne laissaient plus de place aux glucides. */
+  protMax = Math.min(protMax, Math.round(0.45 * k / 4));
+  protMin = Math.min(protMin, protMax);
+  let fatMin = Math.round(p * 0.7);
+  const fatMax = Math.min(Math.round(p * 1.2), Math.round(0.35 * k / 9));
+  fatMin = Math.min(fatMin, fatMax);
+
+  /* Glucides : variable d'ajustement, dont les DEUX bornes se déduisent de la même
+     logique — le solde énergétique. Le plafond est ce qui reste quand protéines et
+     lipides sont au minimum, le plancher ce qui reste quand ils sont au maximum.
+
+     C'est ce qui garantit que la somme des planchers ne dépasse JAMAIS la cible :
+       planchers = k − 4·(protMax − protMin) − 9·(fatMax − fatMin) < k
+     En v3.0 les deux bornes venaient de logiques incommensurables — un ratio au
+     poids pour le plancher, un solde énergétique pour le plafond. Elles se
+     croisaient (fourchette « 120–120 g ») et les planchers pouvaient réclamer
+     plus d'énergie que la cible n'en accordait, rendant l'objectif inatteignable
+     par construction. Ne pas revenir à un plancher exprimé en g/kg. */
+  const carbMax = Math.max(0, Math.round((k - protMin * 4 - fatMin * 9) / 4));
+  let carbMin = Math.max(0, Math.round((k - protMax * 4 - fatMax * 9) / 4));
+  if (carbMin > carbMax) carbMin = carbMax;
+
+  const fiber = clamp(Math.round(k / 1000 * 14), 25, 45);
+  return {
+    min: { prot: protMin, carb: carbMin, fat: fatMin, fiber: Math.min(fiber, 30) },
+    max: { prot: protMax, carb: carbMax, fat: fatMax, fiber: 45 }
+  };
+}
+
+/* Quels plafonds sont de vraies limites à ne pas franchir.
+
+   Protéines et fibres : AUCUN risque connu de dépassement chez un sujet sain, et
+   dans les deux cas le dépassement est même souhaitable — au-delà de 2,5 g/kg en
+   déficit pour la satiété et le maintien de la masse maigre, au-delà de 45 g de
+   fibres dans une alimentation riche en légumes. Leur plafond reste affiché comme
+   repère mais ne déclenche pas d'alerte : peindre en orange un comportement utile
+   est le meilleur moyen de le décourager.
+
+   Glucides et lipides : le dépassement se fait au détriment du budget énergétique
+   et des autres nutriments. L'alerte a du sens. */
+const PLAFOND_STRICT = { prot: false, carb: true, fat: true, fiber: false };
+
+/* -------------------------------------------------------------------------
+   Jours d'entraînement et cyclage énergétique (v4.0)
+   -------------------------------------------------------------------------
+   Une fourchette unique appliquée aux sept jours de la semaine ne peut être juste
+   aucun jour : l'écart de besoin en glucides entre un jour de séance et un jour de
+   repos dépasse couramment 100 g.
+
+   Le report se fait à moyenne hebdomadaire CONSTANTE — sinon marquer ses séances
+   reviendrait à relever sa cible en douce et à annuler le déficit :
+
+     jour de séance : cible + D · (7 − n) / 7
+     jour de repos  : cible − D · n / 7
+
+   avec n séances par semaine et D l'énergie ajoutée. La somme sur sept jours vaut
+   exactement 7 × cible. L'énergie ajoutée ou retirée est portée par les GLUCIDES,
+   substrat de l'effort ; protéines et lipides ne bougent pas. */
+function estJourEntrainement(date) {
+  return (DB.trainings || []).indexOf(date) >= 0;
+}
+
+function deltaJour(date) {
+  const n = clamp(r0(S().trainDays), 0, 7), D = Math.max(0, r0(S().trainKcal));
+  if (!n || !D || n >= 7) return 0;
+  return estJourEntrainement(date) ? D * (7 - n) / 7 : -D * n / 7;
+}
+
+/* Objectifs applicables à une date : la cible et les fourchettes après cyclage.
+   Toute vue qui compare un apport à un objectif doit passer par ici, jamais
+   directement par `S().goals`, sans quoi le journal et l'historique ne diraient
+   pas la même chose. */
+function objectifsDuJour(date) {
+  const g = S().goals, gx = S().goalsMax || {};
+  const d = Math.round(deltaJour(date));
+  const dg = Math.round(d / 4);   // l'énergie du cyclage est portée par les glucides
+  const min = { prot: g.prot, carb: Math.max(0, g.carb + dg), fat: g.fat, fiber: g.fiber };
+  const max = { prot: gx.prot, carb: gx.carb > 0 ? Math.max(0, gx.carb + dg) : 0,
+                fat: gx.fat, fiber: gx.fiber };
+  if (max.carb > 0 && max.carb < min.carb) max.carb = min.carb;
+  /* Alias à plat des planchers (`prot`, `carb`, `fat`, `fiber`) : le coach et les
+     messages de fin de journée lisent `g.prot` sans connaître les fourchettes.
+     Les exposer ici évite de dupliquer la logique de cyclage dans chaque vue. */
+  return { kcal: Math.max(0, g.kcal + d), water: g.water, min: min, max: max,
+           prot: min.prot, carb: min.carb, fat: min.fat, fiber: min.fiber,
+           delta: d, train: estJourEntrainement(date) };
+}
+
+/* Un plafond doit toujours rester au-dessus de son plancher, y compris après une
+   modification manuelle d'un seul des deux champs. */
+function normaliserFourchettes() {
+  const g = S().goals, gx = S().goalsMax;
+  ['prot', 'carb', 'fat', 'fiber'].forEach(k => {
+    if (!(gx[k] > 0)) gx[k] = 0;
+    if (gx[k] > 0 && gx[k] < g[k]) gx[k] = g[k];
+  });
+}
+
+/* Reprise des installations antérieures à la v3.0 : les cibles uniques existantes
+   deviennent les planchers, sans y toucher, et seuls les plafonds sont déduits du
+   profil. Recalculer aussi les planchers modifierait en silence des objectifs que
+   l'utilisateur a pu régler à la main. */
+(function migrerV3() {
+  const s = BRUT_STOCKE.settings;
+  if (!s || s.goalsMax) return;
+  const g = S().goals, p = S().profile || {};
+  const f = fourchettesProfil(p.weight, g.kcal, (p.aim || 0) < 0, p.bodyFat);
+  S().goalsMax = f.max;
+  if (!(g.fiber > 0)) g.fiber = f.min.fiber;
+  normaliserFourchettes();
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+})();
 
 /* Les compléments sont enregistrés comme des repas d'un moment à part : ils entrent
    ainsi dans les totaux, l'historique, l'export et les sauvegardes sans code dédié,
@@ -834,8 +1103,9 @@ function sumItems(items) {
   return (items || []).reduce((a, i) => ({
     kcal: a.kcal + (+i.kcal || 0), prot: a.prot + (+i.prot || 0),
     carb: a.carb + (+i.carb || 0), fat: a.fat + (+i.fat || 0),
+    fiber: a.fiber + (+i.fiber || 0), alc: a.alc + (+i.alc || 0),
     water: a.water + (+i.water || 0)
-  }), { kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 });
+  }), { kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0, alc: 0, water: 0 });
 }
 function sumEntries(entries) {
   return sumItems(entries.reduce((a, e) => a.concat(e.items || []), []));
@@ -882,12 +1152,20 @@ function toJpeg(bmp, maxSide, q) {
 const MAX_PHOTOS = 2;
 
 const PROMPT_REGLES = `Réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise markdown, exactement à ce format :
-{"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14,"hydratation_ml":0}],"confiance":"haute","remarque":"une phrase courte"}
+{"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14,"fibres_g":3,"alcool_g":0,"hydratation_ml":0}],"confiance":"haute","remarque":"une phrase courte"}
 
 Règles :
 - une ligne par aliment identifiable (viande, féculent, légume, sauce, boisson, pain...) ;
 - estime la portion visible en grammes (ou en millilitres pour un liquide) ;
-- les valeurs kcal, proteines_g, glucides_g et lipides_g correspondent à la quantité estimée, PAS à 100 g ;
+- les valeurs kcal, proteines_g, glucides_g, lipides_g et fibres_g correspondent à la quantité estimée, PAS à 100 g ;
+- "fibres_g" : fibres alimentaires de la portion. Légumes, fruits, légumineuses, céréales complètes, \
+oléagineux en apportent ; viande, poisson, œuf, produits laitiers, huile et sucre valent 0. \
+Les fibres sont comprises dans "glucides_g" quand celui-ci suit l'usage européen, ne les retranche pas ;
+- "alcool_g" : alcool pur de la portion, en grammes. Une boisson alcoolisée en contient \
+0,8 g par degré et par décilitre — un verre de vin de 12 cl à 12 degrés vaut environ 11 g, \
+un demi de bière de 25 cl à 5 degrés environ 10 g. L'alcool n'est ni un glucide ni un lipide \
+et apporte 7 kcal par gramme : compte-le dans "kcal" mais jamais dans "glucides_g". \
+Tout aliment non alcoolisé vaut 0 ;
 - nombres entiers uniquement, pas d'unité dans les nombres, pas d'intervalle ;
 - "hydratation_ml" : volume de liquide RÉELLEMENT BU, en millilitres. Un café, un thé, une infusion, \
 un verre d'eau, un jus, un soda, un bouillon ou une soupe comptent pour leur volume estimé. Le café et le thé \
@@ -1153,7 +1431,7 @@ function normalise(j) {
       name: String(a.nom || 'Aliment').slice(0, 50),
       qty: r0(a.quantite_g), kcal: r0(a.kcal),
       prot: r0(a.proteines_g), carb: r0(a.glucides_g), fat: r0(a.lipides_g),
-      water: r0(a.hydratation_ml)
+      fiber: r0(a.fibres_g), alc: r0(a.alcool_g), water: r0(a.hydratation_ml)
     }))
   };
 }
@@ -1389,7 +1667,7 @@ function goalsBanner() {
     (ecart < 0 ? 'Tu as perdu ' : 'Tu as pris ') + Math.abs(ecart).toFixed(1).replace('.', ',') +
     ' kg depuis le calcul de tes cibles' +
     (pc.lisse ? ', d\'après ta tendance (' + pc.kg.toFixed(1).replace('.', ',') + ' kg)' : '') +
-    '. Recalculées, elles passeraient à ' + n.kcal + ' kcal et ' + n.prot + ' g de protéines.</span>' +
+    '. Recalculées, elles passeraient à ' + n.kcal + ' kcal et ' + n.prot + ' g de protéines minimum.</span>' +
     '<div class="wrow"><button class="btn sm" id="gnOk">Recalculer</button>' +
     '<button class="btn sm gho" id="gnKeep">Garder</button></div></div>' +
     '<button class="nagX" id="gnLater" aria-label="Plus tard">✕</button>';
@@ -1401,14 +1679,13 @@ $('#goalsNag').onclick = e => {
   if (e.target.closest('#gnOk')) {
     const bmr = 10 * pc.kg + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
     const kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
-    const prot = Math.round(pc.kg * (p.aim < 0 ? 2.0 : 1.7));
-    const fat = Math.round(pc.kg * 0.9);
-    S().goals = { kcal: kcal, prot: prot, fat: fat,
-                  carb: Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4)),
-                  water: eauObjectif(pc.kg, p.act) };
+    const f = fourchettesProfil(pc.kg, kcal, p.aim < 0, p.bodyFat);
+    S().goals = { kcal: kcal, prot: f.min.prot, carb: f.min.carb, fat: f.min.fat,
+                  fiber: f.min.fiber, water: eauObjectif(pc.kg, p.act) };
+    S().goalsMax = f.max;
     S().goalsWeight = pc.kg;
     save(); renderToday(); renderHistory(); renderSettings();
-    toast('Objectifs recalculés : ' + kcal + ' kcal, ' + prot + ' g de protéines');
+    toast('Objectifs recalculés : ' + kcal + ' kcal, ' + f.min.prot + ' g de protéines minimum');
   } else if (e.target.closest('#gnKeep')) {
     S().goalsWeight = pc.kg;   // on prend acte du poids sans toucher aux cibles
     save(); goalsBanner();
@@ -1474,6 +1751,79 @@ function backupBanner() {
     '<button class="nagX" id="nagLater" aria-label="Plus tard">✕</button>';
 }
 
+/* Jauge à fourchette d'un macronutriment (v3.0).
+
+   Lecture voulue : d'un coup d'œil, savoir si l'on est SOUS le plancher, DANS la
+   zone, ou AU-DESSUS du plafond — et, tant qu'on est sous le plancher, combien il
+   manque. Être sous le plancher à 10 h du matin est normal : l'état « il manque »
+   reste donc neutre, jamais alarmant. Seul le dépassement du plafond passe en orange.
+
+   L'échelle va de 0 au plafond majoré d'un quart, et s'étire si l'apport le dépasse,
+   pour que le dépassement reste visible sans écraser la zone.
+
+   Sans plafond renseigné (`mx` à 0), on retombe sur la jauge de progression simple
+   des versions antérieures : l'utilisateur peut vider le champ sans rien casser. */
+function jaugeMacro(nom, v, mn, mx, col, cle) {
+  const style = 'color:' + col;
+  if (!(mx > 0)) {
+    const plein = mn > 0 && v >= mn;
+    return '<div class="macro" style="' + style + '"><div class="hd"><b>' + nom +
+      (plein ? '<span class="ok">✓</span>' : '') + '</b><span class="val">' + r0(v) + ' / ' + r0(mn) + ' g</span></div>' +
+      '<div class="bar"><i class="' + (plein ? 'full' : '') + '" style="width:' +
+      (mn > 0 ? clamp(v / mn, 0, 1) * 100 : 0).toFixed(1) + '%;background:' + col + ';color:' + col + '"></i></div></div>';
+  }
+  const ech = Math.max(mx * 1.25, v * 1.08, 1);
+  const pc = x => (clamp(x / ech, 0, 1) * 100).toFixed(1) + '%';
+  const sous = v < mn, dessus = v > mx;
+
+  /* L'estimation d'une portion sur photo porte une erreur de l'ordre de 20 à 30 %.
+     Annoncer « il manque 88 g » au gramme près afficherait une précision que
+     l'entrée ne soutient pas : au-delà de 20 g on arrondit au multiple de 5. */
+  const arrondi = x => x >= 20 ? Math.round(x / 5) * 5 : r0(x);
+
+  /* Un plafond non strict (protéines, fibres) est un repère, pas une limite : son
+     dépassement n'est ni coloré ni compté comme un écart. */
+  const strict = PLAFOND_STRICT[cle] !== false;
+  const alerte = dessus && strict;
+  const etat = sous ? (v > 0 ? 'il manque ' + arrondi(mn - v) + ' g' : 'à faire')
+             : alerte ? '+' + arrondi(v - mx) + ' g'
+             : dessus ? '✓ au-delà du repère'
+             : '✓ dans la zone';
+  const cls = sous ? '' : alerte ? 'haut' : 'zon';
+  return '<div class="macro" style="' + style + '">' +
+    '<div class="hd"><b>' + nom + '</b>' +
+    '<span class="val"><b>' + r0(v) + ' g</b> / ' + r0(mn) + '–' + r0(mx) +
+    (strict ? '' : '<span class="rep" title="repère, pas une limite">*</span>') + '</span></div>' +
+    '<div class="rbar">' +
+    '<i class="zone" style="left:' + pc(mn) + ';width:' + (clamp((mx - mn) / ech, 0, 1) * 100).toFixed(1) + '%"></i>' +
+    '<i class="fill ' + (cls || 'bas') + '" style="width:' + pc(v) + '"></i>' +
+    '<i class="tick" style="left:' + pc(mn) + '"></i>' +
+    '<i class="tick" style="left:' + pc(mx) + '"></i>' +
+    '</div><span class="st ' + cls + '">' + etat + '</span></div>';
+}
+
+/* Bascule « jour d'entraînement ». Masquée tant qu'aucune séance hebdomadaire n'est
+   déclarée dans les réglages : sans ce nombre, le cyclage n'a pas de sens et le
+   bouton n'aurait aucun effet visible. */
+function renderTrainBtn() {
+  const b = $('#btnTrain');
+  if (!b) return;
+  const n = clamp(r0(S().trainDays), 0, 7);
+  if (!n || n >= 7) { b.className = 'trainbtn hidden'; b.innerHTML = ''; return; }
+  const on = estJourEntrainement(curDate);
+  const d = Math.round(deltaJour(curDate));
+  b.className = 'trainbtn' + (on ? ' on' : '');
+  b.innerHTML = (on ? '💪 Jour d\'entraînement' : '😴 Jour de repos') +
+    '<small>' + (d >= 0 ? '+' : '−') + Math.abs(d) + ' kcal</small>';
+}
+
+$('#btnTrain').onclick = () => {
+  const l = DB.trainings || (DB.trainings = []);
+  const i = l.indexOf(curDate);
+  if (i >= 0) l.splice(i, 1); else l.push(curDate);
+  save(); renderToday(); renderHistory();
+};
+
 function renderToday() {
   $('#dLbl').innerHTML = frDate(curDate, true) +
     '<small>' + parseD(curDate).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + '</small>';
@@ -1482,11 +1832,14 @@ function renderToday() {
   backupBanner();
   weightBanner();
   goalsBanner();
+  renderTrainBtn();
   renderTpls();
   renderSupps();
 
   const list = entriesOf(curDate);
-  const t = sumEntries(list), g = S().goals;
+  /* Objectifs de CE jour, cyclage compris — jamais `S().goals` directement. */
+  const o = objectifsDuJour(curDate);
+  const t = sumEntries(list), g = o;
 
   // anneau calories
   const pct = g.kcal > 0 ? clamp(t.kcal / g.kcal, 0, 1) : 0;
@@ -1505,27 +1858,66 @@ function renderToday() {
   const c = renderCoach(t, g, repasDuJour);
   celebrate(c);
 
-  // barres macros
+  // jauges à fourchette
   const defs = [
-    ['Protéines', t.prot, g.prot, 'var(--prot)'],
-    ['Glucides', t.carb, g.carb, 'var(--carb)'],
-    ['Lipides', t.fat, g.fat, 'var(--fat)']
+    ['Protéines', t.prot, g.min.prot, g.max.prot, 'var(--prot)', 'prot'],
+    ['Glucides', t.carb, g.min.carb, g.max.carb, 'var(--carb)', 'carb'],
+    ['Lipides', t.fat, g.min.fat, g.max.fat, 'var(--fat)', 'fat'],
+    ['Fibres', t.fiber, g.min.fiber, g.max.fiber, 'var(--fib)', 'fiber']
   ];
-  /* Protéines en grammes par kilo : la seule unité qui ait un sens pour la prise de
-     muscle. La répartition par prise a existé en v2.6 puis v2.9 ; retirée en v2.10,
-     elle alourdissait la carte pour un gain de lecture faible au quotidien. */
+
+  /* HIÉRARCHIE DES VERDICTS.
+
+     Quatre fourchettes indépendantes ne peuvent pas contrôler l'énergie : on peut
+     être « dans la zone » sur les quatre et se situer plusieurs centaines de
+     kilocalories à côté de la cible. Sur un profil de 78 kg, l'état « tout vert »
+     couvrait 795 kcal d'amplitude — assez pour prendre du poids en cherchant à en
+     perdre, avec quatre coches vertes à l'écran.
+
+     Ce n'est pas rattrapable en resserrant les bornes : c'est inhérent à des
+     fourchettes indépendantes. On énonce donc l'ordre. L'ÉNERGIE commande la masse
+     corporelle, les MACRONUTRIMENTS commandent la composition et la santé. Tant que
+     l'écart énergétique dépasse 10 %, il prime et les fourchettes sont annoncées
+     comme secondaires. */
+  const ecart = t.kcal - g.kcal;
+  const horsCible = g.kcal > 0 && t.kcal > 0 && Math.abs(ecart) > g.kcal * 0.10;
+  $('#macroHead').innerHTML = !t.kcal ? ''
+    : horsCible
+      ? '<div class="prio warn"><b>' + (ecart > 0 ? '+' : '−') + r0(Math.abs(ecart)) +
+        ' kcal sur la journée.</b> C\'est ce chiffre qui décide de ton poids : il passe avant les fourchettes ci-dessous.</div>'
+      : '<div class="prio ok"><b>Énergie tenue.</b> Les fourchettes affinent la composition.</div>';
+
+  /* Protéines : grammes par kilo, et RÉPARTITION dans la journée. Trois à quatre
+     prises d'environ 0,3 g/kg stimulent la synthèse protéique mieux qu'un total
+     identique concentré sur un seul repas — le total quotidien seul est un
+     indicateur incomplet. Cette répartition avait existé en v2.6 puis v2.9 et
+     avait été retirée en v2.10 comme trop lourde ; elle revient ici réduite à une
+     seule phrase, sans le détail par prise qui alourdissait la carte. */
   const poids = (S().profile || {}).weight || 0;
   const fr1 = v => v.toFixed(1).replace('.', ',');
-  $('#protInfo').innerHTML = (poids && t.prot)
-    ? '<b>' + fr1(t.prot / poids) + ' g/kg</b> de protéines<em> · objectif ' + fr1(g.prot / poids) + ' g/kg</em>'
-    : '';
-  $('#macros').innerHTML = defs.map(([n, v, gl, col]) => {
-    const plein = gl > 0 && v >= gl;
-    return '<div class="macro"><div class="hd"><b>' + n + (plein ? '<span class="ok">✓</span>' : '') +
-      '</b><span>' + r0(v) + ' / ' + r0(gl) + ' g</span></div>' +
-      '<div class="bar"><i class="' + (plein ? 'full' : '') + '" style="width:' +
-      (gl > 0 ? clamp(v / gl, 0, 1) * 100 : 0).toFixed(1) + '%;background:' + col + ';color:' + col + '"></i></div></div>';
-  }).join('');
+  let info = '';
+  if (poids && t.prot) {
+    info = '<b>' + fr1(t.prot / poids) + ' g/kg</b> de protéines<em> · zone ' + fr1(g.min.prot / poids) +
+           (g.max.prot > 0 ? ' à ' + fr1(g.max.prot / poids) : '') + ' g/kg</em>';
+    const seuil = poids * 0.3;
+    const prises = list.filter(e => e.meal !== DRINK)
+      .reduce((a, e) => { const p = sumItems(e.items).prot; if (p > 0) a.push(p); return a; }, []);
+    const bonnes = prises.filter(p => p >= seuil).length;
+    if (prises.length) {
+      info += '<br><b>' + bonnes + ' prise' + (bonnes > 1 ? 's' : '') + ' sur ' + prises.length +
+              '</b> ' + (bonnes > 1 ? 'atteignent' : 'atteint') + ' ' + r0(seuil) + ' g' +
+              '<em> · viser 3 à 4 prises dans la journée</em>';
+    }
+  }
+  /* L'alcool apporte 7 kcal/g sans être ni glucide, ni lipide, ni protéine : dès
+     qu'il y en a, l'anneau cesse d'égaler 4P + 4G + 9L et les fourchettes décrochent
+     de la cible énergétique sans que rien ne l'explique. On le dit. */
+  if (t.alc > 0) {
+    info += (info ? '<br>' : '') + '<b style="color:var(--warn)">' + r0(t.alc) + ' g d\'alcool</b>' +
+            '<em> ≈ ' + r0(t.alc * 7) + ' kcal, hors fourchettes ci-dessus</em>';
+  }
+  $('#protInfo').innerHTML = info;
+  $('#macros').innerHTML = defs.map(a => jaugeMacro(a[0], a[1], a[2], a[3], a[4], a[5])).join('');
 
   // repas
   const box = $('#meals');
@@ -1676,7 +2068,8 @@ $('#dLbl').onclick = () => { curDate = TODAY(); renderToday(); };
 function scaleFood(f, qty) {
   const k = f.qty > 0 ? qty / f.qty : 1;
   return { name: f.name, qty: r0(qty), kcal: r0(f.kcal * k), prot: r0(f.prot * k),
-           carb: r0(f.carb * k), fat: r0(f.fat * k), water: r0((f.water || 0) * k) };
+           carb: r0(f.carb * k), fat: r0(f.fat * k), fiber: r0((f.fiber || 0) * k),
+           alc: r0((f.alc || 0) * k), water: r0((f.water || 0) * k) };
 }
 
 function saveFav(i) {
@@ -1686,7 +2079,8 @@ function saveFav(i) {
   const nom = (prompt('Nom de l\'aliment favori', base) || '').trim();
   if (!nom) return;
   const f = { id: uid(), name: nom.slice(0, 60), qty: r0(i.qty), kcal: r0(i.kcal),
-              prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) };
+              prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat),
+              fiber: r0(i.fiber), alc: r0(i.alc), water: r0(i.water) };
   const remplace = (S().foods || []).some(x => x.name.toLowerCase() === f.name.toLowerCase());
   S().foods = (S().foods || []).filter(x => x.name.toLowerCase() !== f.name.toLowerCase()).concat([f]);
   save(); renderFoodsSettings();
@@ -1706,7 +2100,7 @@ function pickFood(cb) {
       '<div class="entry" data-pick="' + esc(f.id) + '">' +
       '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
       '<div class="dt">' + r0(f.qty) + ' g · ' + r0(f.kcal) + ' kcal · P ' + r0(f.prot) +
-      ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
+      ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + (f.fiber ? ' F ' + r0(f.fiber) : '') + (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
       '<button class="lnk" data-qty="' + esc(f.id) + '">autre&nbsp;quantité</button></div>').join('') +
     '<p class="tiny" style="margin-top:10px;text-align:center">Touche un aliment pour l\'ajouter à sa quantité de référence.</p>',
     el => {
@@ -1813,7 +2207,8 @@ $('#tpls').onclick = e => {
     if (deja.indexOf(id) >= 0) { ignores++; return; }
     DB.entries.push({ id: uid(), ts: Date.now(), date: curDate, meal: SUPP, supp: sp.id, title: sp.name,
       items: [{ name: sp.name + (sp.dose ? ' · ' + sp.dose : ''), qty: 0,
-                kcal: r0(sp.kcal), prot: r0(sp.prot), carb: r0(sp.carb), fat: r0(sp.fat) }] });
+                kcal: r0(sp.kcal), prot: r0(sp.prot), carb: r0(sp.carb), fat: r0(sp.fat),
+                fiber: r0(sp.fiber), alc: 0 }] });
     ajoutes++;
   });
   save(); renderToday(); renderHistory();
@@ -1855,7 +2250,7 @@ function renderHydra(t, g) {
 function ajouterEau(ml) {
   if (!(ml > 0)) return;
   DB.entries.push({ id: uid(), ts: Date.now(), date: curDate, meal: DRINK, title: 'Eau',
-                    items: [{ name: 'Eau', qty: r0(ml), kcal: 0, prot: 0, carb: 0, fat: 0, water: r0(ml) }] });
+                    items: [{ name: 'Eau', qty: r0(ml), kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0, alc: 0, water: r0(ml) }] });
   save(); renderToday(); renderHistory();
 }
 
@@ -1963,7 +2358,8 @@ $('#supps').onclick = e => {
   DB.entries.push({
     id: uid(), ts: Date.now(), date: curDate, meal: SUPP, supp: sp.id, title: sp.name,
     items: [{ name: sp.name + (sp.dose ? ' · ' + sp.dose : ''), qty: 0,
-              kcal: r0(sp.kcal), prot: r0(sp.prot), carb: r0(sp.carb), fat: r0(sp.fat) }]
+              kcal: r0(sp.kcal), prot: r0(sp.prot), carb: r0(sp.carb), fat: r0(sp.fat),
+              fiber: r0(sp.fiber), alc: 0 }]
   });
   save(); renderToday(); renderHistory();
 };
@@ -2017,7 +2413,8 @@ function itemHtml(i, idx) {
     '<button data-fav="' + idx + '" aria-label="Enregistrer comme aliment favori">★</button>' +
     '<button data-del="' + idx + '" aria-label="Supprimer">✕</button></div>' +
     '<div class="g">' + f('qty', 'g', i.qty) + f('kcal', 'kcal', i.kcal) + f('prot', 'prot', i.prot) +
-    f('carb', 'gluc', i.carb) + f('fat', 'lip', i.fat) + f('water', 'ml', i.water) + '</div></div>';
+    f('carb', 'gluc', i.carb) + f('fat', 'lip', i.fat) + f('fiber', 'fib', i.fiber) +
+    f('alc', 'alc', i.alc) + f('water', 'ml', i.water) + '</div></div>';
 }
 
 function totalsHtml(items) {
@@ -2027,6 +2424,8 @@ function totalsHtml(items) {
     '<span style="color:var(--prot)">' + r0(t.prot) + '</span> / ' +
     '<span style="color:var(--carb)">' + r0(t.carb) + '</span> / ' +
     '<span style="color:var(--fat)">' + r0(t.fat) + '</span> g' +
+    (t.fiber ? ' &nbsp;·&nbsp; <span style="color:var(--fib)">' + r0(t.fiber) + ' g fibres</span>' : '') +
+    (t.alc ? ' &nbsp;·&nbsp; <span style="color:var(--warn)">' + r0(t.alc) + ' g alcool</span>' : '') +
     (t.water ? ' &nbsp;·&nbsp; <span style="color:#38bdf8">💧 ' + r0(t.water) + ' ml</span>' : '') +
     '</span></div>';
 }
@@ -2093,7 +2492,7 @@ function openEditor(entry, ctx) {
     });
     el.querySelector('#eFav').onclick = () => pickFood(it => { items.push(it); paint(); totEl.innerHTML = totalsHtml(items); });
     el.querySelector('#eAdd').onclick = () => {
-      items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 });
+      items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0, alc: 0, water: 0 });
       paint();
       const ins = listEl.querySelectorAll('.item input'); if (ins.length) ins[ins.length - 5].focus();
     };
@@ -2107,7 +2506,8 @@ function openEditor(entry, ctx) {
       const previous = {
         plat: (el.querySelector('#eTitle').value || '').trim(),
         aliments: items.map(i => ({ nom: i.name, quantite_g: i.qty, kcal: i.kcal,
-                                    proteines_g: i.prot, glucides_g: i.carb, lipides_g: i.fat }))
+                                    proteines_g: i.prot, glucides_g: i.carb, lipides_g: i.fat,
+                                    fibres_g: i.fiber, alcool_g: i.alc }))
       };
       const keep = { meal: el.querySelector('#eMeal').value, date: el.querySelector('#eDate').value };
       closeSheet();
@@ -2135,7 +2535,8 @@ function openEditor(entry, ctx) {
       const t = {
         id: uid(), name: nom.slice(0, 40), meal: el.querySelector('#eMeal').value,
         items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
-                                 prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) })),
+                                 prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat),
+                                 fiber: r0(i.fiber), alc: r0(i.alc), water: r0(i.water) })),
         supps: []
       };
       S().templates = (S().templates || []).concat([t]);
@@ -2149,7 +2550,9 @@ function openEditor(entry, ctx) {
       entry.title = (el.querySelector('#eTitle').value || 'Repas').trim();
       entry.meal = el.querySelector('#eMeal').value;
       entry.date = el.querySelector('#eDate').value || TODAY();
-      entry.items = clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal), prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) }));
+      entry.items = clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
+                                     prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat),
+                                     fiber: r0(i.fiber), alc: r0(i.alc), water: r0(i.water) }));
       if (isNew) DB.entries.push(entry);
       save();
       curDate = entry.date;
@@ -2298,7 +2701,7 @@ $('#btnManual').onclick = () => {
       el.querySelector('#mBlank').onclick = () => {
         const d = el.querySelector('#mDesc').value.trim();
         closeSheet();
-        openEditor({ id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(), title: d.slice(0, 40) || 'Repas', items: [{ name: d.slice(0, 40) || '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 }] },
+        openEditor({ id: uid(), ts: Date.now(), date: curDate > TODAY() ? TODAY() : curDate, meal: guessMeal(), title: d.slice(0, 40) || 'Repas', items: [{ name: d.slice(0, 40) || '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0, alc: 0, water: 0 }] },
           { isNew: true });
       };
     });
@@ -2403,20 +2806,65 @@ function lineChart(pts) {
     '</svg>';
 }
 
+/* Jugement du rythme de variation du poids (v4.0).
+
+   Jusqu'à la v3.0 le rythme n'était coloré qu'au SIGNE : −2 kg/semaine s'affichait
+   en vert au même titre que −0,4. C'est l'indicateur le plus important pour une
+   recomposition, et l'application le mesurait sans jamais le juger.
+
+   Le repère usuel est 0,5 à 1 % du poids par semaine en perte — au-delà, la part
+   de masse maigre perdue augmente nettement. En prise, 0,25 à 0,5 % limite la part
+   de gras. Le jugement dépend donc de l'objectif déclaré : perdre, maintenir ou
+   prendre. On raisonne en POURCENTAGE du poids, jamais en kilos absolus : 0,7 kg
+   par semaine n'a pas le même sens à 55 kg qu'à 110 kg. */
+function jugerRythme(kgSem, poids, aim) {
+  const vert = '#34d399', orange = '#fb923c', neutre = '#8b9bad';
+  if (!(poids > 0)) return { couleur: neutre, cls: '', titre: 'Rythme', texte: 'poids de référence inconnu.' };
+  const pct = kgSem / poids * 100;
+  const p1 = Math.abs(pct).toFixed(2).replace('.', ',');
+  if (aim < 0) {
+    if (pct <= -1.0) return { couleur: orange, cls: 'warn', titre: 'Perte trop rapide.',
+      texte: p1 + ' % du poids par semaine. Au-delà de 1 %, la part de masse maigre perdue augmente : réduis le déficit.' };
+    if (pct <= -0.5) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
+      texte: p1 + ' % du poids par semaine, dans la zone qui préserve la masse maigre.' };
+    if (pct < -0.1) return { couleur: vert, cls: 'ok', titre: 'Perte lente.',
+      texte: p1 + ' % par semaine — tenable, mais sous la zone de 0,5 à 1 %.' };
+    return { couleur: neutre, cls: '', titre: 'Pas de perte.',
+      texte: 'La tendance ne descend pas. Revois la cible ou la régularité du suivi.' };
+  }
+  if (aim > 0) {
+    if (pct >= 0.5) return { couleur: orange, cls: 'warn', titre: 'Prise trop rapide.',
+      texte: p1 + ' % par semaine. Au-delà de 0,5 %, la part de gras prise augmente nettement.' };
+    if (pct >= 0.1) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
+      texte: p1 + ' % par semaine, dans la zone d\'une prise majoritairement maigre.' };
+    return { couleur: neutre, cls: '', titre: 'Pas de prise.',
+      texte: 'La tendance ne monte pas. Augmente la cible énergétique.' };
+  }
+  if (Math.abs(pct) <= 0.25) return { couleur: vert, cls: 'ok', titre: 'Poids stable.',
+    texte: 'Variation sous 0,25 % par semaine, conforme à un objectif de maintien.' };
+  return { couleur: orange, cls: 'warn', titre: 'Poids en dérive.',
+    texte: p1 + ' % par semaine alors que l\'objectif est le maintien.' };
+}
+
 function renderHistory() {
   const days = daysBack(range);
   const g = S().goals;
   const per = days.map(d => sumEntries(entriesOf(d)));
   const active = per.filter(p => p.kcal > 0);
   const avg = active.length ? active.reduce((a, p) => a + p.kcal, 0) / active.length : 0;
-  const inGoal = active.filter(p => g.kcal && Math.abs(p.kcal - g.kcal) <= g.kcal * 0.1).length;
+  /* Chaque journée est jugée sur SA cible : avec le cyclage, un jour de séance et un
+     jour de repos n'ont pas le même objectif, et les comparer au même chiffre
+     compterait à tort des journées tenues comme manquées. */
+  const cibles = days.map(d => objectifsDuJour(d).kcal);
+  const inGoal = days.filter((d, i) => per[i].kcal > 0 && cibles[i] > 0 &&
+    Math.abs(per[i].kcal - cibles[i]) <= cibles[i] * 0.1).length;
 
   $('#hKpi').innerHTML =
     '<div><b>' + r0(avg) + '</b><span>kcal / jour</span></div>' +
     '<div><b>' + active.length + '</b><span>jours suivis</span></div>' +
     '<div><b>' + inGoal + '</b><span>objectif tenu</span></div>';
 
-  $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal);
+  $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal);   // repère = cible moyenne
   $('#chartWater').innerHTML = barChart(days, per.map(p => p.water), g.water, 'ml', '#38bdf8', '#0284c7');
 
   const wpts = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).filter(w => w.date >= days[0]);
@@ -2427,18 +2875,27 @@ function renderHistory() {
   const fenetre = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
     .filter(w => w.date >= shiftD(TODAY(), -56));
   const tr = tendancePoids(fenetre);
-  $('#wRate').innerHTML = tr
-    ? '<b style="color:' + (tr.rythme <= 0 ? '#34d399' : '#fb923c') + '">' +
+  if (!tr) {
+    $('#wRate').innerHTML = '<span>tendance : pas assez de recul</span>';
+    $('#wJuge').innerHTML = '';
+  } else {
+    const j = jugerRythme(tr.rythme, tr.fin || (S().profile || {}).weight, (S().profile || {}).aim || 0);
+    $('#wRate').innerHTML =
+      '<b style="color:' + j.couleur + '">' +
       (tr.rythme > 0 ? '+' : '−') + Math.abs(tr.rythme).toFixed(2).replace('.', ',') + ' kg/sem.</b>' +
-      '<span> tendance sur ' + tr.n + ' pesées, ' + tr.jours + ' jours</span>'
-    : '<span>tendance : pas assez de recul</span>';
+      '<span> tendance sur ' + tr.n + ' pesées, ' + tr.jours + ' jours</span>';
+    $('#wJuge').innerHTML = '<div class="prio ' + j.cls + '"><b>' + esc(j.titre) + '</b> ' + esc(j.texte) + '</div>';
+  }
 
   const rows = days.slice().reverse().filter((d, i) => sumEntries(entriesOf(d)).kcal > 0);
   $('#dayList').innerHTML = rows.length ? rows.map(d => {
     const t = sumEntries(entriesOf(d));
     const over = g.kcal && t.kcal > g.kcal;
-    return '<div class="dayrow" data-d="' + d + '"><div class="grow"><div class="d">' + frDate(d) + '</div>' +
-      '<div class="m">P ' + r0(t.prot) + ' g · G ' + r0(t.carb) + ' g · L ' + r0(t.fat) + ' g' +
+    return '<div class="dayrow" data-d="' + d + '"><div class="grow"><div class="d">' + frDate(d) +
+      (estJourEntrainement(d) ? ' <span style="font-size:11px">💪</span>' : '') + '</div>' +
+      '<div class="m">P ' + r0(t.prot) + ' · G ' + r0(t.carb) + ' · L ' + r0(t.fat) +
+      (t.fiber ? ' · F ' + r0(t.fiber) : '') + ' g' +
+      (t.alc ? ' · 🍷 ' + r0(t.alc) + ' g' : '') +
       (t.water ? ' · 💧 ' + (t.water / 1000).toFixed(1) + ' L' : '') + '</div></div>' +
       '<span class="pill' + (over ? ' over' : '') + '">' + (g.kcal ? (over ? '+' : '') + r0(t.kcal - g.kcal) : '—') + '</span>' +
       '<div class="v">' + r0(t.kcal) + '</div></div>';
@@ -2507,9 +2964,15 @@ function renderSettings() {
       '<br>jetons : <b>' + (q.tokR || '?') + '</b> sur ' + (q.tokL || '?') +
       (q.tokZ ? ' (retour dans ' + esc(q.tokZ) + ')' : '')
     : '';
-  const g = S().goals;
+  const g = S().goals, gx = S().goalsMax || {};
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
-  $('#gWater').value = g.water;
+  $('#gFiber').value = g.fiber; $('#gWater').value = g.water;
+  // un plafond nul se présente comme un champ vide : c'est ainsi qu'on le retire
+  ['prot', 'carb', 'fat', 'fiber'].forEach(k =>
+    $('#x' + k.charAt(0).toUpperCase() + k.slice(1)).value = gx[k] > 0 ? gx[k] : '');
+  $('#sTrainN').value = r0(S().trainDays) || 0;
+  $('#sTrainK').value = r0(S().trainKcal) || 0;
+  majTrainInfo();
   renderFoodsSettings();
   renderTplsSettings();
   renderSuppsSettings();
@@ -2561,21 +3024,58 @@ $('#sTest').onclick = async () => {
   }
 };
 
-['gKcal', 'gProt', 'gCarb', 'gFat', 'gWater'].forEach(id => {
+/* Seule la ligne d'information est rafraîchie à la frappe : repasser par
+   `renderSettings()` réécrirait la valeur du champ en cours de saisie et
+   déplacerait le curseur à chaque caractère. */
+function majTrainInfo() {
+  const n = clamp(r0(S().trainDays), 0, 7), k = Math.max(0, r0(S().trainKcal));
+  const base = S().goals.kcal;
+  $('#trainInfo').innerHTML = (!n || n >= 7 || !k)
+    ? 'Cyclage désactivé — toutes les journées ont la même cible.'
+    : 'Jour de séance <b>' + r0(base + k * (7 - n) / 7) + ' kcal</b> · ' +
+      'jour de repos <b>' + r0(base - k * n / 7) + ' kcal</b> · ' +
+      'moyenne inchangée à ' + r0(base) + ' kcal.';
+}
+
+['sTrainN', 'sTrainK'].forEach(id => {
   $('#' + id).oninput = e => {
-    const k = { gKcal: 'kcal', gProt: 'prot', gCarb: 'carb', gFat: 'fat', gWater: 'water' }[id];
+    if (id === 'sTrainN') S().trainDays = clamp(r0(e.target.value), 0, 7);
+    else S().trainKcal = clamp(r0(e.target.value), 0, 1500);
+    save(); majTrainInfo(); renderToday(); renderHistory();
+  };
+});
+
+['gKcal', 'gProt', 'gCarb', 'gFat', 'gFiber', 'gWater'].forEach(id => {
+  $('#' + id).oninput = e => {
+    const k = { gKcal: 'kcal', gProt: 'prot', gCarb: 'carb', gFat: 'fat', gFiber: 'fiber', gWater: 'water' }[id];
     S().goals[k] = r0(e.target.value); save(); renderToday();
+  };
+});
+
+/* Plafonds. Un champ vidé supprime le plafond et rend sa ligne à l'objectif simple.
+   Le réajustement d'un plafond passé sous son plancher n'est appliqué qu'à la sortie
+   du champ : le faire à chaque frappe empêcherait de saisir « 180 » en partant de 200,
+   le « 1 » intermédiaire étant aussitôt corrigé. */
+['xProt', 'xCarb', 'xFat', 'xFiber'].forEach(id => {
+  const k = { xProt: 'prot', xCarb: 'carb', xFat: 'fat', xFiber: 'fiber' }[id];
+  $('#' + id).oninput = e => {
+    S().goalsMax[k] = e.target.value.trim() === '' ? 0 : r0(e.target.value);
+    save(); renderToday();
+  };
+  $('#' + id).onblur = () => {
+    normaliserFourchettes(); save(); renderSettings(); renderToday();
   };
 });
 
 /* Valeurs typiques d'une dose courante, à ajuster selon le produit réellement utilisé :
    seule l'étiquette du pot fait foi. */
 const SUPP_MODELES = [
-  { name: 'Whey', dose: '30 g', kcal: 120, prot: 24, carb: 2, fat: 2 },
-  { name: 'Créatine', dose: '5 g', kcal: 0, prot: 0, carb: 0, fat: 0 },
-  { name: 'Multivitamines', dose: '1 gélule', kcal: 0, prot: 0, carb: 0, fat: 0 },
-  { name: 'Oméga 3', dose: '2 capsules', kcal: 20, prot: 0, carb: 0, fat: 2 },
-  { name: 'Magnésium', dose: '1 comprimé', kcal: 0, prot: 0, carb: 0, fat: 0 }
+  { name: 'Whey', dose: '30 g', kcal: 120, prot: 24, carb: 2, fat: 2, fiber: 0 },
+  { name: 'Créatine', dose: '5 g', kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0 },
+  { name: 'Multivitamines', dose: '1 gélule', kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0 },
+  { name: 'Oméga 3', dose: '2 capsules', kcal: 20, prot: 0, carb: 0, fat: 2, fiber: 0 },
+  { name: 'Magnésium', dose: '1 comprimé', kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0 },
+  { name: 'Psyllium', dose: '5 g', kcal: 8, prot: 0, carb: 1, fat: 0, fiber: 4 }
 ];
 
 function renderFoodsSettings() {
@@ -2587,6 +3087,7 @@ function renderFoodsSettings() {
         '<div class="entry" data-foodid="' + esc(f.id) + '" style="padding:10px 12px">' +
         '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
         '<div class="dt">' + r0(f.qty) + ' g · P ' + r0(f.prot) + ' G ' + r0(f.carb) + ' L ' + r0(f.fat) +
+        (f.fiber ? ' F ' + r0(f.fiber) : '') +
         (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
         '<div class="kc">' + r0(f.kcal) + '<small>kcal</small></div></div>').join('')
     : '<div class="empty" style="padding:14px 8px">Aucun aliment favori.</div>';
@@ -2600,15 +3101,15 @@ $('#sFoods').onclick = e => {
 $('#btnFoodAdd').onclick = () => editFood(null);
 
 function editFood(f) {
-  const o = f || { id: uid(), name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 };
+  const o = f || { id: uid(), name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0, alc: 0, water: 0 };
   const neuf = !f;
   sheet(neuf ? 'Nouvel aliment' : 'Modifier l\'aliment',
     '<div class="grid2">' +
     '<label class="f"><span>Nom</span><input class="in" id="fdN" value="' + esc(o.name) + '" placeholder="Yaourt grec 0 %"></label>' +
     '<label class="f"><span>Quantité de référence (g)</span><input class="in" id="fd_qty" inputmode="numeric" value="' + r0(o.qty) + '"></label></div>' +
     '<p class="tiny" style="margin:-4px 0 10px">Valeurs correspondant à cette quantité — celles du pot ou de la portion, pas celles pour 100 g si la quantité de référence est différente.</p>' +
-    '<div class="grid4">' +
-    ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.'].map(x => {
+    '<div class="grid3">' +
+    ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.', 'fiber|Fibres', 'alc|Alcool'].map(x => {
       const k = x.split('|')[0], l = x.split('|')[1];
       return '<label class="f"><span>' + l + '</span><input class="in" id="fd_' + k + '" inputmode="numeric" value="' + r0(o[k]) + '"></label>';
     }).join('') + '</div>' +
@@ -2622,7 +3123,7 @@ function editFood(f) {
         const q = r0(el.querySelector('#fd_qty').value);
         if (!q) { toast('Indique la quantité de référence'); return; }
         const n = { id: o.id, name: nom.slice(0, 60), qty: q };
-        ['kcal', 'prot', 'carb', 'fat', 'water'].forEach(k => n[k] = r0(el.querySelector('#fd_' + k).value));
+        ['kcal', 'prot', 'carb', 'fat', 'fiber', 'alc', 'water'].forEach(k => n[k] = r0(el.querySelector('#fd_' + k).value));
         const lf = S().foods || [];
         S().foods = lf.some(x => x.id === n.id) ? lf.map(x => x.id === n.id ? n : x) : lf.concat([n]);
         save(); closeSheet(); renderFoodsSettings();
@@ -2710,14 +3211,15 @@ function editTpl(t) {
         if (i >= 0) picked.splice(i, 1); else picked.push(c.dataset.sp);
         paint();
       };
-      el.querySelector('#tAdd').onclick = () => { items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, water: 0 }); paint(); };
+      el.querySelector('#tAdd').onclick = () => { items.push({ name: '', qty: 100, kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0, alc: 0, water: 0 }); paint(); };
       el.querySelector('#tOk').onclick = () => {
         const clean = items.filter(i => (i.name || '').trim() || i.kcal);
         if (!clean.length) { toast('Ajoute au moins un aliment'); return; }
         const o = { id: t.id, name: (el.querySelector('#tN').value || 'Repas type').trim().slice(0, 40),
                     meal: el.querySelector('#tM').value,
                     items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
-                                             prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat), water: r0(i.water) })),
+                                             prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat),
+                                             fiber: r0(i.fiber), alc: r0(i.alc), water: r0(i.water) })),
                     supps: picked.slice() };
         S().templates = (S().templates || []).map(x => x.id === o.id ? o : x);
         save(); closeSheet(); renderTplsSettings(); renderToday(); renderHistory();
@@ -2775,15 +3277,15 @@ $('#btnSuppAdd').onclick = () => {
 };
 
 function editSupp(sp, isNew) {
-  const s = sp || { id: uid(), name: '', dose: '', kcal: 0, prot: 0, carb: 0, fat: 0 };
+  const s = sp || { id: uid(), name: '', dose: '', kcal: 0, prot: 0, carb: 0, fat: 0, fiber: 0 };
   const neuf = isNew || !sp;
   sheet(neuf ? 'Nouveau complément' : 'Modifier le complément',
     '<div class="grid2">' +
     '<label class="f"><span>Nom</span><input class="in" id="spN" value="' + esc(s.name) + '" placeholder="Whey"></label>' +
     '<label class="f"><span>Dose</span><input class="in" id="spD" value="' + esc(s.dose) + '" placeholder="30 g"></label></div>' +
     '<p class="tiny" style="margin:-4px 0 10px">Apport nutritionnel par dose. Laisse à zéro pour un complément sans calories (créatine, vitamines).</p>' +
-    '<div class="grid4">' +
-    ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.'].map(f => {
+    '<div class="grid5">' +
+    ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.', 'fiber|Fibres'].map(f => {
       const k = f.split('|')[0], l = f.split('|')[1];
       return '<label class="f"><span>' + l + '</span><input class="in" id="sp_' + k + '" inputmode="numeric" value="' + r0(s[k]) + '"></label>';
     }).join('') + '</div>' +
@@ -2794,7 +3296,7 @@ function editSupp(sp, isNew) {
         const name = el.querySelector('#spN').value.trim();
         if (!name) { toast('Donne un nom au complément'); return; }
         const o = { id: s.id, name: name.slice(0, 40), dose: el.querySelector('#spD').value.trim().slice(0, 30) };
-        ['kcal', 'prot', 'carb', 'fat'].forEach(k => o[k] = r0(el.querySelector('#sp_' + k).value));
+        ['kcal', 'prot', 'carb', 'fat', 'fiber'].forEach(k => o[k] = r0(el.querySelector('#sp_' + k).value));
         const ls = S().supps || [];
         S().supps = ls.some(x => x.id === o.id) ? ls.map(x => x.id === o.id ? o : x) : ls.concat([o]);
         save(); closeSheet(); renderSuppsSettings(); renderToday();
@@ -2833,6 +3335,7 @@ $('#btnCalc').onclick = () => {
     [[1.2, 'Sédentaire (bureau, peu de marche)'], [1.375, 'Légère (1 à 3 séances / semaine)'], [1.55, 'Modérée (3 à 5 séances / semaine)'], [1.725, 'Intense (6 à 7 séances / semaine)'], [1.9, 'Très intense (travail physique)']]
       .map(([v, l]) => '<option value="' + v + '"' + (Math.abs(p.act - v) < .01 ? ' selected' : '') + '>' + l + '</option>').join('') +
     '</select></label>' +
+    '<label class="f"><span>Masse grasse (%)</span><input class="in" id="cMg" inputmode="numeric" placeholder="inconnue" value="' + (p.bodyFat > 0 ? p.bodyFat : '') + '"></label>' +
     '<label class="f"><span>Objectif</span><select class="in" id="cAim">' +
     [[-500, 'Perdre du poids (−500 kcal)'], [-250, 'Perdre doucement (−250 kcal)'], [0, 'Maintenir'], [250, 'Prendre doucement (+250 kcal)'], [500, 'Prendre du poids (+500 kcal)']]
       .map(([v, l]) => '<option value="' + v + '"' + (p.aim == v ? ' selected' : '') + '>' + l + '</option>').join('') +
@@ -2846,29 +3349,36 @@ $('#btnCalc').onclick = () => {
         height: r0(el.querySelector('#cH').value),
         weight: parseFloat(String(el.querySelector('#cW').value).replace(',', '.')) || 70,
         act: parseFloat(el.querySelector('#cAct').value),
-        aim: parseFloat(el.querySelector('#cAim').value)
+        aim: parseFloat(el.querySelector('#cAim').value),
+        bodyFat: clamp(r0(el.querySelector('#cMg').value), 0, 60)
       });
       function compute() {
         const v = get();
         const bmr = 10 * v.weight + 6.25 * v.height - 5 * v.age + (v.sex === 'h' ? 5 : -161);
         const tdee = bmr * v.act;
         const kcal = Math.max(1200, Math.round((tdee + v.aim) / 10) * 10);
-        const prot = Math.round(v.weight * (v.aim < 0 ? 2.0 : 1.7));
-        const fat = Math.round(v.weight * 0.9);
-        const carb = Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4));
+        const f = fourchettesProfil(v.weight, kcal, v.aim < 0, v.bodyFat);
         const water = eauObjectif(v.weight, v.act);
+        const zone = k => f.min[k] + ' à ' + f.max[k] + ' g';
         el.querySelector('#cRes').innerHTML =
           'Métabolisme de base ' + r0(bmr) + ' kcal · dépense estimée ' + r0(tdee) + ' kcal/jour.<br>' +
-          '<b>Objectif : ' + kcal + ' kcal</b> — ' + prot + ' g de protéines, ' + carb + ' g de glucides, ' + fat + ' g de lipides.<br>' +
+          (v.bodyFat > 0
+            ? '<em>Protéines calculées sur ta masse maigre (' + (v.weight * (1 - v.bodyFat / 100)).toFixed(1).replace('.', ',') + ' kg).</em><br>'
+            : '<em>Masse grasse inconnue : protéines calculées sur le poids total, moins juste au-delà de 25 % de gras.</em><br>') +
+          '<b>Objectif : ' + kcal + ' kcal</b><br>' +
+          'Protéines ' + zone('prot') + ' · glucides ' + zone('carb') + '<br>' +
+          'Lipides ' + zone('fat') + ' · fibres ' + zone('fiber') + '<br>' +
           '<b>Hydratation : ' + water + ' ml de boissons</b>, activité comprise.';
-        return { v, kcal, prot, carb, fat, water };
+        return { v, kcal, f, water };
       }
       let cur = compute();
       el.addEventListener('input', () => { cur = compute(); });
       el.addEventListener('change', () => { cur = compute(); });
       el.querySelector('#cOk').onclick = () => {
         DB.settings.profile = cur.v;
-        DB.settings.goals = { kcal: cur.kcal, prot: cur.prot, carb: cur.carb, fat: cur.fat, water: cur.water };
+        DB.settings.goals = { kcal: cur.kcal, prot: cur.f.min.prot, carb: cur.f.min.carb,
+                              fat: cur.f.min.fat, fiber: cur.f.min.fiber, water: cur.water };
+        DB.settings.goalsMax = cur.f.max;
         DB.settings.goalsWeight = cur.v.weight;
         save(); closeSheet(); renderSettings(); renderToday(); renderHistory();
         toast('Objectifs mis à jour');
@@ -2934,7 +3444,8 @@ function sanitizeBackup(inc) {
       title: txt(e.title, 80) || 'Repas',
       items: (Array.isArray(e.items) ? e.items : []).filter(i => i && typeof i === 'object').map(i => ({
         name: txt(i.name, 60) || 'Aliment', qty: pos(i.qty, 50000), kcal: pos(i.kcal, 50000),
-        prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000), water: pos(i.water, 20000)
+        prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000),
+        fiber: pos(i.fiber, 1000), alc: pos(i.alc, 1000), water: pos(i.water, 20000)
       }))
     };
     if (/^[A-Za-z0-9_-]{1,40}$/.test(e.supp || '')) o.supp = e.supp;
@@ -2947,7 +3458,7 @@ function sanitizeBackup(inc) {
     .map(w => ({ date: w.date, kg: Math.round(Number(w.kg) * 10) / 10 }));
 
   const s = inc.settings || {};
-  const g = s.goals || {}, p = s.profile || {};
+  const g = s.goals || {}, gx = s.goalsMax || {}, p = s.profile || {};
   return {
     version: 1,
     settings: {
@@ -2959,7 +3470,7 @@ function sanitizeBackup(inc) {
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
           name: txt(x.name, 60) || 'Aliment', qty: pos(x.qty, 50000, 100),
           kcal: pos(x.kcal, 50000), prot: pos(x.prot, 5000), carb: pos(x.carb, 5000),
-          fat: pos(x.fat, 5000), water: pos(x.water, 20000)
+          fat: pos(x.fat, 5000), fiber: pos(x.fiber, 1000), alc: pos(x.alc, 1000), water: pos(x.water, 20000)
         })),
       templates: (Array.isArray(s.templates) ? s.templates : []).slice(0, 60)
         .filter(x => x && typeof x === 'object').map(x => ({
@@ -2968,7 +3479,8 @@ function sanitizeBackup(inc) {
           meal: MEALS.map(m => m.id).indexOf(x.meal) >= 0 ? x.meal : 'petit-dej',
           items: (Array.isArray(x.items) ? x.items : []).filter(i => i && typeof i === 'object').map(i => ({
             name: txt(i.name, 60) || 'Aliment', qty: pos(i.qty, 50000), kcal: pos(i.kcal, 50000),
-            prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000), water: pos(i.water, 20000)
+            prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000),
+            fiber: pos(i.fiber, 1000), alc: pos(i.alc, 1000), water: pos(i.water, 20000)
           })),
           supps: (Array.isArray(x.supps) ? x.supps : []).filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 30)
         })),
@@ -2981,25 +3493,36 @@ function sanitizeBackup(inc) {
         .filter(x => x && typeof x === 'object').map(x => ({
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
           name: txt(x.name, 40) || 'Complément', dose: txt(x.dose, 30),
-          kcal: pos(x.kcal, 5000), prot: pos(x.prot, 1000), carb: pos(x.carb, 1000), fat: pos(x.fat, 1000)
+          kcal: pos(x.kcal, 5000), prot: pos(x.prot, 1000), carb: pos(x.carb, 1000), fat: pos(x.fat, 1000),
+          fiber: pos(x.fiber, 500)
         })),
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
       imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
+      trainDays: clamp(num(s.trainDays), 0, 7),
+      trainKcal: clamp(num(s.trainKcal), 0, 1500),
       goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
-               carb: pos(g.carb, 2000), fat: pos(g.fat, 1000),
+               carb: pos(g.carb, 2000), fat: pos(g.fat, 1000), fiber: pos(g.fiber, 200),
                water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
+      /* Un plafond vaut 0 quand il est absent : c'est la valeur qui rend sa ligne à
+         l'objectif simple, et c'est le comportement attendu d'une sauvegarde
+         antérieure à la v3.0. La cohérence plancher/plafond est rétablie à l'import. */
+      goalsMax: { prot: pos(gx.prot, 1000), carb: pos(gx.carb, 2000),
+                  fat: pos(gx.fat, 1000), fiber: pos(gx.fiber, 200) },
       profile: { sex: p.sex === 'f' ? 'f' : 'h',
                  age: clamp(pos(p.age, 120, 35), 10, 120),
                  height: clamp(pos(p.height, 250, 175), 100, 250),
                  weight: clamp(Number(p.weight) || 75, 20, 400),
                  act: clamp(Number(p.act) || 1.55, 1, 2.5),
-                 aim: clamp(num(p.aim), -1500, 1500) }
+                 aim: clamp(num(p.aim), -1500, 1500),
+                 bodyFat: clamp(num(p.bodyFat), 0, 60) }
     },
     entries: entries,
-    weights: weights
+    weights: weights,
+    trainings: (Array.isArray(inc.trainings) ? inc.trainings : [])
+      .filter(d => isDate(d)).slice(0, 4000)
   };
 }
 
@@ -3019,6 +3542,14 @@ $('#fImp').onchange = e => {
        AVANT l'assainissement, qui, lui, crée systématiquement des listes vides. */
     const brutS = brut.settings || {};
     const fourni = k => brutS[k] !== undefined && brutS[k] !== null;
+    /* L'assainissement ramène toute clé absente à 0. Pour les fibres, arrivées en v3.0,
+       ce 0 signifie « le fichier est plus ancien », pas « objectif nul » : l'accepter
+       tel quel remplacerait un plancher réglé par une fourchette 0–45 sans intérêt.
+       On interroge donc le JSON brut, avant assainissement. */
+    const fourniGoal = k => {
+      const g = brutS.goals;
+      return !!g && g[k] !== undefined && g[k] !== null;
+    };
     const inc = sanitizeBackup(brut);
 
     const inv = [
@@ -3051,6 +3582,12 @@ $('#fImp').onchange = e => {
           inc.entries.forEach(x => { if (!have.has(x.id)) { DB.entries.push(x); nR++; } });
           const hw = new Set(DB.weights.map(w => w.date));
           (inc.weights || []).forEach(w => { if (!hw.has(w.date)) { DB.weights.push(w); nP++; } });
+          /* Les jours d'entraînement sont un simple ensemble de dates : on les
+             réunit, sans doublon. */
+          const ht = new Set(DB.trainings || []);
+          let nE = 0;
+          (inc.trainings || []).forEach(d => { if (!ht.has(d)) { ht.add(d); nE++; } });
+          DB.trainings = Array.from(ht).sort();
 
           /* Une sauvegarde sert aussi à ne pas retaper sa configuration. La fusion
              restaure donc objectifs et profil, et complète les listes par identifiant
@@ -3063,7 +3600,22 @@ $('#fImp').onchange = e => {
           if (s.goals) DB.settings.goals = s.goals;
           if (s.profile) DB.settings.profile = s.profile;
           if (s.goalsWeight) DB.settings.goalsWeight = s.goalsWeight;
+          /* Une sauvegarde antérieure à la v3.0 restaure des cibles uniques sans
+             plafonds. Conserver ceux d'ici produirait des fourchettes incohérentes
+             avec les planchers qui viennent d'arriver : on les redéduit du profil. */
+          if (fourni('goalsMax')) DB.settings.goalsMax = s.goalsMax;
+          else if (s.goals) {
+            const pr = DB.settings.profile || {};
+            DB.settings.goalsMax = fourchettesProfil(pr.weight, s.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).max;
+          }
+          if (s.goals && !fourniGoal('fiber')) {
+            const pr = DB.settings.profile || {};
+            DB.settings.goals.fiber = fourchettesProfil(pr.weight, s.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).min.fiber;
+          }
+          normaliserFourchettes();
           if (s.model) DB.settings.model = s.model;
+          if (brutS.trainDays !== undefined) DB.settings.trainDays = s.trainDays;
+          if (brutS.trainKcal !== undefined) DB.settings.trainKcal = s.trainKcal;
           const avC = (DB.settings.supps || []).length, avT = (DB.settings.templates || []).length;
           const avA = (DB.settings.foods || []).length, avV = (DB.settings.waterPresets || []).length;
           DB.settings.supps = compl(DB.settings.supps, s.supps);
@@ -3084,23 +3636,145 @@ $('#fImp').onchange = e => {
           if (nA) bilan.push(nA + ' aliment' + (nA > 1 ? 's' : ''));
           if (nC) bilan.push(nC + ' complément' + (nC > 1 ? 's' : ''));
           if (nV) bilan.push(nV + ' volume' + (nV > 1 ? 's' : ''));
+          if (nE) bilan.push(nE + ' jour' + (nE > 1 ? 's' : '') + ' d\'entraînement');
           toast(bilan.length ? 'Restauré : ' + bilan.join(', ') : 'Rien de nouveau à restaurer');
         };
         el.querySelector('#iRepl').onclick = () => {
           if (!confirm('Remplacer définitivement toutes tes données actuelles ?')) return;
           const avant = JSON.parse(JSON.stringify(DB.settings));
+          const avantTr = (DB.trainings || []).slice();
           DB = deepMerge(DEFAULTS, inc);
           /* Remplacer ne veut pas dire effacer ce dont le fichier ne parle pas :
              une sauvegarde antérieure aux repas habituels ne doit pas les supprimer. */
           ['templates', 'foods', 'supps', 'waterPresets', 'goals', 'profile', 'goalsWeight', 'model']
             .forEach(k => { if (!fourni(k) && avant[k] !== undefined) DB.settings[k] = avant[k]; });
+          if (!fourni('goalsMax')) {
+            const pr = DB.settings.profile || {};
+            DB.settings.goalsMax = fourni('goals')
+              ? fourchettesProfil(pr.weight, DB.settings.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).max
+              : avant.goalsMax;
+          }
+          if (fourni('goals') && !fourniGoal('fiber')) {
+            const pr = DB.settings.profile || {};
+            DB.settings.goals.fiber = fourchettesProfil(pr.weight, DB.settings.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).min.fiber;
+          }
+          normaliserFourchettes();
           if (!DB.settings.apiKey) DB.settings.apiKey = avant.apiKey;
+          if (brut.trainings === undefined) DB.trainings = avantTr;
           save(); closeSheet(); renderAll();
           toast(manquants.length ? 'Données remplacées · ' + manquants.join(', ') + ' conservés' : 'Données remplacées');
         };
       });
   };
   rd.readAsText(f);
+};
+
+/* Suppression d'une plage de journées (v3.0).
+
+   Le besoin : les journées d'essai qui précèdent l'usage réel faussent les moyennes
+   et le nombre de jours suivis. Purger l'application entière serait disproportionné.
+
+   Trois précautions, l'action étant irréversible :
+   — la liste exacte des journées concernées est affichée avant validation, et non
+     un simple décompte ;
+   — les pesées ne partent QUE si on le demande. Elles se saisissent une fois par
+     semaine et alimentent la tendance sur huit semaines : en perdre une coûte
+     beaucoup plus cher qu'un repas d'essai ;
+   — une sauvegarde jamais faite, ou antérieure à la plage visée, est signalée. */
+$('#btnPurge').onclick = () => {
+  const jours = Array.from(new Set(DB.entries.map(e => e.date))).sort();
+  const pesees = DB.weights.map(w => w.date).sort();
+  if (!jours.length && !pesees.length) { toast('Aucune journée enregistrée'); return; }
+  const tout = jours.concat(pesees).sort();
+  const dMin = tout[0], dMax = tout[tout.length - 1];
+
+  sheet('Supprimer des journées',
+    '<p class="tiny" style="margin:-2px 0 12px">Les journées comprises entre ces deux dates, bornes incluses, seront retirées du suivi. Le reste de l\'historique n\'est pas touché.</p>' +
+    '<div class="grid2">' +
+    '<label class="f"><span>Du</span><input class="in" type="date" id="pgA" value="' + dMin + '" min="' + dMin + '" max="' + dMax + '"></label>' +
+    '<label class="f"><span>Au</span><input class="in" type="date" id="pgB" value="' + dMin + '" min="' + dMin + '" max="' + dMax + '"></label>' +
+    '</div>' +
+    '<label class="chk"><input type="checkbox" id="pgW"><span>Supprimer aussi les pesées de la période</span></label>' +
+    '<div id="pgApercu" class="note" style="margin:12px 0 13px"></div>' +
+    '<button class="btn dan" id="pgOk" style="width:100%">Supprimer</button>' +
+    '<button class="btn gho" data-x style="width:100%;margin-top:9px">Annuler</button>',
+    el => {
+      const A = el.querySelector('#pgA'), B = el.querySelector('#pgB'), W = el.querySelector('#pgW');
+      const vise = () => {
+        const a = A.value, b = B.value;
+        if (!a || !b || a > b) return null;
+        return {
+          a: a, b: b,
+          repas: DB.entries.filter(e => e.date >= a && e.date <= b),
+          jours: jours.filter(d => d >= a && d <= b),
+          pesees: DB.weights.filter(w => w.date >= a && w.date <= b)
+        };
+      };
+      function peindre() {
+        const v = vise();
+        const box = el.querySelector('#pgApercu');
+        const btn = el.querySelector('#pgOk');
+        if (!v) {
+          box.innerHTML = '<b style="color:var(--warn)">La date de fin précède la date de début.</b>';
+          btn.disabled = true; return;
+        }
+        const nP = W.checked ? v.pesees.length : 0;
+        btn.disabled = !(v.repas.length || nP);
+        if (!v.repas.length && !v.pesees.length) {
+          box.innerHTML = 'Aucune donnée sur cette période.';
+          return;
+        }
+        const liste = v.jours.slice(0, 12).map(d =>
+          '<div style="display:flex;justify-content:space-between;gap:10px">' +
+          '<span>' + frDate(d) + '</span><span style="color:var(--dim)">' +
+          r0(sumEntries(entriesOf(d)).kcal) + ' kcal</span></div>').join('');
+        const reste = v.jours.length - 12;
+        /* Un export antérieur à la plage ne protège de rien : les journées visées n'y
+           figurent pas. On compare donc la date de sauvegarde à la fin de la plage. */
+        const le = S().lastExport;
+        const couvert = le && dstr(new Date(le)) > v.b;
+        const parts = [];
+        if (v.jours.length) parts.push(v.jours.length + ' journée' + (v.jours.length > 1 ? 's' : ''));
+        if (v.repas.length) parts.push(v.repas.length + ' entrée' + (v.repas.length > 1 ? 's' : ''));
+        if (nP) parts.push(nP + ' pesée' + (nP > 1 ? 's' : ''));
+        box.innerHTML =
+          '<b>' + parts.join(' · ') + '</b>' +
+          (v.pesees.length && !W.checked
+            ? '<div style="color:var(--dim);margin-top:3px">' + v.pesees.length + ' pesée' +
+              (v.pesees.length > 1 ? 's' : '') + ' sur la période, conservée' + (v.pesees.length > 1 ? 's' : '') + '.</div>'
+            : '') +
+          (liste ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums">' +
+            liste + (reste > 0 ? '<div style="color:var(--dim);margin-top:3px">et ' + reste + ' autre' + (reste > 1 ? 's' : '') + '…</div>' : '') +
+            '</div>' : '') +
+          (couvert ? '' : '<div style="color:var(--warn);margin-top:8px;padding-top:8px;border-top:1px solid var(--line)">' +
+            (le ? 'Ta dernière sauvegarde est antérieure à cette période : ces journées n\'y figurent pas.'
+                : 'Tu n\'as encore jamais exporté de sauvegarde.') +
+            ' La suppression est définitive.</div>');
+      }
+      A.oninput = peindre; B.oninput = peindre; W.onchange = peindre;
+      peindre();
+
+      el.querySelector('#pgOk').onclick = () => {
+        const v = vise();
+        if (!v) return;
+        const nP = W.checked ? v.pesees.length : 0;
+        const quoi = [];
+        if (v.repas.length) quoi.push(v.repas.length + ' entrée' + (v.repas.length > 1 ? 's' : ''));
+        if (nP) quoi.push(nP + ' pesée' + (nP > 1 ? 's' : ''));
+        if (!confirm('Supprimer définitivement ' + quoi.join(' et ') +
+                     (v.a === v.b ? ' du ' + frDate(v.a) : ' du ' + frDate(v.a) + ' au ' + frDate(v.b)) + ' ?')) return;
+        DB.entries = DB.entries.filter(e => !(e.date >= v.a && e.date <= v.b));
+        if (W.checked) DB.weights = DB.weights.filter(w => !(w.date >= v.a && w.date <= v.b));
+        /* Les marques « jour d'entraînement » de la plage partent avec elle : les
+           conserver laisserait des journées cyclées sans aucun repas. */
+        DB.trainings = (DB.trainings || []).filter(d => !(d >= v.a && d <= v.b));
+        /* La date affichée peut être une de celles qu'on vient de vider : on ne laisse
+           pas le journal sur une page devenue orpheline. */
+        if (curDate >= v.a && curDate <= v.b) curDate = TODAY();
+        save(); closeSheet(); renderAll();
+        toast(quoi.join(' et ') + ' supprimée' + (quoi.length > 1 || v.repas.length > 1 || nP > 1 ? 's' : ''));
+      };
+    });
 };
 
 $('#btnWipe').onclick = () => {
@@ -3117,7 +3791,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v2.23');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v4.0');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
