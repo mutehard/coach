@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v4.1</title>
+<title>Coach v4.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,19 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v4.2 — Correction de la cause reelle des refus 429 en chaine : un 429 declenchait un
+           SECOND appel immediat. La v2.22 avait pose `e.raw` sur cette erreur pour afficher
+           le message brut de Groq, et la condition de reessai teste `e.raw` — un champ
+           ajoute pour l'affichage avait donc modifie le flux de controle. Chaque photo
+           refusee en lancait ainsi une deuxieme dans une fenetre deja saturee, si bien que
+           le delai annonce par Groq ne suffisait jamais : il fallait purger deux tentatives.
+           Ajout d'un garde-fou de quota : l'application retient l'instant de deblocage, tire
+           du `retry-after` ou du delai ecrit par Groq, et refuse d'appeler avant en affichant
+           un compte a rebours. Elle pose aussi ce verrou par anticipation quand une reponse
+           REUSSIE annonce un solde de tokens insuffisant pour la photo suivante. Les photos
+           preparees sont conservees pendant l'attente. Le verrou n'est jamais restaure depuis
+           une sauvegarde, etant un etat de session.
+
     v4.1 — Revue complete de l'application publiee. L'historique comparait chaque journee a la
            cible de BASE et non a sa cible cyclee : le journal annoncait -669 kcal la ou
            l'historique affichait -540 pour la meme journee. La regle etait pourtant ecrite
@@ -753,7 +766,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v4.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v4.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -795,6 +808,8 @@ const DEFAULTS = {
     weightRemind: 0,
     goalsWeight: 0,
     quota: null,
+    quotaUntil: 0,
+    quotaJour: false,
     imgPx: 768,
     supps: [],
     waterPresets: [],
@@ -1159,6 +1174,65 @@ function toJpeg(bmp, maxSide, q) {
    davantage, cette constante est le seul endroit à changer. */
 const MAX_PHOTOS = 2;
 
+/* -------------------------------------------------------------------------
+   Garde-fou de quota (v4.2)
+   -------------------------------------------------------------------------
+   Le palier gratuit de Groq plafonne à 8000 tokens par minute. Une analyse photo en
+   réclame environ 4900 — image ~1900, prompt ~1050, `max_tokens` réservé 2000 — soit
+   plus de 60 % du budget. Deux analyses ne tiennent donc jamais dans la même minute,
+   et relancer trop tôt se solde par un refus certain.
+
+   Le verrou retient l'instant où une nouvelle tentative redevient possible, et l'app
+   refuse d'appeler avant. Deux sources l'alimentent :
+     — un refus 429, via `retry-after` ou le délai écrit dans le message de Groq ;
+     — une réponse RÉUSSIE dont l'en-tête `x-ratelimit-remaining-tokens` annonce un
+       solde insuffisant pour la photo suivante. C'est le cas utile : on prévient
+       avant l'échec au lieu de le constater après.
+
+   Le verrou n'est qu'une prévision : il n'autorise rien, il évite seulement un appel
+   voué à l'échec. Une limite journalière est signalée séparément, l'attente n'ayant
+   alors pas le même sens. */
+const COUT_PHOTO = 5000;
+
+/* Les en-têtes de durée de Groq s'écrivent « 14.07s », « 1m30s », « 2m », « 850ms ». */
+function dureeVersSecondes(txt) {
+  const t = String(txt || '').trim();
+  if (!t) return 0;
+  let tot = 0, vu = false;
+  const h = t.match(/([\d.]+)\s*h/i);   if (h) { tot += parseFloat(h[1]) * 3600; vu = true; }
+  const m = t.match(/([\d.]+)\s*m(?!s)/i); if (m) { tot += parseFloat(m[1]) * 60; vu = true; }
+  const sec = t.match(/([\d.]+)\s*s(?!$|[a-z])/i) || t.match(/([\d.]+)\s*s$/i);
+  if (sec) { tot += parseFloat(sec[1]); vu = true; }
+  if (!vu) { const ms = t.match(/([\d.]+)\s*ms/i); if (ms) { tot += parseFloat(ms[1]) / 1000; vu = true; } }
+  if (!vu) { const n = parseFloat(t); if (isFinite(n)) tot = n; }
+  return isFinite(tot) ? tot : 0;
+}
+
+function poserVerrou(secondes, journalier) {
+  /* Deux secondes de marge : l'horloge du navigateur et celle de Groq ne sont pas
+     synchronisées, et une reprise une seconde trop tôt relance le cycle d'échecs. */
+  const fin = Date.now() + (secondes + 2) * 1000;
+  if (fin > (S().quotaUntil || 0)) {
+    S().quotaUntil = fin;
+    S().quotaJour = !!journalier;
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+  }
+}
+
+/* Secondes restantes avant déblocage, 0 si la voie est libre. */
+function verrouRestant() {
+  const t = S().quotaUntil || 0;
+  if (!t) return 0;
+  const r = Math.ceil((t - Date.now()) / 1000);
+  return r > 0 ? r : 0;
+}
+
+function texteAttente(s) {
+  if (s >= 3600) return Math.ceil(s / 3600) + ' h';
+  if (s >= 60) return Math.ceil(s / 60) + ' min';
+  return s + ' s';
+}
+
 const PROMPT_REGLES = `Réponds UNIQUEMENT par un objet JSON valide, sans aucun texte autour, sans balise markdown, exactement à ce format :
 {"plat":"nom court du repas","aliments":[{"nom":"aliment","quantite_g":120,"kcal":210,"proteines_g":18,"glucides_g":4,"lipides_g":14,"fibres_g":3,"alcool_g":0,"hydratation_ml":0}],"confiance":"haute","remarque":"une phrase courte"}
 
@@ -1296,6 +1370,15 @@ async function groq(body) {
                 tokR: g('x-ratelimit-remaining-tokens'), tokZ: g('x-ratelimit-reset-tokens'),
                 quand: Date.now() };
     if (q.reqL || q.tokL) { DB.settings.quota = q; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} }
+
+    /* Garde-fou : si le solde restant ne couvre plus une analyse photo, on pose le
+       verrou tout de suite. Mieux vaut annoncer l'attente que laisser l'utilisateur
+       déclencher une requête dont on sait déjà qu'elle sera refusée. */
+    const reste = parseInt(q.tokR || '', 10);
+    if (isFinite(reste) && reste < COUT_PHOTO) {
+      const d = dureeVersSecondes(q.tokZ);
+      if (d > 0) poserVerrou(d, false);
+    }
   } catch (e) { /* en-têtes non exposés par CORS : on se rabat sur le message d'erreur */ }
 
   const txt = await res.text();
@@ -1330,6 +1413,11 @@ async function groq(body) {
       } else if (parJour) {
         quand = ' Elle se réinitialise à minuit UTC, soit 2 h du matin en France.';
       }
+      /* On retient l'instant à partir duquel une nouvelle tentative a une chance
+         d'aboutir. Deux sources, dans l'ordre de fiabilité : l'en-tête `retry-after`,
+         puis le délai que Groq écrit en clair dans son message (« try again in 14.07s »). */
+      const secs = ra > 0 ? ra : (parseFloat((m.match(/try again in ([\d.]+)\s*s/i) || [])[1]) || 0);
+      if (secs > 0) poserVerrou(secs, parJour);
       const e = new Error((parJour ? 'Limite JOURNALIÈRE de ton compte Groq atteinte.' : 'Limite par minute atteinte.') + quand);
       e.quota = true; e.raw = m;
       throw e;
@@ -1396,6 +1484,16 @@ async function analyseAvecRepli(corps) {
       if (e.genRatee) { try { return extractJson(e.genRatee); } catch (_) {} }
       return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
     }
+    /* JAMAIS de second appel sur un quota dépassé. La fenêtre par minute ne se libère
+       pas en quelques millisecondes : le réessai est certain d'échouer, et il repart
+       dans un compteur déjà saturé — l'utilisateur se retrouve avec DEUX tentatives à
+       purger au lieu d'une, ce qui rend le délai annoncé par Groq inapplicable.
+
+       Ce cas entrait ici par accident : la v2.22 a posé `e.raw` sur l'erreur 429 pour
+       afficher le message brut de Groq, et cette condition-ci teste `e.raw` pour
+       décider de réessayer. Un champ ajouté pour l'affichage avait donc changé le flux
+       de contrôle. Le test porte désormais sur l'intention, pas sur un effet de bord. */
+    if (e && e.quota) throw e;
     if (!e || e.raw === undefined) throw e;
     return extractJson(await groqTry(Object.assign({}, corps, { max_tokens: 1400 }), JSON_SANS_REFLEXION));
   }
@@ -2643,7 +2741,46 @@ async function addPhoto(input) {
   }
 }
 
+/* Voie libre ? Sinon on affiche l'attente restante, avec un décompte qui se met à
+   jour, plutôt que d'envoyer une requête dont le refus est certain. */
+function verrouLibre() {
+  const r = verrouRestant();
+  if (!r) return true;
+  if (S().quotaJour) {
+    sheet('Quota journalier atteint',
+      '<div class="err">La limite JOURNALIÈRE de ton compte Groq est atteinte.</div>' +
+      '<p class="muted" style="margin-bottom:12px">Elle se réinitialise à minuit UTC, soit 2 h du matin en France. ' +
+      'En attendant, tu peux saisir ce repas à la main depuis le bouton ✍️.</p>' +
+      '<button class="btn" data-x>Fermer</button>');
+    return false;
+  }
+  const el = sheet('Encore un instant',
+    '<div class="note" style="margin-bottom:13px">' +
+    'Une analyse photo consomme à elle seule plus de la moitié du quota par minute du ' +
+    'palier gratuit. Ta précédente requête occupe encore la fenêtre.' +
+    '</div>' +
+    '<div style="text-align:center;font-size:44px;font-weight:800;font-variant-numeric:tabular-nums;' +
+    'letter-spacing:-1px;margin:6px 0 4px" id="vqCount">' + texteAttente(r) + '</div>' +
+    '<p class="tiny" style="text-align:center;margin-bottom:14px">avant de pouvoir relancer</p>' +
+    '<p class="muted" style="margin-bottom:12px">Tes photos sont conservées : relance simplement ' +
+    'l\'analyse une fois le décompte terminé.</p>' +
+    '<button class="btn" data-x>Fermer</button>', null, true);
+  /* Le minuteur se détruit avec la feuille : sans cela il continuerait à écrire dans
+     un nœud retiré du document à chaque seconde. */
+  const t = setInterval(() => {
+    const n = el.querySelector('#vqCount');
+    if (!n || !document.body.contains(el)) { clearInterval(t); return; }
+    const s2 = verrouRestant();
+    if (!s2) { clearInterval(t); el.remove(); toast('C\'est bon, tu peux relancer l\'analyse'); return; }
+    n.textContent = texteAttente(s2);
+  }, 1000);
+  return false;
+}
+
 async function runAnalysis() {
+  /* Le verrou est consulté AVANT de fermer la feuille : les photos préparées restent
+     ainsi en place, et il n'y a rien à refaire une fois l'attente écoulée. */
+  if (!verrouLibre()) return;
   const shots = pending.slice();
   closeSheet();
   loader(true, shots.length > 1
@@ -2689,6 +2826,7 @@ $('#btnManual').onclick = () => {
         const d = el.querySelector('#mDesc').value.trim();
         if (!d) { toast('Décris d\'abord ton repas'); return; }
         if (!S().apiKey.trim()) { closeSheet(); toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
+        if (!verrouLibre()) return;
         closeSheet(); loader(true, 'Estimation en cours…');
         try {
           const res = normalise(await analyseText(d));
@@ -3515,6 +3653,8 @@ function sanitizeBackup(inc) {
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
+      /* le verrou est un état de session, jamais restauré depuis un fichier */
+      quotaUntil: 0, quotaJour: false,
       imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
       trainDays: clamp(num(s.trainDays), 0, 7),
       trainKcal: clamp(num(s.trainKcal), 0, 1500),
@@ -3806,7 +3946,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v4.1');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v4.2');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
