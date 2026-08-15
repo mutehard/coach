@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v4.2</title>
+<title>Coach v5.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,19 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v5.0 — L'energie d'un jour d'entrainement n'est plus un nombre saisi a la main, identique
+           quel que soit le sport : elle est DEDUITE du profil, du type d'activite et du
+           volume reel de la seance. Musculation et course a pied ne se valent pas — a 78 kg,
+           60 min de musculation moderee coutent ~310 kcal quand 8 km de course en coutent
+           ~560, soit le double, la musculation etant intermittente la ou la course est
+           continue. Cout net et non brut, le metabolisme de repos etant deja compte dans la
+           depense. Musculation calculee par duree et intensite (MET du Compendium of
+           Physical Activities), course par distance, son cout etant quasi independant de
+           l'allure a distance egale. Le volume est enregistre PAR SEANCE : une sortie de
+           5 km et une de 15 km n'ont pas le meme cout. La redistribution reste a moyenne
+           hebdomadaire constante, le facteur d'activite du profil comptant deja ces
+           entrainements dans la depense.
+
     v4.2 — Correction de la cause reelle des refus 429 en chaine : un 429 declenchait un
            SECOND appel immediat. La v2.22 avait pose `e.raw` sur cette erreur pour afficher
            le message brut de Groq, et la condition de reessai teste `e.raw` — un champ
@@ -438,6 +451,10 @@ h1,h2,h3,p{margin:0}
   font:600 13.5px/1.3 inherit;display:flex;align-items:center;justify-content:center;gap:8px}
 .trainbtn.on{background:rgba(52,211,153,.12);border-color:rgba(52,211,153,.38);color:var(--acc-l)}
 .trainbtn small{font-weight:500;opacity:.85}
+.seance{background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:12px 13px;margin-bottom:10px}
+.seance.on{border-color:rgba(52,211,153,.42);background:rgba(52,211,153,.07)}
+.seance .kc{font-weight:800;font-size:17px;font-variant-numeric:tabular-nums}
+.seance .kc small{font-size:10px;font-weight:600;color:var(--dim);margin-left:3px}
 #wJuge .prio{margin-top:11px}
 
 /* ---------- repas ---------- */
@@ -725,13 +742,10 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
         <label><span>Fibres (g)</span><input class="in" id="gFiber" inputmode="numeric"><input class="in" id="xFiber" inputmode="numeric"></label>
       </div>
       <button class="btn sm" id="btnCalc" style="width:100%">🧮 Calculer à partir de mon profil</button>
-      <h3 class="sub">Jours d'entraînement</h3>
-      <p class="tiny" style="margin:-2px 0 10px">Les jours de séance reçoivent plus d'énergie, sous forme de glucides ; les jours de repos en rendent autant. <b>La moyenne de la semaine ne bouge pas</b> — marquer ses séances ne relève pas la cible.</p>
-      <div class="grid2">
-        <label class="f"><span>Séances par semaine</span><input class="in" id="sTrainN" inputmode="numeric"></label>
-        <label class="f"><span>Énergie ajoutée (kcal)</span><input class="in" id="sTrainK" inputmode="numeric"></label>
-      </div>
-      <p class="tiny" id="trainInfo" style="margin-top:-2px"></p>
+      <h3 class="sub">Mes activités</h3>
+      <p class="tiny" style="margin:-2px 0 10px">L'énergie de chaque séance est <b>calculée depuis ton poids</b>, sa durée ou sa distance. Elle est redistribuée sur la semaine, jamais ajoutée : les jours de séance reçoivent des glucides que les jours de repos rendent. <b>Ton facteur d'activité compte déjà ces entraînements</b> : à volume conforme à ton plan, ta moyenne hebdomadaire reste ta cible.</p>
+      <div id="sActs"></div>
+      <p class="tiny" id="trainInfo" style="margin-top:8px"></p>
     </div>
 
     <div class="card">
@@ -766,7 +780,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v4.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v5.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -823,17 +837,27 @@ const DEFAULTS = {
     /* `bodyFat` à 0 signifie « inconnu » : les protéines retombent alors sur le
        poids total. Renseigné, il fait basculer le calcul sur la masse maigre. */
     profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0, bodyFat: 0 },
-    /* Cyclage énergétique. `trainDays` = séances par semaine, `trainKcal` = énergie
-       ajoutée un jour de séance. La moyenne hebdomadaire reste égale à la cible :
-       ce qu'un jour d'entraînement reçoit en plus, les jours de repos le rendent. */
-    trainDays: 0,
-    trainKcal: 300
+    /* Activités, avec le coût énergétique DÉDUIT du profil (v5.0).
+
+       Musculation et course à pied ne se valent pas : à 78 kg, 60 min de musculation
+       modérée coûtent ~310 kcal quand 8 km de course en coûtent ~560, soit le double.
+       La musculation est intermittente — sur une heure de séance, l'effort cumulé
+       dépasse rarement 20 min — là où la course est continue.
+
+       `met` : Compendium of Physical Activities (Ainsworth et al. 2011).
+       `parSemaine` : nombre de séances, qui sert à répartir l'énergie sur la semaine. */
+    activites: [
+      { id: 'muscu',  nom: 'Musculation',   ico: '💪', type: 'duree',    met: 5.0, volume: 60, parSemaine: 0 },
+      { id: 'course', nom: 'Course à pied', ico: '🏃', type: 'distance', met: 0,   volume: 8,  parSemaine: 0 }
+    ]
   },
   entries: [],
   weights: [],
-  /* Dates marquées « jour d'entraînement ». Un tableau de dates plutôt qu'un
-     drapeau par entrée : une journée est d'entraînement en elle-même, y compris
-     si aucun repas n'y est encore enregistré. */
+  /* Séances réalisées : `{ d: date, a: id d'activité, v: volume du jour }`.
+     Un tableau à part et non un drapeau par entrée : une journée est une journée
+     d'entraînement en elle-même, y compris sans aucun repas enregistré. Le volume
+     est stocké PAR SÉANCE, une sortie de 5 km et une de 15 km n'ayant pas le même
+     coût — le volume des réglages ne sert que de valeur proposée. */
   trainings: []
 };
 
@@ -993,14 +1017,63 @@ const PLAFOND_STRICT = { prot: false, carb: true, fat: true, fiber: false };
    avec n séances par semaine et D l'énergie ajoutée. La somme sur sept jours vaut
    exactement 7 × cible. L'énergie ajoutée ou retirée est portée par les GLUCIDES,
    substrat de l'effort ; protéines et lipides ne bougent pas. */
-function estJourEntrainement(date) {
-  return (DB.trainings || []).indexOf(date) >= 0;
+/* Coût énergétique NET d'une séance, en kcal.
+
+   « Net » et non « brut » : le TDEE compte déjà le métabolisme de repos pendant ces
+   heures-là, d'où le −1 sur le MET. Compter le brut surestimerait chaque séance de la
+   valeur d'une heure de repos, soit ~80 kcal.
+
+   Deux modèles, parce que les deux sports ne se décrivent pas de la même façon :
+     durée    → (MET − 1) × poids × heures. La musculation se compte en minutes ;
+                son MET dépend de l'intensité, pas d'une distance.
+     distance → 0,9 kcal par kg et par km. Le coût de la course est quasi indépendant
+                de l'allure à distance égale — vérifié : 8 km à 8, 10 et 12 km/h donnent
+                549, 549 et 561 kcal par la méthode des MET. Demander l'allure
+                n'apporterait donc rien, la distance suffit. */
+function coutSeance(act, poids) {
+  const p = Math.max(20, poids || 75);
+  const v = Math.max(0, Number(act && act.volume) || 0);
+  if (!act || !v) return 0;
+  if (act.type === 'distance') return Math.round(0.9 * p * v);
+  return Math.round(Math.max(0, (Number(act.met) || 0) - 1) * p * (v / 60));
+}
+
+const activites = () => (S().activites || []);
+const activiteParId = id => activites().filter(a => a.id === id)[0] || null;
+
+/* Séance enregistrée pour cette date, ou null. */
+function seanceDuJour(date) {
+  return (DB.trainings || []).filter(x => x && x.d === date)[0] || null;
+}
+function estJourEntrainement(date) { return !!seanceDuJour(date); }
+
+/* Énergie hebdomadaire des séances prévues, et moyenne quotidienne.
+
+   C'est cette moyenne qui est RETIRÉE à chaque journée, tandis qu'un jour de séance se
+   voit REDONNER le coût de la séance réellement faite. Le cyclage est donc redistributif,
+   jamais additif — point essentiel : le facteur d'activité du profil (1,55 = « 3 à 5
+   séances par semaine ») compte DÉJÀ ces entraînements dans la dépense. Ajouter leur coût
+   par-dessus les compterait deux fois et annulerait le déficit.
+
+   Conséquence voulue, à ne pas prendre pour une dérive : la moyenne hebdomadaire n'égale
+   exactement la cible que si le volume réalisé correspond au plan. Une semaine plus légère
+   la fait baisser — c'est correct, la dépense a baissé aussi. */
+function energieHebdo() {
+  const poids = (S().profile || {}).weight || 0;
+  let E = 0, n = 0;
+  activites().forEach(a => {
+    const k = clamp(r0(a.parSemaine), 0, 7);
+    if (k > 0) { E += k * coutSeance(a, poids); n += k; }
+  });
+  return { E: E, n: n, moyenne: E / 7 };
 }
 
 function deltaJour(date) {
-  const n = clamp(r0(S().trainDays), 0, 7), D = Math.max(0, r0(S().trainKcal));
-  if (!n || !D || n >= 7) return 0;
-  return estJourEntrainement(date) ? D * (7 - n) / 7 : -D * n / 7;
+  const h = energieHebdo();
+  if (!h.E) return 0;
+  const s = seanceDuJour(date);
+  const cout = s ? coutSeance(Object.assign({}, activiteParId(s.a) || {}, { volume: s.v }), (S().profile || {}).weight) : 0;
+  return cout - h.moyenne;
 }
 
 /* Objectifs applicables à une date : la cible et les fourchettes après cyclage.
@@ -1020,7 +1093,7 @@ function objectifsDuJour(date) {
      Les exposer ici évite de dupliquer la logique de cyclage dans chaque vue. */
   return { kcal: Math.max(0, g.kcal + d), water: g.water, min: min, max: max,
            prot: min.prot, carb: min.carb, fat: min.fat, fiber: min.fiber,
-           delta: d, train: estJourEntrainement(date) };
+           delta: d, train: estJourEntrainement(date), seance: seanceDuJour(date) };
 }
 
 /* Un plafond doit toujours rester au-dessus de son plancher, y compris après une
@@ -1032,6 +1105,35 @@ function normaliserFourchettes() {
     if (gx[k] > 0 && gx[k] < g[k]) gx[k] = g[k];
   });
 }
+
+/* Reprise des installations v4.x vers le modèle d'activités typées (v5.0).
+
+   Jusqu'à la v4.2, le cyclage reposait sur deux nombres saisis à la main : `trainDays`
+   séances par semaine et `trainKcal` d'énergie ajoutée, identique quel que soit le sport.
+   Les séances étaient de simples dates.
+
+   On reporte le nombre de séances sur la musculation, activité la plus probable par
+   défaut, et on convertit les dates. L'énergie manuelle n'est PAS conservée : c'est
+   précisément ce que la v5.0 remplace par un coût déduit du profil. Le nouveau chiffre
+   s'affiche dans les réglages, où il peut être ajusté. */
+(function migrerV5() {
+  const st = BRUT_STOCKE.settings;
+  if (!st) return;
+  if (st.activites === undefined && st.trainDays !== undefined) {
+    const n = clamp(r0(st.trainDays), 0, 7);
+    const m = (S().activites || []).filter(a => a.id === 'muscu')[0];
+    if (m && n > 0) m.parSemaine = n;
+  }
+  /* Anciennes séances : un tableau de chaînes de dates. */
+  const t = BRUT_STOCKE.trainings;
+  if (Array.isArray(t) && t.length && typeof t[0] === 'string') {
+    const m = (S().activites || [])[0];
+    DB.trainings = t.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
+                    .map(d => ({ d: d, a: m ? m.id : 'muscu', v: m ? m.volume : 60 }));
+  }
+  delete S().trainDays; delete S().trainKcal;
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+})();
 
 /* Reprise des installations antérieures à la v3.0 : les cibles uniques existantes
    deviennent les planchers, sans y toucher, et seuls les plafonds sont déduits du
@@ -1911,23 +2013,81 @@ function jaugeMacro(nom, v, mn, mx, col, cle) {
 /* Bascule « jour d'entraînement ». Masquée tant qu'aucune séance hebdomadaire n'est
    déclarée dans les réglages : sans ce nombre, le cyclage n'a pas de sens et le
    bouton n'aurait aucun effet visible. */
+/* Bouton de séance. Masqué tant qu'aucune activité n'a de séances hebdomadaires
+   déclarées : sans ce nombre il n'y a rien à répartir, et le bouton n'aurait aucun effet. */
 function renderTrainBtn() {
   const b = $('#btnTrain');
   if (!b) return;
-  const n = clamp(r0(S().trainDays), 0, 7);
-  if (!n || n >= 7) { b.className = 'trainbtn hidden'; b.innerHTML = ''; return; }
-  const on = estJourEntrainement(curDate);
+  if (!energieHebdo().E) { b.className = 'trainbtn hidden'; b.innerHTML = ''; return; }
+  const sc = seanceDuJour(curDate);
+  const a = sc ? activiteParId(sc.a) : null;
   const d = Math.round(deltaJour(curDate));
-  b.className = 'trainbtn' + (on ? ' on' : '');
-  b.innerHTML = (on ? '💪 Jour d\'entraînement' : '😴 Jour de repos') +
-    '<small>' + (d >= 0 ? '+' : '−') + Math.abs(d) + ' kcal</small>';
+  b.className = 'trainbtn' + (sc ? ' on' : '');
+  const lib = sc
+    ? (a ? a.ico + ' ' + a.nom : '💪 Séance') + ' · ' + r0(sc.v) + (a && a.type === 'distance' ? ' km' : ' min')
+    : '😴 Jour de repos';
+  b.innerHTML = lib + '<small>' + (d >= 0 ? '+' : '−') + Math.abs(d) + ' kcal</small>';
 }
 
+/* Choix de la séance du jour. Une feuille plutôt qu'une bascule : avec plusieurs
+   sports il faut choisir lequel, et surtout pouvoir corriger le volume — une sortie
+   de 5 km et une de 15 km n'ont pas le même coût, à plus de 700 kcal d'écart. */
 $('#btnTrain').onclick = () => {
-  const l = DB.trainings || (DB.trainings = []);
-  const i = l.indexOf(curDate);
-  if (i >= 0) l.splice(i, 1); else l.push(curDate);
-  save(); renderToday(); renderHistory();
+  const poids = (S().profile || {}).weight || 0;
+  const sc = seanceDuJour(curDate);
+  const dispo = activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0);
+  const html = dispo.map(a => {
+    const on = sc && sc.a === a.id;
+    const v = on ? sc.v : a.volume;
+    const u = a.type === 'distance' ? 'km' : 'min';
+    return '<div class="seance' + (on ? ' on' : '') + '" data-act="' + esc(a.id) + '">' +
+      '<div class="row between" style="align-items:center">' +
+      '<b>' + a.ico + ' ' + esc(a.nom) + '</b>' +
+      '<span class="kc" id="sc_k_' + esc(a.id) + '">' + coutSeance(Object.assign({}, a, { volume: v }), poids) + '<small>kcal</small></span>' +
+      '</div>' +
+      '<label class="f" style="margin:8px 0 0"><span>Volume de la séance (' + u + ')</span>' +
+      '<input class="in" inputmode="numeric" data-vol="' + esc(a.id) + '" value="' + r0(v) + '"></label>' +
+      '<button class="btn sm pri" data-pick="' + esc(a.id) + '" style="width:100%;margin-top:9px">' +
+      (on ? 'Mettre à jour' : 'C\'est ma séance du jour') + '</button></div>';
+  }).join('');
+
+  /* `frDate` renvoie « Aujourd'hui » ou « Hier » pour les dates proches : préfixer
+     par « du » donnerait « Séance du Aujourd'hui ». */
+  const j = frDate(curDate);
+  sheet(/^(Aujourd|Hier|Demain)/i.test(j) ? 'Séance — ' + j : 'Séance du ' + j,
+    '<p class="tiny" style="margin:-2px 0 12px">L\'énergie est calculée depuis ton poids et le volume réel de la séance. ' +
+    'Elle est <b>redistribuée</b> sur la semaine, jamais ajoutée : ton facteur d\'activité compte déjà tes entraînements.</p>' +
+    (html || '<div class="empty" style="padding:16px">Aucune activité configurée. Renseigne tes séances par semaine dans Réglages.</div>') +
+    (sc ? '<button class="btn dan gho" id="scNone" style="width:100%;margin-top:4px">Finalement, jour de repos</button>' : '') +
+    '<button class="btn gho" data-x style="width:100%;margin-top:9px">Annuler</button>',
+    el => {
+      /* Le coût se recalcule à la frappe : on voit l'effet du volume avant de valider. */
+      el.querySelectorAll('[data-vol]').forEach(inp => {
+        inp.oninput = () => {
+          const a = activiteParId(inp.dataset.vol);
+          const k = el.querySelector('#sc_k_' + inp.dataset.vol);
+          if (a && k) k.innerHTML = coutSeance(Object.assign({}, a, { volume: r0(inp.value) }), poids) + '<small>kcal</small>';
+        };
+      });
+      el.querySelectorAll('[data-pick]').forEach(btn => {
+        btn.onclick = () => {
+          const id = btn.dataset.pick;
+          const v = r0(el.querySelector('[data-vol="' + id + '"]').value);
+          if (!(v > 0)) { toast('Indique le volume de la séance'); return; }
+          DB.trainings = (DB.trainings || []).filter(x => x && x.d !== curDate);
+          DB.trainings.push({ d: curDate, a: id, v: v });
+          save(); closeSheet(); renderToday(); renderHistory();
+          const a = activiteParId(id);
+          toast((a ? a.nom : 'Séance') + ' enregistrée');
+        };
+      });
+      const no = el.querySelector('#scNone');
+      if (no) no.onclick = () => {
+        DB.trainings = (DB.trainings || []).filter(x => x && x.d !== curDate);
+        save(); closeSheet(); renderToday(); renderHistory();
+        toast('Journée passée en repos');
+      };
+    });
 };
 
 function renderToday() {
@@ -3010,7 +3170,7 @@ function renderHistory() {
     '<div><b>' + active.length + '</b><span>jours suivis</span></div>' +
     '<div><b>' + inGoal + '</b><span>objectif tenu</span></div>';
 
-  const cycle = clamp(r0(S().trainDays), 0, 7), cycleOn = cycle > 0 && cycle < 7 && r0(S().trainKcal) > 0;
+  const cycleOn = energieHebdo().E > 0;
   $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal,
     cycleOn ? 'kcal en moyenne' : null) +
     (cycleOn ? '<p class="tiny" style="margin-top:6px">Avec le cyclage, chaque journée a sa propre cible : ' +
@@ -3045,7 +3205,9 @@ function renderHistory() {
     const cible = objectifsDuJour(d).kcal;
     const over = cible && t.kcal > cible;
     return '<div class="dayrow" data-d="' + d + '"><div class="grow"><div class="d">' + frDate(d) +
-      (estJourEntrainement(d) ? ' <span style="font-size:11px">💪</span>' : '') + '</div>' +
+      (function(){ const sc = seanceDuJour(d); if (!sc) return '';
+         const a = activiteParId(sc.a);
+         return ' <span style="font-size:11px">' + (a ? a.ico : '💪') + '</span>'; })() + '</div>' +
       '<div class="m">P ' + r0(t.prot) + ' · G ' + r0(t.carb) + ' · L ' + r0(t.fat) +
       (t.fiber ? ' · F ' + r0(t.fiber) : '') + ' g' +
       (t.alc ? ' · 🍷 ' + r0(t.alc) + ' g' : '') +
@@ -3123,9 +3285,7 @@ function renderSettings() {
   // un plafond nul se présente comme un champ vide : c'est ainsi qu'on le retire
   ['prot', 'carb', 'fat', 'fiber'].forEach(k =>
     $('#x' + k.charAt(0).toUpperCase() + k.slice(1)).value = gx[k] > 0 ? gx[k] : '');
-  $('#sTrainN').value = r0(S().trainDays) || 0;
-  $('#sTrainK').value = r0(S().trainKcal) || 0;
-  majTrainInfo();
+  renderActivites();
   renderFoodsSettings();
   renderTplsSettings();
   renderSuppsSettings();
@@ -3177,26 +3337,84 @@ $('#sTest').onclick = async () => {
   }
 };
 
-/* Seule la ligne d'information est rafraîchie à la frappe : repasser par
-   `renderSettings()` réécrirait la valeur du champ en cours de saisie et
-   déplacerait le curseur à chaque caractère. */
-function majTrainInfo() {
-  const n = clamp(r0(S().trainDays), 0, 7), k = Math.max(0, r0(S().trainKcal));
-  const base = S().goals.kcal;
-  $('#trainInfo').innerHTML = (!n || n >= 7 || !k)
-    ? 'Cyclage désactivé — toutes les journées ont la même cible.'
-    : 'Jour de séance <b>' + r0(base + k * (7 - n) / 7) + ' kcal</b> · ' +
-      'jour de repos <b>' + r0(base - k * n / 7) + ' kcal</b> · ' +
-      'moyenne inchangée à ' + r0(base) + ' kcal.';
+/* Réglage des activités. Le coût de chaque séance s'affiche à côté de ses champs :
+   c'est ce qui rend visible le rapport de 1 à 2 entre musculation et course. */
+const MET_MUSCU = [[3.5, 'Légère — beaucoup de repos entre séries'],
+                   [5.0, 'Modérée — séance classique'],
+                   [6.0, 'Intense — séries enchaînées, peu de pause']];
+
+function renderActivites() {
+  const box = $('#sActs');
+  if (!box) return;
+  const poids = (S().profile || {}).weight || 0;
+  box.innerHTML = activites().map(a => {
+    const u = a.type === 'distance' ? 'Distance habituelle (km)' : 'Durée habituelle (min)';
+    return '<div class="seance" data-a="' + esc(a.id) + '">' +
+      '<div class="row between" style="align-items:center;margin-bottom:9px">' +
+      '<b>' + a.ico + ' ' + esc(a.nom) + '</b>' +
+      '<span class="kc">' + coutSeance(a, poids) + '<small>kcal / séance</small></span></div>' +
+      '<div class="grid2">' +
+      '<label class="f"><span>Séances / semaine</span><input class="in" inputmode="numeric" data-n="' + esc(a.id) + '" value="' + r0(a.parSemaine) + '"></label>' +
+      '<label class="f"><span>' + u + '</span><input class="in" inputmode="numeric" data-v="' + esc(a.id) + '" value="' + r0(a.volume) + '"></label>' +
+      '</div>' +
+      (a.type === 'duree'
+        ? '<label class="f" style="margin-top:2px"><span>Intensité</span><select class="in" data-met="' + esc(a.id) + '">' +
+          MET_MUSCU.map(m => '<option value="' + m[0] + '"' + (Math.abs(a.met - m[0]) < 0.01 ? ' selected' : '') + '>' + m[1] + '</option>').join('') +
+          '</select></label>'
+        : '<p class="tiny" style="margin:4px 0 0">Le coût d\'une course dépend de la distance, presque pas de l\'allure : 8 km coûtent autant en 40 qu\'en 60 minutes.</p>') +
+      '</div>';
+  }).join('');
+
+  box.querySelectorAll('input[data-n], input[data-v]').forEach(inp => {
+    inp.oninput = () => {
+      const id = inp.dataset.n || inp.dataset.v;
+      const a = activiteParId(id);
+      if (!a) return;
+      if (inp.dataset.n !== undefined) a.parSemaine = clamp(r0(inp.value), 0, 7);
+      else a.volume = clamp(r0(inp.value), 0, 500);
+      save(); majCoutsActivites(); renderToday(); renderHistory();
+    };
+  });
+  box.querySelectorAll('select[data-met]').forEach(sel => {
+    sel.onchange = () => {
+      const a = activiteParId(sel.dataset.met);
+      if (!a) return;
+      a.met = parseFloat(sel.value) || 5.0;
+      save(); majCoutsActivites(); renderToday(); renderHistory();
+    };
+  });
+  majTrainInfo();
 }
 
-['sTrainN', 'sTrainK'].forEach(id => {
-  $('#' + id).oninput = e => {
-    if (id === 'sTrainN') S().trainDays = clamp(r0(e.target.value), 0, 7);
-    else S().trainKcal = clamp(r0(e.target.value), 0, 1500);
-    save(); majTrainInfo(); renderToday(); renderHistory();
-  };
-});
+/* Rafraîchissement des seuls chiffres : repasser par `renderActivites()` réécrirait
+   le champ en cours de saisie et déplacerait le curseur à chaque caractère. */
+function majCoutsActivites() {
+  const poids = (S().profile || {}).weight || 0;
+  const box = $('#sActs');
+  if (box) box.querySelectorAll('[data-a]').forEach(c => {
+    const a = activiteParId(c.dataset.a);
+    const k = c.querySelector('.kc');
+    if (a && k) k.innerHTML = coutSeance(a, poids) + '<small>kcal / séance</small>';
+  });
+  majTrainInfo();
+}
+
+function majTrainInfo() {
+  const h = energieHebdo();
+  const base = S().goals.kcal;
+  const poids = (S().profile || {}).weight || 0;
+  if (!h.E) {
+    $('#trainInfo').innerHTML = 'Aucune séance déclarée — toutes les journées ont la même cible.';
+    return;
+  }
+  const lignes = activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0).map(a =>
+    a.ico + ' ' + esc(a.nom) + ' : <b>' + r0(base + coutSeance(a, poids) - h.moyenne) + ' kcal</b>');
+  $('#trainInfo').innerHTML =
+    lignes.join(' · ') +
+    (h.n < 7 ? ' · 😴 repos : <b>' + r0(base - h.moyenne) + ' kcal</b>' : '') +
+    '<br>À volume conforme à ton plan, ta moyenne reste ' + r0(base) + ' kcal ; ' +
+    'une semaine plus légère la fait baisser, ce qui est voulu.';
+}
 
 ['gKcal', 'gProt', 'gCarb', 'gFat', 'gFiber', 'gWater'].forEach(id => {
   $('#' + id).oninput = e => {
@@ -3656,8 +3874,20 @@ function sanitizeBackup(inc) {
       /* le verrou est un état de session, jamais restauré depuis un fichier */
       quotaUntil: 0, quotaJour: false,
       imgPx: [768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
-      trainDays: clamp(num(s.trainDays), 0, 7),
-      trainKcal: clamp(num(s.trainKcal), 0, 1500),
+      activites: (function () {
+        /* On repart TOUJOURS du catalogue par défaut et on ne reprend du fichier que
+           les valeurs réglables. Une activité inconnue importée n'aurait ni icône ni
+           modèle de calcul, et casserait le coût des séances qui la référencent. */
+        const inc = Array.isArray(s.activites) ? s.activites : [];
+        return DEFAULTS.settings.activites.map(def => {
+          const v = inc.filter(x => x && x.id === def.id)[0] || {};
+          return Object.assign({}, def, {
+            parSemaine: clamp(num(v.parSemaine), 0, 7),
+            volume: clamp(num(v.volume), 0, 500) || def.volume,
+            met: def.type === 'duree' ? clamp(Number(v.met) || def.met, 1, 12) : 0
+          });
+        });
+      })(),
       goals: { kcal: pos(g.kcal, 12000, DEFAULTS.settings.goals.kcal), prot: pos(g.prot, 1000),
                carb: pos(g.carb, 2000), fat: pos(g.fat, 1000), fiber: pos(g.fiber, 200),
                water: pos(g.water, 10000, DEFAULTS.settings.goals.water) },
@@ -3676,8 +3906,17 @@ function sanitizeBackup(inc) {
     },
     entries: entries,
     weights: weights,
-    trainings: (Array.isArray(inc.trainings) ? inc.trainings : [])
-      .filter(d => isDate(d)).slice(0, 4000)
+    /* Séances : objets `{d, a, v}`. On accepte encore les chaînes de dates des
+       versions <= v4.2, en les rattachant à la première activité du catalogue. */
+    trainings: (Array.isArray(inc.trainings) ? inc.trainings : []).map(x => {
+      if (typeof x === 'string') {
+        const d0 = DEFAULTS.settings.activites[0];
+        return isDate(x) ? { d: x, a: d0.id, v: d0.volume } : null;
+      }
+      if (!x || typeof x !== 'object' || !isDate(x.d)) return null;
+      const ids = DEFAULTS.settings.activites.map(a => a.id);
+      return { d: x.d, a: ids.indexOf(x.a) >= 0 ? x.a : ids[0], v: clamp(num(x.v), 0, 500) };
+    }).filter(Boolean).slice(0, 4000)
   };
 }
 
@@ -3739,10 +3978,12 @@ $('#fImp').onchange = e => {
           (inc.weights || []).forEach(w => { if (!hw.has(w.date)) { DB.weights.push(w); nP++; } });
           /* Les jours d'entraînement sont un simple ensemble de dates : on les
              réunit, sans doublon. */
-          const ht = new Set(DB.trainings || []);
+          const vues = new Set((DB.trainings || []).map(x => x.d));
           let nE = 0;
-          (inc.trainings || []).forEach(d => { if (!ht.has(d)) { ht.add(d); nE++; } });
-          DB.trainings = Array.from(ht).sort();
+          (inc.trainings || []).forEach(x => {
+            if (x && !vues.has(x.d)) { vues.add(x.d); DB.trainings.push(x); nE++; }
+          });
+          DB.trainings.sort((a, b) => a.d.localeCompare(b.d));
 
           /* Une sauvegarde sert aussi à ne pas retaper sa configuration. La fusion
              restaure donc objectifs et profil, et complète les listes par identifiant
@@ -3769,8 +4010,7 @@ $('#fImp').onchange = e => {
           }
           normaliserFourchettes();
           if (s.model) DB.settings.model = s.model;
-          if (brutS.trainDays !== undefined) DB.settings.trainDays = s.trainDays;
-          if (brutS.trainKcal !== undefined) DB.settings.trainKcal = s.trainKcal;
+          if (brutS.activites !== undefined) DB.settings.activites = s.activites;
           const avC = (DB.settings.supps || []).length, avT = (DB.settings.templates || []).length;
           const avA = (DB.settings.foods || []).length, avV = (DB.settings.waterPresets || []).length;
           DB.settings.supps = compl(DB.settings.supps, s.supps);
@@ -3922,7 +4162,7 @@ $('#btnPurge').onclick = () => {
         if (W.checked) DB.weights = DB.weights.filter(w => !(w.date >= v.a && w.date <= v.b));
         /* Les marques « jour d'entraînement » de la plage partent avec elle : les
            conserver laisserait des journées cyclées sans aucun repas. */
-        DB.trainings = (DB.trainings || []).filter(d => !(d >= v.a && d <= v.b));
+        DB.trainings = (DB.trainings || []).filter(x => !(x && x.d >= v.a && x.d <= v.b));
         /* La date affichée peut être une de celles qu'on vient de vider : on ne laisse
            pas le journal sur une page devenue orpheline. */
         if (curDate >= v.a && curDate <= v.b) curDate = TODAY();
@@ -3946,7 +4186,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v4.2');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v5.0');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
