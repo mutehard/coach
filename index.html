@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v4.0</title>
+<title>Coach v4.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,14 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v4.1 — Revue complete de l'application publiee. L'historique comparait chaque journee a la
+           cible de BASE et non a sa cible cyclee : le journal annoncait -669 kcal la ou
+           l'historique affichait -540 pour la meme journee. La regle etait pourtant ecrite
+           (toute comparaison passe par objectifsDuJour) ; un point d'appel avait ete oublie.
+           La ligne de repere du graphique des calories annonce desormais qu'elle vaut la
+           cible MOYENNE quand le cyclage est actif, les barres alternant normalement de part
+           et d'autre.
+
     v4.0 — Revue critique des fourchettes de la v3.0, sur dix profils et non plus un seul.
            Trois défauts corrigés à la racine. Les deux bornes des glucides se déduisent
            désormais de la même logique — le solde énergétique — là où le plancher venait
@@ -745,7 +753,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v4.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v4.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -2864,7 +2872,11 @@ function renderHistory() {
     '<div><b>' + active.length + '</b><span>jours suivis</span></div>' +
     '<div><b>' + inGoal + '</b><span>objectif tenu</span></div>';
 
-  $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal);   // repère = cible moyenne
+  const cycle = clamp(r0(S().trainDays), 0, 7), cycleOn = cycle > 0 && cycle < 7 && r0(S().trainKcal) > 0;
+  $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal,
+    cycleOn ? 'kcal en moyenne' : null) +
+    (cycleOn ? '<p class="tiny" style="margin-top:6px">Avec le cyclage, chaque journée a sa propre cible : ' +
+      'les barres alternent normalement autour de cette moyenne.</p>' : '');
   $('#chartWater').innerHTML = barChart(days, per.map(p => p.water), g.water, 'ml', '#38bdf8', '#0284c7');
 
   const wpts = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).filter(w => w.date >= days[0]);
@@ -2890,14 +2902,17 @@ function renderHistory() {
   const rows = days.slice().reverse().filter((d, i) => sumEntries(entriesOf(d)).kcal > 0);
   $('#dayList').innerHTML = rows.length ? rows.map(d => {
     const t = sumEntries(entriesOf(d));
-    const over = g.kcal && t.kcal > g.kcal;
+    /* Cible de CETTE journée, cyclage compris. Comparer à `S().goals` afficherait
+       un écart différent de celui du journal pour la même journée. */
+    const cible = objectifsDuJour(d).kcal;
+    const over = cible && t.kcal > cible;
     return '<div class="dayrow" data-d="' + d + '"><div class="grow"><div class="d">' + frDate(d) +
       (estJourEntrainement(d) ? ' <span style="font-size:11px">💪</span>' : '') + '</div>' +
       '<div class="m">P ' + r0(t.prot) + ' · G ' + r0(t.carb) + ' · L ' + r0(t.fat) +
       (t.fiber ? ' · F ' + r0(t.fiber) : '') + ' g' +
       (t.alc ? ' · 🍷 ' + r0(t.alc) + ' g' : '') +
       (t.water ? ' · 💧 ' + (t.water / 1000).toFixed(1) + ' L' : '') + '</div></div>' +
-      '<span class="pill' + (over ? ' over' : '') + '">' + (g.kcal ? (over ? '+' : '') + r0(t.kcal - g.kcal) : '—') + '</span>' +
+      '<span class="pill' + (over ? ' over' : '') + '">' + (cible ? (over ? '+' : '') + r0(t.kcal - cible) : '—') + '</span>' +
       '<div class="v">' + r0(t.kcal) + '</div></div>';
   }).join('') : '<div class="empty" style="padding:18px">Aucune journée enregistrée sur la période.</div>';
 }
@@ -3791,7 +3806,7 @@ $('#btnWipe').onclick = () => {
 function showTab(t) {
   ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v4.0');
+  $('#topRight').textContent = t === 'today' ? '' : (t === 'history' ? 'Suivi' : 'v4.1');
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
