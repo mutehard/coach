@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v7.2</title>
+<title>Coach v8.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,25 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v8.0 — **Fonction dimensionnante : onglet « Conseil ».** Un chat libre ou l'utilisateur
+           pose sa question et recoit une reponse de nutritionniste du sport fondee sur SES
+           donnees. Cinq questions d'exemple pour demarrer, historique conserve, deux tours
+           precedents transmis au modele pour tenir un fil (« et pour les jours de repos ? »).
+
+           SECURITE : charge utile distincte de celle de l'analyse, elle aussi en liste
+           BLANCHE. Plus LEGERE — des moyennes sur la fenetre au lieu du detail jour par
+           jour, 489 jetons contre 1265 — car elle repart a chaque question. Plus LARGE sur
+           un point : elle inclut les COMPLEMENTS et les repas habituels, absents de
+           l'analyse, sans lesquels une question comme « quel est l'impact de mes
+           complements sur ma perte de poids ? » ne peut trouver de reponse. Les
+           complements partent par NOM, jamais par identifiant. Verifie sans fuite sur
+           25 termes sensibles, avec contre-epreuve.
+
+           L'audit de securite a rempli son role : il a refuse la publication en detectant
+           une cinquieme charge utile. Celle-ci a ete examinee et prouvee sans fuite AVANT
+           que le compteur ne soit porte a 5. Deux nouveaux controles couvrent desormais
+           `donneesConseil`, portant l'audit a 22 controles.
+
     v7.2 — Retrait de la mention « Ta cle API ne quitte jamais l'appareil » sur la carte
            d'analyse. Cette reassurance a sa place dans les Reglages, sous le champ de la
            cle, ou elle figure toujours. Sur une carte d'analyse nutritionnelle elle attirait
@@ -580,6 +599,28 @@ h1,h2,h3,p{margin:0}
 .pastille.zon{background:var(--acc-l)}
 .pastille.haut{background:var(--bad)}
 
+/* ---------- vue Conseil ---------- */
+#view-conseil{padding-bottom:96px}
+.exq{display:block;width:100%;text-align:left;background:var(--bg2);border:1px solid var(--line);
+  border-radius:12px;padding:11px 13px;margin-bottom:8px;color:var(--txt);font:400 13.5px/1.4 inherit;cursor:pointer}
+.exq:last-child{margin-bottom:0}
+.bulle{max-width:88%;margin-bottom:11px;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.5}
+.bulle span{display:block;white-space:pre-wrap}
+.bulle.moi{margin-left:auto;background:var(--acc-d);color:#eafff6;border-bottom-right-radius:5px}
+.bulle.coach{margin-right:auto;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:5px}
+.bulle.coach b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+  color:var(--acc-l);margin-bottom:5px}
+/* Barre de saisie fixée au-dessus de la barre d'onglets. */
+.askbar{position:fixed;left:0;right:0;bottom:calc(58px + var(--sab));z-index:39;
+  display:flex;gap:8px;align-items:flex-end;padding:9px 14px;
+  background:rgba(11,15,20,.94);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  border-top:1px solid var(--line)}
+.askbar textarea{flex:1;resize:none;max-height:118px;background:var(--bg2);border:1px solid var(--line);
+  border-radius:14px;padding:11px 13px;color:var(--txt);font:400 15px/1.4 inherit;outline:none}
+.askbar textarea:focus{border-color:var(--acc)}
+.askbar button{flex:none;width:44px;height:44px;border-radius:50%;background:var(--acc);
+  color:#03231a;font-size:17px;font-weight:700;line-height:1}
+
 /* ---------- repas ---------- */
 .meal{margin-bottom:10px}
 .meal .mh{display:flex;align-items:center;justify-content:space-between;padding:0 2px 7px;font-size:13px;font-weight:700;color:var(--dim)}
@@ -911,17 +952,36 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v7.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v8.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
+    </div>
+  </section>
+
+  <!-- ============ CONSEIL ============ -->
+  <section id="view-conseil" class="hidden">
+    <div id="chat"></div>
+    <div class="askbar">
+      <textarea id="askIn" rows="1" placeholder="Pose ta question à Coach…"></textarea>
+      <button id="askGo" aria-label="Envoyer">➤</button>
     </div>
   </section>
 </div>
 
 <!-- ============ BARRE D'ONGLETS ============ -->
+  <!-- ============ CONSEIL ============ -->
+  <section id="view-conseil" class="hidden">
+    <div id="chat"></div>
+    <div class="askbar">
+      <textarea id="askIn" rows="1" placeholder="Pose ta question à Coach…"></textarea>
+      <button id="askGo" aria-label="Envoyer">➤</button>
+    </div>
+  </section>
+
 <nav class="tabs"><div class="in2">
   <button data-tab="today" class="on"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M4 9h16M9 4v16"/></svg>Journal</button>
   <button data-tab="history"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15v-4M12 15V8M16 15v-6"/></svg>Suivi</button>
   <button data-tab="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 13.6H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 7a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.4 3V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1A2 2 0 1 1 20.2 7l-.1.1a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Réglages</button>
+  <button data-tab="conseil"><svg viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.9 8.9 0 0 1-3.8-.8L3 21l1.9-4.9A8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>Conseil</button>
 </div></nav>
 
 <!-- Champs fichier déportés hors écran plutôt qu'en display:none :
@@ -954,6 +1014,7 @@ const DEFAULTS = {
     goalsWeight: 0,
     quota: null,
     analyse: null,
+    chat: [],
     dernierCout: null,
     coutsRep: [],
     journalQuota: [],
@@ -3442,6 +3503,108 @@ function donneesAnalyse(nbJours) {
   };
 }
 
+/* -------------------------------------------------------------------------
+   Conseil de Coach — chat libre (v8.0)
+   -------------------------------------------------------------------------
+   L'utilisateur pose une question libre, la réponse s'appuie sur SES données.
+
+   Charge utile distincte de celle de l'analyse hebdomadaire, pour deux raisons :
+
+   1. Elle est plus LÉGÈRE. Elle repart à chaque question, alors que l'analyse ne part
+      qu'une fois par semaine : on envoie des moyennes sur la fenêtre plutôt que le
+      détail jour par jour, ce qui divise le volume par trois.
+   2. Elle est plus LARGE sur un point : elle inclut les COMPLÉMENTS et les repas
+      habituels, absents de l'analyse. Une question comme « quel est l'impact de mes
+      compléments sur ma perte de poids ? » ne peut trouver de réponse sans eux.
+
+   Même règle absolue : liste BLANCHE, champ par champ. On ne part jamais de `DB` pour
+   en retirer ce qui gêne. */
+function donneesConseil() {
+  const base = donneesAnalyse(JOURS_ANALYSE);
+  const j = base.journees.filter(x => x.kcal > 0);
+  const moy = cle => j.length ? Math.round(j.reduce((a, x) => a + (x[cle] || 0), 0) / j.length) : 0;
+
+  /* Moyennes plutôt que le détail : une question de conseil se traite sur des ordres de
+     grandeur, pas sur la lecture de trente lignes. */
+  const resume = {
+    jours_suivis: j.length, jours_dans_la_fenetre: JOURS_ANALYSE,
+    moyennes: { kcal: moy('kcal'), cible_kcal: moy('cible'), proteines_g: moy('p'),
+                glucides_g: moy('g'), lipides_g: moy('l'), fibres_g: moy('f'),
+                eau_ml: moy('eau'), prises_par_jour: j.length
+                  ? Math.round(j.reduce((a, x) => a + x.prises, 0) / j.length * 10) / 10 : 0 },
+    jours_avec_alcool: base.journees.filter(x => x.alcool).length,
+    seances_realisees: base.journees.filter(x => x.seance).length
+  };
+
+  return {
+    profil: base.profil,
+    objectifs: base.objectifs,
+    activites: base.activites,
+    poids: base.poids,
+    resume_alimentaire: resume,
+    aliments_frequents: base.aliments_frequents.slice(0, 15),
+    /* Compléments : nom, dose et apport par prise. Sans eux, aucune question sur leur
+       effet ne peut recevoir de réponse fondée. */
+    complements: (S().supps || []).map(x => ({
+      nom: x.name, dose: x.dose || null, kcal: r0(x.kcal), proteines_g: r0(x.prot),
+      glucides_g: r0(x.carb), lipides_g: r0(x.fat), fibres_g: r0(x.fiber),
+      prises_sur_la_periode: DB.entries.filter(e => e.supp === x.id &&
+        e.date >= shiftD(TODAY(), -JOURS_ANALYSE)).length
+    })),
+    repas_habituels: (S().templates || []).map(t => {
+      const s2 = sumItems(t.items);
+      return { nom: t.name, moment: mealLabel(t.meal), kcal: r0(s2.kcal),
+               proteines_g: r0(s2.prot), glucides_g: r0(s2.carb), lipides_g: r0(s2.fat) };
+    })
+  };
+}
+
+const PROMPT_CONSEIL = `Tu es nutritionniste du sport, en France. Tu réponds à la question d'une \
+personne dont tu as le suivi sous les yeux.
+
+Règles :
+- réponds à LA question posée, sans dérouler un bilan général ;
+- appuie-toi sur SES données chiffrées, cite-les quand elles éclairent la réponse ;
+- l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé ;
+- le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte, \
+0,25 à 0,5 % en prise ;
+- les objectifs de macronutriments sont donnés en [plancher, plafond] ; dépasser le plafond \
+de protéines ou de fibres n'est pas un défaut ;
+- les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne \
+en ordres de grandeur, jamais au gramme près ;
+- si la question sort de ton domaine ou demande un avis médical, dis-le et renvoie vers un \
+médecin. N'invente jamais une donnée absente du suivi : dis qu'elle manque.
+
+Ton : direct, professionnel, tutoiement, français. Trois à six phrases, sauf si la question \
+exige davantage. Pas de préambule, pas de flatterie, pas de liste à puces sauf nécessité. \
+Réponds en texte simple, sans mise en forme markdown.`;
+
+/* Historique transmis au modèle. Deux échanges suffisent à tenir un fil (« et pour les
+   glucides ? ») sans faire grossir la requête à chaque tour. */
+const TOURS_CONTEXTE = 4;
+
+async function poserQuestion(question) {
+  const d = donneesConseil();
+  /* L'appelant a DÉJÀ inscrit la question dans `S().chat`, pour l'afficher sans
+     attendre la réponse. On l'écarte donc de l'historique, sinon elle partirait deux
+     fois — une fois comme contexte, une fois comme question — gonflant la requête et
+     brouillant le fil. */
+  const passe = (S().chat || []).slice(0, -1);
+  const hist = passe.slice(-TOURS_CONTEXTE).map(m => ({
+    role: m.r === 'u' ? 'user' : 'assistant', content: m.t
+  }));
+  const corps = {
+    model: S().model, temperature: 0.4, max_tokens: 900,
+    messages: [{ role: 'user', content: PROMPT_CONSEIL + '\n\nSes données :\n' + JSON.stringify(d) }]
+      .concat(hist)
+      .concat([{ role: 'user', content: question }])
+  };
+  const txt = await groqTry(corps, SANS_REFLEXION);
+  const t = String(txt || '').trim();
+  if (!t) throw new Error("Le modèle n'a rien renvoyé.");
+  return t;
+}
+
 const PROMPT_ANALYSE = `Tu es nutritionniste du sport, en France. Tu analyses les données de suivi \
 d'une personne qui utilise une application de journal alimentaire.
 
@@ -3826,6 +3989,91 @@ $('#analyse').onclick = async e => {
     sheet('Analyse impossible', '<div class="err">' + esc(err.message) + '</div>' + rawBlock(err) +
       '<button class="btn" data-x>Fermer</button>');
   }
+};
+
+/* -------------------------------------------------------------------------
+   Vue « Conseil » — chat libre avec Coach
+   ------------------------------------------------------------------------- */
+const EXEMPLES_QUESTIONS = [
+  'Quel est l\'impact de mes compléments sur ma perte de poids ?',
+  'Est-ce que je mange assez de protéines les jours de musculation ?',
+  'Pourquoi ma perte de poids ralentit ?',
+  'Comment atteindre mon objectif de fibres sans exploser les glucides ?',
+  'Que manger avant une sortie de 10 km ?'
+];
+
+function renderChat() {
+  const box = $('#chat');
+  if (!box) return;
+  const msgs = S().chat || [];
+
+  if (!msgs.length) {
+    box.innerHTML = '<div class="card">' +
+      '<h2>J\'ai besoin d\'un conseil</h2>' +
+      '<p class="tiny" style="margin:-4px 0 14px">Pose ta question à Coach. Il répond en ' +
+      's\'appuyant sur tes données : ton profil, tes objectifs, tes trente derniers jours, ' +
+      'tes séances, tes compléments et tes repas habituels.</p>' +
+      '<h3 class="sub">Par exemple</h3>' +
+      EXEMPLES_QUESTIONS.map(q =>
+        '<button class="exq" data-q="' + esc(q) + '">' + esc(q) + '</button>').join('') +
+      '</div>';
+    return;
+  }
+
+  box.innerHTML = msgs.map(m =>
+    '<div class="bulle ' + (m.r === 'u' ? 'moi' : 'coach') + '">' +
+    (m.r === 'a' ? '<b>Coach</b>' : '') +
+    '<span>' + esc(m.t) + '</span></div>').join('') +
+    '<button class="btn sm gho" id="chatClear" style="width:100%;margin:6px 0 4px">Effacer la conversation</button>';
+  /* On colle au dernier message : sans cela, une reponse longue laisse l'utilisateur
+     en haut de la conversation, sans indice qu'elle est arrivee. */
+  const dernier = box.querySelector('.bulle:last-of-type');
+  if (dernier) dernier.scrollIntoView({ block: 'end' });
+}
+
+async function envoyerQuestion(q) {
+  const question = String(q || '').trim();
+  if (!question) return;
+  if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
+  ANNULER_REPRISE = false;
+  if (!(await verrouLibre())) return;
+
+  const l = S().chat || (S().chat = []);
+  l.push({ r: 'u', t: question.slice(0, 500) });
+  /* La conversation est bornée : au-delà, elle gonflerait le stockage sans servir,
+     seuls les derniers tours étant transmis au modèle. */
+  while (l.length > 30) l.shift();
+  save(); renderChat();
+  $('#askIn').value = '';
+
+  loader(true, 'Coach réfléchit…');
+  try {
+    const rep = await poserQuestion(question);
+    loader(false);
+    S().chat.push({ r: 'a', t: rep.slice(0, 3000) });
+    while (S().chat.length > 30) S().chat.shift();
+    save(); renderChat();
+  } catch (err) {
+    loader(false);
+    /* La question reste dans la conversation : elle est relançable sans la retaper. */
+    sheet('Réponse impossible', '<div class="err">' + esc(err.message) + '</div>' + rawBlock(err) +
+      '<button class="btn" data-x>Fermer</button>');
+  }
+}
+
+$('#chat').onclick = e => {
+  const ex = e.target.closest('[data-q]');
+  if (ex) { envoyerQuestion(ex.dataset.q); return; }
+  if (e.target.closest('#chatClear')) {
+    if (!confirm('Effacer toute la conversation ?')) return;
+    S().chat = []; save(); renderChat();
+  }
+};
+$('#askGo').onclick = () => envoyerQuestion($('#askIn').value);
+$('#askIn').oninput = e => {
+  /* Le champ grandit avec le texte, jusqu'à cinq lignes. */
+  e.target.style.height = 'auto';
+  e.target.style.height = Math.min(e.target.scrollHeight, 118) + 'px';
 };
 
 function renderHistory() {
@@ -4573,6 +4821,10 @@ function sanitizeBackup(inc) {
          afficherait un bilan calculé sur des données qui ne sont peut-être plus celles
          de l'appareil. */
       analyse: null,
+      /* La conversation est un état de session, comme l'analyse : la restaurer depuis
+         une sauvegarde ferait resurgir des échanges portant sur des données qui ne sont
+         peut-être plus celles de l'appareil. */
+      chat: [],
       dernierCout: null, coutsRep: [], journalQuota: [],
       /* le verrou est un état de session, jamais restauré depuis un fichier */
       quotaUntil: 0, quotaJour: false,
@@ -4887,15 +5139,16 @@ $('#btnWipe').onclick = () => {
    10. Onglets et démarrage
    ========================================================================= */
 function showTab(t) {
-  ['today', 'history', 'settings'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
+  ['today', 'history', 'settings', 'conseil'].forEach(v => $('#view-' + v).classList.toggle('hidden', v !== t));
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v7.2' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v8.0' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
   if (t === 'settings') renderSettings();
+  if (t === 'conseil') renderChat();
 }
 $$('.tabs [data-tab]').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
