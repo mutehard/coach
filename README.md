@@ -34,3 +34,10 @@ l'origine — mais publier depuis un autre compte afficherait une application vi
 
 Aucune donnée personnelle ni clé API ne se trouve dans ce dépôt : elles restent sur
 l'iPhone. Une sauvegarde s'exporte depuis l'application, dans Réglages → Export JSON.
+
+## `.nojekyll`
+
+Ce fichier vide désactive le traitement Jekyll. Le site est un fichier HTML statique
+unique : Jekyll n'y apporte rien et ajoute une étape de construction qui peut échouer —
+ce qui est arrivé le 17 août 2026 sur la v9.0, avec un « Page build failed » sans détail.
+Ne pas le supprimer.
