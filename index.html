@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v8.0</title>
+<title>Coach v9.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,28 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v9.0 — **Charge utile unifiee et complete pour l'analyse ET le conseil.** Fenetre portee
+           a 60 jours. Les deux fonctions delèguent desormais a `donneesCoach()`, seule
+           detentrice de la liste blanche : une question de conseil merite le meme niveau de
+           detail qu'un bilan.
+
+           Contenu : 60 journees DATEES (kcal consommees et cible, quatre macronutriments,
+           alcool, hydratation, nombre de prises, seance du jour) ; catalogue des aliments
+           distincts avec portion moyenne et apports PAR PORTION ; pesees individuelles
+           datees plus la pente de regression ; seances datees avec volume et cout reel ;
+           complements avec leur nombre de prises sur la periode ; repas habituels ;
+           objectifs en [plancher, plafond] ; profil avec masse maigre calculee.
+
+           ENCODAGE en-tete de colonnes + lignes de valeurs pour les blocs volumineux : les
+           cles repetees soixante fois coutaient 35 % du volume pour zero information.
+           Mesure : 2466 jetons de charge, soit 4700 reserves sur 8000 pour l'analyse et
+           4000 pour le conseil. Envoyer chaque occurrence d'aliment etait hors de portee
+           (540 lignes, ~6580 jetons pour ce seul bloc) : d'ou le catalogue agrege.
+
+           Correction associee : le garde-fou de `lancerAnalyse` lisait encore `journees`
+           comme un tableau alors qu'il devient un objet {colonnes, lignes}. L'exception
+           etait avalee par la feuille d'erreur — panne muette, aucun appel reseau.
+
     v8.0 — **Fonction dimensionnante : onglet « Conseil ».** Un chat libre ou l'utilisateur
            pose sa question et recoit une reponse de nutritionniste du sport fondee sur SES
            donnees. Cinq questions d'exemple pour demarrer, historique conserve, deux tours
@@ -952,7 +974,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v8.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v9.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -3444,64 +3466,127 @@ async function runAnalysis() {
    poids et des habitudes alimentaires bien plus lisibles que deux semaines, pour un coût
    mesuré de 3230 jetons réservés sur 8000 (40 %) contre 2688 — soit toujours moins qu'une
    analyse photo. */
-const JOURS_ANALYSE = 30;
+const JOURS_ANALYSE = 60;
 
-function donneesAnalyse(nbJours) {
+function donneesCoach(nbJours) {
+  const n = nbJours || JOURS_ANALYSE;
   const p = S().profile || {}, g = S().goals, gx = S().goalsMax || {};
-  const jours = daysBack(nbJours);
+  const jours = daysBack(n);
+  const depuis = shiftD(TODAY(), -n);
 
-  /* Agrégats par journée. Clés courtes : le volume compte, une analyse sur 14 jours
-     représentant l'essentiel du prompt. */
-  const parJour = jours.map(d => {
+  /* ENCODAGE : en-tête de colonnes + lignes de valeurs, plutôt qu'un objet nommé par
+     ligne. Les clés répétées soixante fois coûtaient 35 % du volume pour zéro
+     information. Le modèle lit parfaitement ce format dès lors que l'en-tête le
+     précède. Mesuré : 95 caractères par journée en objet nommé, 62 en ligne. */
+  const colJours = ['date', 'kcal_consommees', 'kcal_cible', 'proteines_g', 'glucides_g',
+                    'lipides_g', 'fibres_g', 'alcool_g', 'eau_ml', 'nb_prises', 'seance'];
+  const journees = jours.map(d => {
     const t = sumEntries(entriesOf(d));
     const o = objectifsDuJour(d);
     const sc = seanceDuJour(d);
     const a = sc ? activiteParId(sc.a) : null;
-    const prises = entriesOf(d).filter(e => e.meal !== DRINK && e.meal !== SUPP).length;
-    const j = { d: d, kcal: r0(t.kcal), cible: r0(o.kcal),
-                p: r0(t.prot), g: r0(t.carb), l: r0(t.fat), f: r0(t.fiber),
-                eau: r0(t.water), prises: prises };
-    if (t.alc) j.alcool = r0(t.alc);
-    if (a) j.seance = a.nom + ' ' + r0(sc.v) + (a.type === 'distance' ? ' km' : ' min');
-    return j;
-  }).filter(j => j.kcal > 0 || j.seance);
+    if (!t.kcal && !sc) return null;
+    return [d, r0(t.kcal), r0(o.kcal), r0(t.prot), r0(t.carb), r0(t.fat), r0(t.fiber),
+            r0(t.alc), r0(t.water),
+            entriesOf(d).filter(e => e.meal !== DRINK && e.meal !== SUPP).length,
+            a ? a.nom + ' ' + r0(sc.v) + (a.type === 'distance' ? ' km' : ' min') : ''];
+  }).filter(Boolean);
 
-  /* Aliments les plus fréquents : c'est ce qui permet un conseil concret plutôt que
-     des généralités sur des moyennes. */
-  const compte = {};
+  /* CATALOGUE DES ALIMENTS. Envoyer chaque occurrence de chaque repas est hors de
+     portée : 60 jours × 3 repas × 3 aliments = 540 lignes, soit ~6580 jetons pour ce
+     seul bloc, quand le plafond TOTAL est de 8000 par minute. On agrège donc par
+     aliment distinct : combien de fois consommé, portion moyenne, et apports moyens
+     PAR PORTION — ce qui porte la même information nutritionnelle sous une forme
+     exploitable. */
+  const cat = {};
   jours.forEach(d => entriesOf(d).forEach(e => (e.items || []).forEach(i => {
-    const n = String(i.name || '').trim().toLowerCase();
-    if (!n || n === 'eau') return;
-    compte[n] = (compte[n] || 0) + 1;
+    const nom = String(i.name || '').trim();
+    if (!nom) return;
+    const k = nom.toLowerCase();
+    const c = cat[k] || (cat[k] = { nom: nom, fois: 0, qty: 0, kcal: 0, p: 0, g: 0, l: 0, f: 0, a: 0, w: 0 });
+    c.fois++; c.qty += (+i.qty || 0); c.kcal += (+i.kcal || 0);
+    c.p += (+i.prot || 0); c.g += (+i.carb || 0); c.l += (+i.fat || 0);
+    c.f += (+i.fiber || 0); c.a += (+i.alc || 0); c.w += (+i.water || 0);
   })));
-  const frequents = Object.keys(compte).sort((a, b) => compte[b] - compte[a]).slice(0, 20)
-    .map(n => n + ' (' + compte[n] + ')');
+  const colAliments = ['aliment', 'fois_consomme', 'portion_moyenne_g', 'kcal_par_portion',
+                       'proteines_g', 'glucides_g', 'lipides_g', 'fibres_g', 'alcool_g', 'eau_ml'];
+  const aliments = Object.keys(cat)
+    .map(k => cat[k])
+    .sort((x, y) => y.fois - x.fois || y.kcal - x.kcal)
+    .slice(0, 45)
+    .map(c => [c.nom, c.fois, r0(c.qty / c.fois), r0(c.kcal / c.fois), r0(c.p / c.fois),
+               r0(c.g / c.fois), r0(c.l / c.fois), r0(c.f / c.fois),
+               r0(c.a / c.fois), r0(c.w / c.fois)]);
 
-  const w = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
+  /* PESÉES individuelles et datées : l'évolution du poids ne se lit pas dans une
+     moyenne. On joint la pente de régression, calculée sur huit semaines. */
+  const w = DB.weights.slice().sort((x, y) => x.date.localeCompare(y.date))
+    .filter(x => x.date >= depuis);
+  const wReg = DB.weights.slice().sort((x, y) => x.date.localeCompare(y.date))
     .filter(x => x.date >= shiftD(TODAY(), -56));
-  const tr = tendancePoids(w);
+  const tr = tendancePoids(wReg);
+
+  /* SÉANCES datées, avec leur coût réel. */
+  const colSeances = ['date', 'activite', 'volume', 'unite', 'cout_kcal'];
+  const seances = (DB.trainings || []).filter(x => x && x.d >= depuis)
+    .sort((x, y) => x.d.localeCompare(y.d))
+    .map(x => {
+      const a = activiteParId(x.a);
+      return [x.d, a ? a.nom : x.a, r0(x.v),
+              a && a.type === 'distance' ? 'km' : 'min',
+              a ? coutSeance(Object.assign({}, a, { volume: x.v }), p.weight) : 0];
+    });
+
+  const jSuivis = journees.filter(j => j[1] > 0);
+  const moy = i => jSuivis.length ? Math.round(jSuivis.reduce((a, j) => a + j[i], 0) / jSuivis.length) : 0;
 
   return {
+    fenetre_jours: n,
     profil: { sexe: p.sex === 'f' ? 'femme' : 'homme', age: p.age, taille_cm: p.height,
               poids_kg: p.weight, masse_grasse_pct: p.bodyFat > 0 ? p.bodyFat : null,
+              masse_maigre_kg: p.bodyFat > 0 ? Math.round(p.weight * (1 - p.bodyFat / 100) * 10) / 10 : null,
               facteur_activite: p.act,
               objectif: p.aim < 0 ? 'perte de poids' : p.aim > 0 ? 'prise de poids' : 'maintien',
               ecart_calorique_vise: p.aim },
-    objectifs: { kcal: g.kcal, eau_ml: g.water,
+    objectifs: { kcal_moyenne: g.kcal, eau_ml: g.water,
+                 note: 'les macronutriments sont donnes en [plancher, plafond]',
                  proteines_g: [g.prot, gx.prot || null], glucides_g: [g.carb, gx.carb || null],
                  lipides_g: [g.fat, gx.fat || null], fibres_g: [g.fiber, gx.fiber || null] },
-    activites: activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0)
+    activites_declarees: activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0)
       .map(a => ({ nom: a.nom, seances_par_semaine: r0(a.parSemaine),
                    volume_habituel: r0(a.volume) + (a.type === 'distance' ? ' km' : ' min'),
-                   cout_kcal: coutSeance(a, p.weight) })),
-    poids: { pesees: w.length,
+                   cout_kcal_par_seance: coutSeance(a, p.weight) })),
+    poids: { colonnes: ['date', 'kg'],
+             pesees: w.map(x => [x.date, x.kg]),
              tendance_kg_par_semaine: tr ? Math.round(tr.rythme * 100) / 100 : null,
              tendance_pct_par_semaine: tr && tr.fin ? Math.round(tr.rythme / tr.fin * 10000) / 100 : null,
-             poids_lisse: tr ? Math.round(tr.fin * 10) / 10 : null },
-    journees: parJour,
-    aliments_frequents: frequents
+             poids_lisse_actuel: tr ? Math.round(tr.fin * 10) / 10 : null },
+    seances_realisees: { colonnes: colSeances, lignes: seances },
+    journees: { colonnes: colJours, lignes: journees },
+    moyennes_sur_jours_suivis: { jours_suivis: jSuivis.length,
+      kcal: moy(1), proteines_g: moy(3), glucides_g: moy(4), lipides_g: moy(5),
+      fibres_g: moy(6), alcool_g: moy(7), eau_ml: moy(8) },
+    aliments_consommes: { colonnes: colAliments,
+      note: 'valeurs moyennes PAR PORTION, pas cumulees sur la periode',
+      lignes: aliments },
+    complements: (S().supps || []).map(x => ({
+      nom: x.name, dose: x.dose || null, kcal: r0(x.kcal), proteines_g: r0(x.prot),
+      glucides_g: r0(x.carb), lipides_g: r0(x.fat), fibres_g: r0(x.fiber),
+      prises_sur_la_periode: DB.entries.filter(e => e.supp === x.id && e.date >= depuis).length
+    })),
+    repas_habituels: (S().templates || []).map(t => {
+      const s2 = sumItems(t.items);
+      return { nom: t.name, moment: mealLabel(t.meal), kcal: r0(s2.kcal),
+               proteines_g: r0(s2.prot), glucides_g: r0(s2.carb),
+               lipides_g: r0(s2.fat), fibres_g: r0(s2.fiber) };
+    })
   };
 }
+
+/* Les deux usages partagent désormais la MÊME charge : une question de conseil mérite
+   le même niveau de détail qu'un bilan. */
+function donneesAnalyse(nbJours) { return donneesCoach(nbJours); }
+function donneesConseil() { return donneesCoach(JOURS_ANALYSE); }
 
 /* -------------------------------------------------------------------------
    Conseil de Coach — chat libre (v8.0)
@@ -3519,45 +3604,7 @@ function donneesAnalyse(nbJours) {
 
    Même règle absolue : liste BLANCHE, champ par champ. On ne part jamais de `DB` pour
    en retirer ce qui gêne. */
-function donneesConseil() {
-  const base = donneesAnalyse(JOURS_ANALYSE);
-  const j = base.journees.filter(x => x.kcal > 0);
-  const moy = cle => j.length ? Math.round(j.reduce((a, x) => a + (x[cle] || 0), 0) / j.length) : 0;
 
-  /* Moyennes plutôt que le détail : une question de conseil se traite sur des ordres de
-     grandeur, pas sur la lecture de trente lignes. */
-  const resume = {
-    jours_suivis: j.length, jours_dans_la_fenetre: JOURS_ANALYSE,
-    moyennes: { kcal: moy('kcal'), cible_kcal: moy('cible'), proteines_g: moy('p'),
-                glucides_g: moy('g'), lipides_g: moy('l'), fibres_g: moy('f'),
-                eau_ml: moy('eau'), prises_par_jour: j.length
-                  ? Math.round(j.reduce((a, x) => a + x.prises, 0) / j.length * 10) / 10 : 0 },
-    jours_avec_alcool: base.journees.filter(x => x.alcool).length,
-    seances_realisees: base.journees.filter(x => x.seance).length
-  };
-
-  return {
-    profil: base.profil,
-    objectifs: base.objectifs,
-    activites: base.activites,
-    poids: base.poids,
-    resume_alimentaire: resume,
-    aliments_frequents: base.aliments_frequents.slice(0, 15),
-    /* Compléments : nom, dose et apport par prise. Sans eux, aucune question sur leur
-       effet ne peut recevoir de réponse fondée. */
-    complements: (S().supps || []).map(x => ({
-      nom: x.name, dose: x.dose || null, kcal: r0(x.kcal), proteines_g: r0(x.prot),
-      glucides_g: r0(x.carb), lipides_g: r0(x.fat), fibres_g: r0(x.fiber),
-      prises_sur_la_periode: DB.entries.filter(e => e.supp === x.id &&
-        e.date >= shiftD(TODAY(), -JOURS_ANALYSE)).length
-    })),
-    repas_habituels: (S().templates || []).map(t => {
-      const s2 = sumItems(t.items);
-      return { nom: t.name, moment: mealLabel(t.meal), kcal: r0(s2.kcal),
-               proteines_g: r0(s2.prot), glucides_g: r0(s2.carb), lipides_g: r0(s2.fat) };
-    })
-  };
-}
 
 const PROMPT_CONSEIL = `Tu es nutritionniste du sport, en France. Tu réponds à la question d'une \
 personne dont tu as le suivi sous les yeux.
@@ -3637,7 +3684,11 @@ async function lancerAnalyse(nbJours) {
      charge : une journée d'entraînement sans repas y figure légitimement, mais ne fonde
      aucune analyse. Sans cette distinction, trois séances sans le moindre repas
      suffisaient à déclencher un appel réseau voué à ne rien produire d'utile. */
-  const avecRepas = d.journees.filter(j => j.kcal > 0).length;
+  /* `journees` est un objet {colonnes, lignes} depuis la v9.0, plus un tableau : la
+     colonne 1 porte les kcal consommées. Le garde-fou lisait encore l'ancienne forme
+     et levait une TypeError avalée par la feuille d'erreur — panne muette, aucun appel
+     réseau, aucun message explicite. */
+  const avecRepas = d.journees.lignes.filter(l => l[1] > 0).length;
   if (avecRepas < 3) {
     throw new Error('Il faut au moins trois journées de repas enregistrées pour analyser une tendance. ' +
                     'Tu en as ' + avecRepas + ' sur les ' + (nbJours || JOURS_ANALYSE) + ' derniers jours.');
@@ -5143,7 +5194,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v8.0' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v9.0' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
