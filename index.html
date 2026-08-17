@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v7.1</title>
+<title>Coach v7.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,11 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v7.2 — Retrait de la mention « Ta cle API ne quitte jamais l'appareil » sur la carte
+           d'analyse. Cette reassurance a sa place dans les Reglages, sous le champ de la
+           cle, ou elle figure toujours. Sur une carte d'analyse nutritionnelle elle attirait
+           l'attention sur une inquietude au lieu de l'apaiser.
+
     v7.1 — La carte s'intitule « Analyse de Coach », son texte ne comporte plus de tirets
            cadratins. Fenetre d'analyse portee de 14 a 30 jours : un mois donne une tendance
            de poids et des habitudes alimentaires bien plus lisibles que deux semaines. Cout
@@ -906,7 +911,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v7.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v7.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -3771,7 +3776,7 @@ function renderAnalyse() {
       '<h2>Analyse de Coach</h2>' +
       '<p class="tiny" style="margin:-4px 0 12px">Un nutritionniste du sport lit tes ' + JOURS_ANALYSE + ' derniers ' +
       'jours : énergie, macronutriments, hydratation, séances, tendance de poids. Il te dit quoi ' +
-      'ajuster. <b>Ta clé API ne quitte jamais l\'appareil.</b></p>' +
+      'ajuster.</p>' +
       '<button class="btn pri" id="anGo" style="width:100%">✨ Lancer l\'analyse</button></div>';
     return;
   }
@@ -4886,7 +4891,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v7.1' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v7.2' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
