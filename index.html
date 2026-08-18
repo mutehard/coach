@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v10.0</title>
+<title>Coach v10.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,14 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v10.1 — L'analyse du Suivi s'arrete a HIER. Une journee en cours est incomplete et rien
+            dans la charge ne le signalait : un petit-dejeuner seul a exactement la forme
+            d'une journee terminee a 400 kcal. Mesure sur un jeu de test, la moyenne tombait
+            de 2000 a 1733 kcal, soit 13 % d'erreur, et le nombre de jours suivis etait
+            surestime. Le Conseil garde le jour courant, deliberement : a la question « que
+            manger ce soir ? », ce qui a ete mange depuis le matin fonde la reponse. Les
+            pesees vont jusqu'a aujourd'hui dans les deux cas, une pesee n'etant jamais
+            partielle. La periode couverte est desormais declaree dans la charge.
     v10.0 — **Scan de code-barres.** Nouveau mode de saisie : la camera lit un EAN-13 via
             `BarcodeDetector` natif, la cle de controle est verifiee avant tout appel reseau,
             et Open Food Facts fournit les valeurs pour 100 g. Aucune bibliotheque externe,
@@ -989,7 +997,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v10.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v10.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -3727,11 +3735,32 @@ async function runAnalysis() {
    analyse photo. */
 const JOURS_ANALYSE = 60;
 
-function donneesCoach(nbJours) {
+/* `exclureJourCourant` arrête la période à HIER.
+
+   Une journée en cours est une journée INCOMPLÈTE, et rien dans la charge ne le signale :
+   un petit-déjeuner à 400 kcal enregistré à 9 h a exactement la forme d'une journée
+   terminée à 400 kcal. Le modèle la lit comme telle, elle tire la moyenne vers le bas,
+   fausse le nombre de jours suivis et peut faire conclure à une restriction qui n'existe
+   pas. Le cas totalement vide était déjà écarté (une journée sans kcal ni séance est
+   filtrée plus bas) ; c'est la journée PARTIELLE qui trompe, parce qu'elle ressemble à une
+   donnée réelle.
+
+   Seule l'ANALYSE du Suivi exclut le jour courant. Le Conseil le garde : à la question
+   « qu'est-ce que je mange ce soir ? », ce qui a été mangé depuis le matin est justement
+   ce qui fonde la réponse. Le paramètre existe pour que les deux usages divergent sur ce
+   point précis sans dupliquer la liste blanche.
+
+   Les PESÉES font exception et restent jusqu'à aujourd'hui : une pesée n'est jamais
+   partielle, c'est une mesure ponctuelle et complète. L'exclure reviendrait à jeter le
+   point le plus frais de la tendance, et à contredire `profil.poids_kg`, qui vaut toujours
+   la dernière pesée. La charge le dit explicitement pour que le modèle ne s'en étonne pas. */
+function donneesCoach(nbJours, exclureJourCourant) {
   const n = nbJours || JOURS_ANALYSE;
   const p = S().profile || {}, g = S().goals, gx = S().goalsMax || {};
-  const jours = daysBack(n);
-  const depuis = shiftD(TODAY(), -n);
+  const jusqu = exclureJourCourant ? shiftD(TODAY(), -1) : TODAY();
+  /* La fenêtre garde sa LARGEUR : n jours se terminant hier, pas n − 1 jours. */
+  const jours = exclureJourCourant ? daysBack(n + 1).slice(0, n) : daysBack(n);
+  const depuis = shiftD(jusqu, -n);
 
   /* ENCODAGE : en-tête de colonnes + lignes de valeurs, plutôt qu'un objet nommé par
      ligne. Les clés répétées soixante fois coûtaient 35 % du volume pour zéro
@@ -3787,7 +3816,7 @@ function donneesCoach(nbJours) {
 
   /* SÉANCES datées, avec leur coût réel. */
   const colSeances = ['date', 'activite', 'volume', 'unite', 'cout_kcal'];
-  const seances = (DB.trainings || []).filter(x => x && x.d >= depuis)
+  const seances = (DB.trainings || []).filter(x => x && x.d >= depuis && x.d <= jusqu)
     .sort((x, y) => x.d.localeCompare(y.d))
     .map(x => {
       const a = activiteParId(x.a);
@@ -3801,6 +3830,15 @@ function donneesCoach(nbJours) {
 
   return {
     fenetre_jours: n,
+    periode: {
+      premier_jour: jours[0], dernier_jour: jusqu,
+      note: exclureJourCourant
+        ? 'la journee en cours (' + TODAY() + ') est VOLONTAIREMENT EXCLUE : elle serait '
+          + 'incomplete a l heure ou tu lis ceci. Les pesees, elles, vont jusqu a aujourd hui '
+          + 'inclus, une pesee etant une mesure ponctuelle et complete.'
+        : 'la journee en cours est incluse et peut etre INCOMPLETE : ne conclus rien de son '
+          + 'total, elle n est pas terminee.'
+    },
     profil: { sexe: p.sex === 'f' ? 'femme' : 'homme', age: p.age, taille_cm: p.height,
               poids_kg: p.weight, masse_grasse_pct: p.bodyFat > 0 ? p.bodyFat : null,
               masse_maigre_kg: p.bodyFat > 0 ? Math.round(p.weight * (1 - p.bodyFat / 100) * 10) / 10 : null,
@@ -3831,7 +3869,7 @@ function donneesCoach(nbJours) {
     complements: (S().supps || []).map(x => ({
       nom: x.name, dose: x.dose || null, kcal: r0(x.kcal), proteines_g: r0(x.prot),
       glucides_g: r0(x.carb), lipides_g: r0(x.fat), fibres_g: r0(x.fiber),
-      prises_sur_la_periode: DB.entries.filter(e => e.supp === x.id && e.date >= depuis).length
+      prises_sur_la_periode: DB.entries.filter(e => e.supp === x.id && e.date >= depuis && e.date <= jusqu).length
     })),
     repas_habituels: (S().templates || []).map(t => {
       const s2 = sumItems(t.items);
@@ -3842,10 +3880,11 @@ function donneesCoach(nbJours) {
   };
 }
 
-/* Les deux usages partagent désormais la MÊME charge : une question de conseil mérite
-   le même niveau de détail qu'un bilan. */
-function donneesAnalyse(nbJours) { return donneesCoach(nbJours); }
-function donneesConseil() { return donneesCoach(JOURS_ANALYSE); }
+/* Les deux usages partagent la MÊME charge : une question de conseil mérite le même niveau
+   de détail qu'un bilan. Ils divergent sur un seul point, et c'est délibéré — voir le
+   commentaire de `donneesCoach`. */
+function donneesAnalyse(nbJours) { return donneesCoach(nbJours, true); }
+function donneesConseil() { return donneesCoach(JOURS_ANALYSE, false); }
 
 /* -------------------------------------------------------------------------
    Conseil de Coach — chat libre (v8.0)
@@ -3929,6 +3968,8 @@ de protéines ou de fibres n'est PAS un défaut ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne sur les \
 TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun chiffre au gramme près ;
 - une journée absente signifie « non renseignée », pas « jeûne » ;
+- la période s'arrête HIER : la journée en cours est exclue parce qu'elle serait incomplète. \
+Ne réclame pas les données du jour et n'en déduis aucun manque ;
 - l'alcool apporte 7 kcal/g sans appartenir à aucun macronutriment : ses calories comptent dans "kcal" \
 mais ne remplissent aucune fourchette ;
 - appuie-toi sur les aliments réellement consommés pour donner des conseils CONCRETS, pas des généralités.
@@ -3949,8 +3990,15 @@ async function lancerAnalyse(nbJours) {
      réseau, aucun message explicite. */
   const avecRepas = d.journees.lignes.filter(l => l[1] > 0).length;
   if (avecRepas < 3) {
+    /* Le message doit dire que la journée EN COURS ne compte pas. Sans cette phrase, un
+       utilisateur qui a rempli son journal ce matin lit « tu en as 0 » en voyant ses repas
+       à l'écran, et le message accuse l'application d'avoir perdu ses données. */
+    const dujour = entriesOf(TODAY()).some(e => e.meal !== DRINK && e.meal !== SUPP);
     throw new Error('Il faut au moins trois journées de repas enregistrées pour analyser une tendance. ' +
-                    'Tu en as ' + avecRepas + ' sur les ' + (nbJours || JOURS_ANALYSE) + ' derniers jours.');
+                    'Tu en as ' + avecRepas + ' sur les ' + (nbJours || JOURS_ANALYSE) +
+                    ' jours précédents.' +
+                    (dujour ? ' La journée d\'aujourd\'hui n\'est pas comptée : elle n\'est pas ' +
+                              'terminée, et une journée partielle fausserait la tendance.' : ''));
   }
   const corps = {
     model: S().model, temperature: 0.3, max_tokens: 1400,
@@ -5453,7 +5501,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v10.0' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v10.1' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
