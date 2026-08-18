@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v9.0</title>
+<title>Coach v10.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,17 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v10.0 — **Scan de code-barres.** Nouveau mode de saisie : la camera lit un EAN-13 via
+            `BarcodeDetector` natif, la cle de controle est verifiee avant tout appel reseau,
+            et Open Food Facts fournit les valeurs pour 100 g. Aucune bibliotheque externe,
+            aucune image de la camera ne quitte l'appareil. Saisie manuelle des treize
+            chiffres en repli si la camera est refusee ou le decodeur absent. La quantite
+            consommee reste a la charge de l'utilisateur, la base ne la connait pas.
+            Detection des boissons revue : chercher « beverage » dans les categories rangeait
+            100 % des cereales, pains, pates et legumineuses parmi les boissons, faute du
+            parapluie « Plant-based foods and beverages » — 506 erreurs sur 1600 produits
+            testes, contre 0 avec la regle par suffixe retenue. Un code absent de la base
+            repond 404 et non 200, la saisie manuelle est desormais bien proposee.
     v9.0 — **Charge utile unifiee et complete pour l'analyse ET le conseil.** Fenetre portee
            a 60 jours. Les deux fonctions delèguent desormais a `donneesCoach()`, seule
            detentrice de la liste blanche : une question de conseil merite le meme niveau de
@@ -643,6 +654,10 @@ h1,h2,h3,p{margin:0}
 .askbar button{flex:none;width:44px;height:44px;border-radius:50%;background:var(--acc);
   color:#03231a;font-size:17px;font-weight:700;line-height:1}
 
+/* ---------- scan de code-barres ---------- */
+.scvid{width:100%;max-height:230px;object-fit:cover;border-radius:14px;background:#000;
+  border:1px solid var(--line);display:block}
+
 /* ---------- repas ---------- */
 .meal{margin-bottom:10px}
 .meal .mh{display:flex;align-items:center;justify-content:space-between;padding:0 2px 7px;font-size:13px;font-weight:700;color:var(--dim)}
@@ -974,7 +989,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v9.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v10.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -2784,6 +2799,236 @@ function saveFav(i) {
 
 /* Sélecteur d'aliment favori. Toucher la ligne insère la quantité de référence ;
    le bouton « autre quantité » demande la quantité réelle et met à l'échelle. */
+/* -------------------------------------------------------------------------
+   Code-barres et Open Food Facts (v10.0)
+   -------------------------------------------------------------------------
+   Un produit emballé porte ses valeurs exactes : les lire vaut infiniment mieux que
+   les faire estimer sur photo. Ce chemin supprime l'erreur de composition et économise
+   un appel au modèle de vision, donc du quota.
+
+   Il ne supprime PAS l'erreur de quantité : l'API donne du pour-100 g, la quantité
+   réellement consommée reste à saisir. Sur un produit consommé entier c'est exact,
+   sur trois cuillères de fromage blanc on estime toujours.
+
+   DEUX DÉCISIONS D'ARCHITECTURE :
+
+   1. Le décodage se fait avec `BarcodeDetector`, natif du navigateur. On N'IMPORTE
+      AUCUNE bibliothèque. Coach est un fichier unique sans ressource externe, et un
+      script tiers chargé depuis un CDN aurait accès à toute la page — dont la clé API
+      dans `localStorage`. Le gain ne vaut pas ce risque. Sans `BarcodeDetector`, on
+      bascule sur la saisie des treize chiffres à la main.
+
+   2. On ne demande JAMAIS les chiffres au modèle de vision : une erreur sur un digit
+      donne un autre produit, silencieusement. La clé de contrôle EAN-13 est vérifiée
+      avant tout appel réseau. */
+
+const OFF_URL = 'https://world.openfoodfacts.org/api/v2/product/';
+/* Champs demandés explicitement : inutile de rapatrier une fiche entière. */
+const OFF_CHAMPS = 'product_name,brands,quantity,serving_size,categories_tags_en,nutriments';
+
+/* Clé de contrôle EAN-13 : rangs impairs ×1, rangs pairs ×3, complément à 10.
+   Une lecture douteuse se rejette ainsi d'elle-même, sans appel réseau. */
+function eanValide(code) {
+  const c = String(code || '').replace(/\D/g, '');
+  if (c.length !== 13) return false;
+  let s = 0;
+  for (let i = 0; i < 12; i++) s += (+c[i]) * (i % 2 ? 3 : 1);
+  return (10 - s % 10) % 10 === +c[12];
+}
+
+/* Interroge Open Food Facts et renvoie un aliment prêt pour l'éditeur, ramené à la
+   quantité demandée. */
+async function chercherProduit(ean, grammes) {
+  let res;
+  try {
+    res = await fetch(OFF_URL + encodeURIComponent(ean) + '.json?fields=' + OFF_CHAMPS, {
+      /* `User-Agent` est un en-tête INTERDIT au navigateur : toute tentative de le
+         définir est ignorée. Open Food Facts accepte `X-User-Agent` à la place, et
+         l'autorise explicitement dans ses en-têtes CORS. */
+      headers: { 'X-User-Agent': 'Coach/1.0 (application personnelle, github.com/mutehard/coach)' }
+    });
+  } catch (e) { throw new Error('Pas de connexion à Open Food Facts.'); }
+  /* Un code absent de la base répond 404, avec `{"status":0,"status_verbose":"product not
+     found"}` dans le corps. Les deux signaux sont testés : le 404 d'abord, car sans lui le
+     produit inconnu tombait dans l'erreur générique « Open Food Facts a répondu 404 » et la
+     saisie manuelle n'était jamais proposée. Le test sur `status` reste, l'API ayant aussi
+     répondu 200 pour un produit absent selon les points d'entrée. */
+  const inconnu = () => {
+    const e = new Error('Produit inconnu d\'Open Food Facts.');
+    e.inconnu = true;
+    return e;
+  };
+  if (res.status === 404) throw inconnu();
+  if (!res.ok) throw new Error('Open Food Facts a répondu ' + res.status + '.');
+
+  const j = await res.json();
+  if (j.status !== 1 || !j.product) throw inconnu();
+
+  const p = j.product, n = p.nutriments || {};
+  const q = Math.max(1, r0(grammes) || 100), k = q / 100;
+  const par100 = c => { const v = Number(n[c]); return isFinite(v) ? v : null; };
+
+  /* `energy_100g` est en kJ. Le lire comme des calories multiplie le résultat par 4,18.
+     On n'utilise donc QUE `energy-kcal_100g`, et on convertit depuis les kJ en dernier
+     recours plutôt que de confondre les deux. */
+  let kcal100 = par100('energy-kcal_100g');
+  if (kcal100 === null) {
+    const kj = par100('energy-kj_100g');
+    if (kj !== null) kcal100 = kj / 4.184;
+  }
+
+  /* Boisson : la quantité compte alors dans l'hydratation.
+
+     Chercher « beverage » n'importe où dans les catégories est un piège : Open Food Facts
+     range TOUT le végétal sous des parapluies du type « Plant-based foods and beverages »,
+     « Vegetable-based foods and beverages ». Testé sur 1600 produits réels, cette recherche
+     libre classait en boisson 100 % des céréales, des pains, des pâtes et des légumineuses,
+     soit 506 erreurs — chacune ajoutant un muesli entier au compteur d'hydratation.
+
+     La règle retenue écarte d'abord les parapluies par leur forme, puis exige que la
+     catégorie SE TERMINE par un mot de boisson : « Fruit juices » oui, « Breakfast
+     cereals » non. Même échantillon : 20 signalements, tous vérifiés comme étant de
+     vraies boissons (eaux de coco, jus rangés sous les fruits).
+
+     « milks » est au pluriel seul, sans quoi « camemberts from pasteurized cow milk »
+     ferait du camembert une boisson. Les alcools ne sont pas traités à part : bières et
+     vins portent déjà leurs propres catégories, et se fier à `alcohol_100g` ferait boire
+     un chocolat à la liqueur. */
+  const PARAPLUIE = /foods? and beverages$/;
+  const EST_BOISSON = /(^|[ -])(beverages?|drinks?|waters?|juices?|nectars?|sodas?|colas?|syrups?|sirops?|teas?|coffees?|infusions?|beers?|wines?|ciders?|spirits?|liqueurs?|smoothies?|milks)$/;
+  const boisson = (p.categories_tags_en || [])
+    .map(t => String(t).toLowerCase().trim())
+    .some(t => !PARAPLUIE.test(t) && EST_BOISSON.test(t));
+
+  /* `alcohol_100g` est un POURCENTAGE VOLUMIQUE, pas une masse. Conversion en grammes
+     d'alcool pur : % vol × 0,789 (masse volumique de l'éthanol) par 100 ml. */
+  const degre = par100('alcohol_100g');
+  const alcool100 = degre !== null ? degre * 0.789 : null;
+
+  const manquants = [];
+  const val = (v, nom) => { if (v === null) { manquants.push(nom); return 0; } return r0(v * k); };
+
+  return {
+    item: { name: (String(p.product_name || '').trim() || 'Produit') +
+                  (p.brands ? ' · ' + String(p.brands).split(',')[0].trim() : ''),
+            qty: q,
+            kcal: val(kcal100, 'calories'),
+            prot: val(par100('proteins_100g'), 'protéines'),
+            carb: val(par100('carbohydrates_100g'), 'glucides'),
+            fat: val(par100('fat_100g'), 'lipides'),
+            fiber: val(par100('fiber_100g'), 'fibres'),
+            alc: alcool100 !== null ? r0(alcool100 * k) : 0,
+            water: boisson ? q : 0 },
+    /* La base est collaborative : la complétude varie d'un produit à l'autre. On dit
+       lesquels manquent plutôt que de laisser croire à un zéro mesuré. */
+    manquants: manquants,
+    conditionnement: String(p.quantity || '').trim(),
+    portion: String(p.serving_size || '').trim(),
+    boisson: boisson
+  };
+}
+
+/* Feuille de scan. Empilée sur l'éditeur : le repas en cours reste ouvert dessous et
+   l'aliment trouvé vient s'y ajouter. */
+function scannerProduit(surAjout) {
+  let flux = null, boucle = null, detecteur = null;
+  const natif = typeof BarcodeDetector !== 'undefined';
+
+  const el = sheet('Scanner un produit',
+    '<div id="scZone">' +
+      (natif
+        ? '<video id="scVid" playsinline muted class="scvid"></video>' +
+          '<p class="tiny" id="scEtat" style="text-align:center;margin:8px 0 12px">Vise le code-barres…</p>'
+        : '<div class="note" style="margin-bottom:12px">Ton navigateur ne sait pas décoder un ' +
+          'code-barres. Saisis les treize chiffres imprimés sous le code.</div>') +
+    '</div>' +
+    '<label class="f"><span>Code-barres (13 chiffres)</span>' +
+    '<input class="in" id="scEan" inputmode="numeric" maxlength="13" placeholder="3017620422003"></label>' +
+    '<label class="f"><span>Quantité consommée (g ou ml)</span>' +
+    '<input class="in" id="scQty" inputmode="numeric" value="100"></label>' +
+    '<button class="btn pri" id="scGo">Chercher le produit</button>' +
+    '<button class="btn gho" data-x style="margin-top:9px">Annuler</button>' +
+    '<p class="tiny" style="margin-top:12px">Les valeurs viennent d\'<b>Open Food Facts</b>, ' +
+    'base ouverte et collaborative. Elles sont exactes pour 100 g ; <b>la quantité reste à ' +
+    'ta charge</b>.</p>',
+    e2 => {
+      const champ = e2.querySelector('#scEan');
+      const etat = e2.querySelector('#scEtat');
+
+      /* Décodage NATIF, sans aucune bibliothèque externe. */
+      if (natif) {
+        (async () => {
+          try {
+            detecteur = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_e'] });
+            flux = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: 'environment' }, audio: false });
+            const v = e2.querySelector('#scVid');
+            v.srcObject = flux; await v.play();
+            boucle = setInterval(async () => {
+              if (!document.body.contains(e2)) { arreter(); return; }
+              try {
+                const codes = await detecteur.detect(v);
+                if (codes && codes.length) {
+                  const c = String(codes[0].rawValue || '').replace(/\D/g, '');
+                  /* La clé de contrôle filtre une lecture douteuse AVANT tout réseau. */
+                  if (eanValide(c)) {
+                    champ.value = c;
+                    if (etat) etat.innerHTML = '<b style="color:var(--acc-l)">Code lu : ' + esc(c) + '</b>';
+                    arreter();
+                    e2.querySelector('#scGo').click();
+                  }
+                }
+              } catch (err) { /* image non exploitable : on réessaie au tour suivant */ }
+            }, 400);
+          } catch (err) {
+            if (etat) etat.textContent = 'Caméra indisponible. Saisis les chiffres à la main.';
+            const z = e2.querySelector('#scZone'); if (z) z.querySelector('video') && z.querySelector('video').remove();
+          }
+        })();
+      }
+
+      function arreter() {
+        if (boucle) { clearInterval(boucle); boucle = null; }
+        if (flux) { flux.getTracks().forEach(t => t.stop()); flux = null; }
+      }
+      /* La caméra doit s'éteindre quand la feuille disparaît, quelle qu'en soit la
+         raison : sans cela le voyant reste allumé et la batterie se vide. */
+      new MutationObserver((m, o) => {
+        if (!document.body.contains(e2)) { arreter(); o.disconnect(); }
+      }).observe(document.body, { childList: true });
+
+      e2.querySelector('#scGo').onclick = async () => {
+        const c = champ.value.replace(/\D/g, '');
+        if (!eanValide(c)) {
+          toast(c.length === 13 ? 'Clé de contrôle incorrecte : code mal lu'
+                                : 'Il faut treize chiffres');
+          return;
+        }
+        const q = r0(e2.querySelector('#scQty').value);
+        if (!(q > 0)) { toast('Indique la quantité consommée'); return; }
+        arreter();
+        loader(true, 'Recherche du produit…');
+        try {
+          const r = await chercherProduit(c, q);
+          loader(false);
+          closeSheet();
+          surAjout(r);
+        } catch (err) {
+          loader(false);
+          sheet(err.inconnu ? 'Produit inconnu' : 'Recherche impossible',
+            '<div class="err">' + esc(err.message) + '</div>' +
+            (err.inconnu
+              ? '<p class="muted" style="margin-bottom:12px">Ce produit n\'est pas encore dans ' +
+                'Open Food Facts. Photographie son étiquette : le modèle lira le tableau ' +
+                'nutritionnel, qui fait autorité.</p>'
+              : '') +
+            '<button class="btn" data-x>Fermer</button>', null, true);
+        }
+      };
+    }, true);
+  return el;
+}
+
 function pickFood(cb) {
   const list = (S().foods || []).slice().sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   if (!list.length) {
@@ -3158,6 +3403,7 @@ function openEditor(entry, ctx) {
     '<button class="btn sm gho" id="eAdd" style="width:100%">+ Aliment</button>' +
     '<button class="btn sm gho" id="eFav" style="width:100%">★ Mes aliments</button></div>' +
     '<button class="btn sm gho" id="eAI" style="width:100%;margin-bottom:4px">✨ Ajouter par photo ou description</button>' +
+    '<button class="btn sm gho" id="eScan" style="width:100%;margin-bottom:4px">🔎 Scanner un code-barres</button>' +
     '<div id="eTot"></div>' +
     '<button class="btn pri" id="eSave" style="margin-top:14px">' + (isNew ? 'Enregistrer le repas' : 'Enregistrer') + '</button>' +
     '<button class="btn gho" id="eTpl" style="margin-top:9px">☆ Enregistrer comme repas habituel</button>' +
@@ -3189,6 +3435,19 @@ function openEditor(entry, ctx) {
     el.querySelector('#eFav').onclick = () => pickFood(it => { items.push(it); paint(); totEl.innerHTML = totalsHtml(items); });
     /* Analyse d'appoint : on AJOUTE à la liste existante, on ne la remplace pas. Le
        titre du repas n'est pas touché non plus — c'est un complément, pas une refonte. */
+    /* Un produit emballé entre par ses valeurs exactes, sans passer par le modèle de
+       vision. On annonce ce qui manque dans la base plutôt que de laisser un zéro
+       passer pour une mesure. */
+    el.querySelector('#eScan').onclick = () => scannerProduit(r => {
+      items.push(r.item);
+      paint();
+      const details = [];
+      if (r.conditionnement) details.push('conditionnement ' + r.conditionnement);
+      if (r.portion) details.push('portion indiquée ' + r.portion);
+      toast(r.manquants.length
+        ? r.item.name.slice(0, 28) + ' · ' + r.manquants.join(', ') + ' absent(s) de la base'
+        : r.item.name.slice(0, 34) + ' ajouté' + (details.length ? ' · ' + details[0] : ''));
+    });
     el.querySelector('#eAI').onclick = () => ajoutParAnalyse(res => {
       res.items.forEach(i => items.push(i));
       paint();
@@ -5194,7 +5453,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v9.0' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v10.0' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
