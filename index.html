@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v11.0</title>
+<title>Coach v11.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,15 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v11.1 — Icone propre pour le scan, a la place de la loupe. La loupe evoque une RECHERCHE,
+            et l'application en a justement une — la saisie des treize chiffres — que le meme
+            symbole designerait aussi bien : deux fonctions voisines sous un seul signe.
+            Le trace associe un cadre de visee (l'action) a des barres inegales (l'objet) ;
+            ni l'un ni l'autre seul ne suffirait, des barres sans cadre se lisant comme un
+            graphique et un cadre seul comme un cadrage photo, deja pris par le bouton
+            voisin. TROIS barres et non quatre : compare a l'ecran a la taille reelle de
+            19 px, quatre barres se confondent en une tache. Declare une fois en `<symbol>`
+            et reference par `<use>`, donc sans duplication ni insertion HTML.
     v11.0 — **Decodeur EAN-13 integre.** Safari iOS ne fournit pas `BarcodeDetector` :
             constate sur l'iPhone, le scan s'y reduisait a taper treize chiffres a la main,
             sur l'appareil qui est justement la cible de l'application. Le decodage est donc
@@ -860,6 +869,28 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 </head>
 <body>
 
+<!-- Tracé de l'icône de scan, déclaré une seule fois et référencé par `<use>` partout où
+     l'icône apparaît. `currentColor` la fait suivre la couleur du bouton qui la porte. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="icoScan" viewBox="0 0 24 24">
+    <g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+      <path d="M3 8.4V5.7A2.7 2.7 0 0 1 5.7 3H8.4"/>
+      <path d="M15.6 3h2.7A2.7 2.7 0 0 1 21 5.7v2.7"/>
+      <path d="M21 15.6v2.7a2.7 2.7 0 0 1-2.7 2.7h-2.7"/>
+      <path d="M8.4 21H5.7A2.7 2.7 0 0 1 3 18.3v-2.7"/>
+    </g>
+    <!-- TROIS barres, pas quatre. Comparées à l'écran à la taille réelle de 19 px : quatre
+         barres s'y confondent en une tache, l'icône ne dit alors plus rien. Trois barres au
+         rythme fine / large / fine restent distinctes tout en gardant l'allure d'un vrai
+         code — des barres d'égale largeur se liraient comme une trame décorative. -->
+    <g fill="currentColor">
+      <rect x="7.7" y="7.2" width="1.2" height="9.6" rx=".4"/>
+      <rect x="10.7" y="7.2" width="2.8" height="9.6" rx=".4"/>
+      <rect x="15.1" y="7.2" width="1.2" height="9.6" rx=".4"/>
+    </g>
+  </symbol>
+</svg>
+
 <div id="app">
   <div class="topbar">
     <div class="brand"><span class="logo" id="brandLogo"></span>Coach</div>
@@ -904,7 +935,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="actions">
       <button class="btn pri" id="btnPhoto">📷 Photo du repas</button>
-      <button class="btn sm" id="btnScan" style="flex:none;padding:14px 16px" aria-label="Scanner un code-barres">🔎</button>
+      <button class="btn sm" id="btnScan" style="flex:none;padding:14px 16px" aria-label="Scanner un code-barres"><svg width="19" height="19" style="flex:none" aria-hidden="true" focusable="false"><use href="#icoScan"/></svg></button>
       <button class="btn sm" id="btnManual" style="flex:none;padding:14px 16px" aria-label="Ajouter sans photo">✍️</button>
     </div>
 
@@ -1032,7 +1063,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v11.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v11.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -2828,6 +2859,28 @@ function avatarSvg(mood, t) {
    4 % de la masse du dessin mais étire la boîte englobante de 8 unités sur 64 ; centrer
    la boîte rejetait visiblement le corps à gauche. Le centre pondéré par les surfaces
    vaut 33,93 pour un centre de vue à 32. La même valeur sert au logo et aux icônes. */
+/* Icône du scan : des barres inégales dans un cadre de visée.
+
+   La loupe désignait mal la fonction. Elle évoque une RECHERCHE — et l'application en a
+   justement une, la saisie des treize chiffres, que la même loupe désignerait aussi bien.
+   Deux fonctions voisines sous un seul symbole, c'est le symbole qui ne dit rien.
+
+   Le cadre de visée porte l'action — viser, lire — et les barres portent l'objet. Ni l'un
+   ni l'autre seul ne suffirait : quatre barres sans cadre se lisent comme un graphique,
+   un cadre sans barres comme un cadrage photo, déjà pris par le bouton voisin.
+
+   Les largeurs sont volontairement inégales (fine, large, fine, large) : des barres
+   régulières se lisent comme une trame décorative, pas comme un code. `currentColor` fait
+   suivre la couleur du bouton, y compris à l'état pressé. */
+/* Le tracé lui-même est déclaré UNE fois, en `<symbol>` dans le corps du document ; on ne
+   fait ici que le référencer à la taille voulue. Aucun point d'insertion HTML n'est créé
+   pour poser l'icône, et les deux boutons ne peuvent pas diverger. */
+function iconeCodeBarres(px) {
+  const t = px || 19;
+  return '<svg width="' + t + '" height="' + t + '" style="flex:none" aria-hidden="true" ' +
+         'focusable="false"><use href="#icoScan"/></svg>';
+}
+
 function logoSvg() {
   return '<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">' +
     '<defs><linearGradient id="lgo" x1="0" y1="0" x2="1" y2="1">' +
@@ -3773,7 +3826,8 @@ function openEditor(entry, ctx) {
     '<button class="btn sm gho" id="eAdd" style="width:100%">+ Aliment</button>' +
     '<button class="btn sm gho" id="eFav" style="width:100%">★ Mes aliments</button></div>' +
     '<button class="btn sm gho" id="eAI" style="width:100%;margin-bottom:4px">✨ Ajouter par photo ou description</button>' +
-    '<button class="btn sm gho" id="eScan" style="width:100%;margin-bottom:4px">🔎 Scanner un code-barres</button>' +
+    '<button class="btn sm gho" id="eScan" style="width:100%;margin-bottom:4px">' +
+      iconeCodeBarres(17) + 'Scanner un code-barres</button>' +
     '<div id="eTot"></div>' +
     '<button class="btn pri" id="eSave" style="margin-top:14px">' + (isNew ? 'Enregistrer le repas' : 'Enregistrer') + '</button>' +
     '<button class="btn gho" id="eTpl" style="margin-top:9px">☆ Enregistrer comme repas habituel</button>' +
@@ -5871,7 +5925,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v11.0' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v11.1' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
