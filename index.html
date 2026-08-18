@@ -4606,9 +4606,18 @@ function donneesCoach(nbJours, exclureJourCourant) {
               poids_kg: p.weight, masse_grasse_pct: p.bodyFat > 0 ? p.bodyFat : null,
               masse_maigre_kg: p.bodyFat > 0 ? Math.round(p.weight * (1 - p.bodyFat / 100) * 10) / 10 : null,
               facteur_activite: p.act,
-              objectif: p.aim < 0 ? 'perte de poids' : p.aim > 0 ? 'prise de poids' : 'maintien',
+              /* La VISÉE, pas le signe de l'écart : une recomposition se mène en déficit.
+                 Déduire l'objectif de `aim` contredisait `objectifs.visee` dans la même
+                 charge — le modèle lisait « perte de poids » et « maintien » à la fois. */
+              visee: viseeDe(p) === 'perte' ? 'perte de gras'
+                   : viseeDe(p) === 'prise' ? 'prise de muscle' : 'recomposition ou maintien',
               ecart_calorique_vise: p.aim },
-    objectifs: { kcal_moyenne: g.kcal, eau_ml: g.water,
+    objectifs: { kcal_moyenne: g.kcal,
+                 /* `goals.water` ne porte plus que le plancher de BASE : envoyer ce seul
+                    chiffre laissait croire à une cible fixe, alors qu'un jour de séance
+                    la relève. La règle est donnée plutôt que le résultat. */
+                 eau_plancher_base_ml: g.water,
+                 eau_ml_par_heure_effort: 600,
                  note: 'les macronutriments sont des PLANCHERS a atteindre : aucun des quatre '
                      + 'n a de plafond documente chez le sujet sain. Le seul plafond du systeme '
                      + 'est celui de l alcool, et il est HEBDOMADAIRE.',
@@ -4617,6 +4626,23 @@ function donneesCoach(nbJours, exclureJourCourant) {
                  alcool_max_g_par_semaine: gx.alc || 100,
                  poids_de_reference_kg: Math.round(poidsReference(p) * 10) / 10,
                  profil_effort: profilEffort(p), visee: viseeDe(p) },
+    /* Le contrôle de cohérence est l'information que quatre fourchettes indépendantes
+       rendaient impossible à formuler : il dit si le déficit visé tient avec le volume
+       d'entraînement déclaré. Une marge faible mais positive est en soi un constat. */
+    coherence_des_planchers: (function () {
+      const c = coherencePlanchers({ prot: g.prot, carb: g.carb, fat: g.fat }, g.kcal);
+      return { energie_des_planchers_kcal: c.besoin, cible_kcal: g.kcal,
+               marge_kcal: c.marge,
+               etat: !c.tenable ? 'INCOMPATIBLE : les planchers reclament plus que la cible'
+                    : c.tendu ? 'tenable mais tendu, moins de 8 % de marge'
+                    : 'confortable' };
+    })(),
+    disponibilite_energetique: (function () {
+      const d = disponibiliteEnergetique(jusqu);
+      return d ? { kcal_par_kg_de_masse_maigre: d.de, jours_pris_en_compte: d.jours,
+                   seuil_d_alerte: 30, sous_le_seuil: d.alerte }
+               : null;   // masse grasse inconnue, ou moins de trois journées terminées
+    })(),
     activites_declarees: activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0)
       .map(a => ({ nom: a.nom, seances_par_semaine: r0(a.parSemaine),
                    volume_habituel: r0(a.volume) + (a.type === 'distance' ? ' km' : ' min'),
@@ -4679,7 +4705,8 @@ Règles :
 - réponds à LA question posée, sans dérouler un bilan général ;
 - appuie-toi sur SES données chiffrées, cite-les quand elles éclairent la réponse ;
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé ;
-- le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte, \
+- le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
+(jusqu'a 1,2 % au-dela d'un IMC de 30, la masse grasse mobilisable etant plus abondante), \
 0,25 à 0,5 % en prise ;
 - les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
@@ -4729,7 +4756,8 @@ Réponds UNIQUEMENT par un objet JSON valide, sans texte autour, exactement à c
 Règles d'analyse :
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé. \
 Si l'écart énergétique est important, il passe avant tout le reste ;
-- juge le rythme de variation du poids en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte, \
+- juge le rythme de variation du poids en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
+(jusqu'a 1,2 % au-dela d'un IMC de 30), \
 0,25 à 0,5 % en prise, au-delà la part de masse maigre perdue ou de gras pris augmente ;
 - les objectifs de macronutriments sont des PLANCHERS. Aucun des quatre n'a de plafond documenté \
 chez le sujet sain : ne signale JAMAIS un dépassement de protéines, de lipides, de glucides ou de \
