@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v10.1</title>
+<title>Coach v10.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,16 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v10.2 — Rappel des complements non pris a partir de 18 h, dans la carte Complements, sur
+            la journee du jour uniquement : une journee passee est close, la signaler ne
+            servirait qu'a culpabiliser sans recours. Une minuterie declenche le basculement
+            sur une app restee ouverte, et le retour d'arriere-plan reevalue le rappel, les
+            minuteries etant suspendues en veille sur iOS.
+            Les QUATRE macronutriments s'affichent desormais a l'identique partout. Les fibres
+            etaient rejetees en fin de ligne, avec leur propre unite, et disparaissaient a
+            zero — ce qui decalait les autres valeurs d'un jour a l'autre. Table MACROS unique
+            pour l'ordre et les couleurs, et legende des couleurs sous le total de l'editeur
+            et au bas de la liste des journees.
     v10.1 — L'analyse du Suivi s'arrete a HIER. Une journee en cours est incomplete et rien
             dans la charge ne le signalait : un petit-dejeuner seul a exactement la forme
             d'une journee terminee a 400 kcal. Mesure sur un jeu de test, la moyenne tombait
@@ -745,6 +755,10 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .item .g input:focus{border-color:var(--acc)}
 
 .supps{display:flex;flex-wrap:wrap;gap:7px}
+.lgd{display:flex;flex-wrap:wrap;gap:3px 13px;margin-top:7px;font-size:11px;
+     color:var(--mut);font-weight:400;line-height:1.6}
+.lgd span{display:inline-flex;align-items:center;gap:5px}
+.lgd i{width:8px;height:8px;border-radius:50%;flex:none}
 .lnk{font-size:12px;font-weight:700;color:var(--acc-l);padding:5px 2px;letter-spacing:.2px}
 .lnk:active{opacity:.6}
 .chip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--line);
@@ -997,7 +1011,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v10.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v10.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1396,6 +1410,44 @@ function normaliserFourchettes() {
    mais ne s'affichent pas dans la liste des repas — ils ont leur propre carte. */
 const SUPP = 'complement';
 const DRINK = 'boisson';   // ajouts d'eau manuels : comptés dans l'hydratation, hors liste des repas
+
+/* LES QUATRE MACRONUTRIMENTS SUIVIS — ordre et couleur, en un seul endroit.
+
+   Les fibres étaient jusqu'ici traitées à part dans chaque affichage compact : rejetées en
+   fin de ligne, avec leur propre unité (« 8 g fibres » quand les autres partageaient un
+   « g » final), et seulement si elles étaient non nulles. Elles se lisaient comme une note
+   de bas de page alors qu'elles ont une fourchette au même titre que les trois autres — les
+   jauges du journal, elles, les traitaient déjà à égalité. Cette table existe pour que
+   l'ordre et les couleurs ne puissent plus diverger d'un affichage à l'autre : ajouter un
+   nutriment suivi se fait ici, et nulle part ailleurs. */
+const MACROS = [
+  { k: 'prot',  nom: 'Protéines', ini: 'P', col: 'var(--prot)' },
+  { k: 'carb',  nom: 'Glucides',  ini: 'G', col: 'var(--carb)' },
+  { k: 'fat',   nom: 'Lipides',   ini: 'L', col: 'var(--fat)' },
+  { k: 'fiber', nom: 'Fibres',    ini: 'F', col: 'var(--fib)' }
+];
+
+/* « 41 / 79 / 30 / 8 g » — les quatre valeurs, toujours les quatre, y compris à zéro : une
+   valeur qui disparaît quand elle vaut zéro fait glisser les suivantes et rend la ligne
+   illisible d'un jour à l'autre. */
+function macrosChiffres(t) {
+  return MACROS.map(m => '<span style="color:' + m.col + '">' + r0(t[m.k] || 0) + '</span>')
+               .join(' / ') + ' g';
+}
+
+/* « P 41 · G 79 · L 30 · F 8 » — pour les listes où la légende défilerait hors de vue :
+   l'initiale reste lisible sans elle. */
+function macrosInitiales(t, sep) {
+  return MACROS.map(m => '<span style="color:' + m.col + '">' + m.ini + ' ' + r0(t[m.k] || 0) + '</span>')
+               .join(sep || ' · ') + ' g';
+}
+
+/* Légende des couleurs, à placer partout où les chiffres paraissent sans leur nom. */
+function legendeMacros(style) {
+  return '<div class="lgd"' + (style ? ' style="' + style + '"' : '') + '>' +
+    MACROS.map(m => '<span><i style="background:' + m.col + '"></i>' + m.nom + '</span>').join('') +
+    '</div>';
+}
 
 const MEALS = [
   { id: 'petit-dej', label: 'Petit-déjeuner', ico: '☕' },
@@ -3047,8 +3099,8 @@ function pickFood(cb) {
     list.map(f =>
       '<div class="entry" data-pick="' + esc(f.id) + '">' +
       '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
-      '<div class="dt">' + r0(f.qty) + ' g · ' + r0(f.kcal) + ' kcal · P ' + r0(f.prot) +
-      ' G ' + r0(f.carb) + ' L ' + r0(f.fat) + (f.fiber ? ' F ' + r0(f.fiber) : '') + (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
+      '<div class="dt">' + r0(f.qty) + ' g · ' + r0(f.kcal) + ' kcal · ' + macrosInitiales(f) +
+      (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
       '<button class="lnk" data-qty="' + esc(f.id) + '">autre&nbsp;quantité</button></div>').join('') +
     '<p class="tiny" style="margin-top:10px;text-align:center">Touche un aliment pour l\'ajouter à sa quantité de référence.</p>',
     el => {
@@ -3270,9 +3322,53 @@ $('#hydra').onclick = e => {
   }
 };
 
+/* Heure à partir de laquelle les compléments non pris sont rappelés. En fin de journée la
+   question « qu'est-ce que j'ai oublié ? » a une réponse utile : il reste le temps d'agir.
+   Plus tôt, le rappel signalerait comme un manque ce qui n'est qu'une journée en cours. */
+const HEURE_RAPPEL_SUPP = 18;
+
+/* Rappel des compléments manquants.
+
+   Tout complément déclaré est réputé QUOTIDIEN : la carte affiche déjà sa pastille chaque
+   jour, et l'utilisateur ne déclare que ce qu'il entend prendre. Il n'existe pas de notion
+   de fréquence dans le schéma, et en inventer une ici demanderait un réglage par complément
+   — à faire seulement si le rappel se révèle bavard à l'usage.
+
+   Le rappel ne sort JAMAIS sur une journée passée : elle est close, la signaler comme
+   incomplète ne servirait qu'à culpabiliser sans recours.
+
+   Les noms viennent de l'utilisateur : ils sont échappés ici, en une fois et visiblement,
+   et n'atterrissent qu'en contenu textuel — jamais dans un attribut, où l'apostrophe non
+   échappée par `esc` poserait problème. C'est la règle que l'audit contrôle. */
+function rappelSupps(list, taken) {
+  if (curDate !== TODAY() || new Date().getHours() < HEURE_RAPPEL_SUPP) return '';
+  const manquants = list.filter(sp => !taken.some(e => e.supp === sp.id));
+  if (!manquants.length) {
+    return '<div class="prio ok" style="margin-top:11px"><b>Tout est pris.</b> ' +
+           'Aucun complément en attente pour aujourd\'hui.</div>';
+  }
+  const nomsEchappes = manquants.map(sp => esc(sp.name)).join(', ');
+  return '<div class="prio warn" style="margin-top:11px"><b>Il te reste ' + manquants.length +
+    ' complément' + (manquants.length > 1 ? 's' : '') + ' à prendre :</b> ' + nomsEchappes +
+    '. Touche la pastille correspondante une fois pris.</div>';
+}
+
+/* La carte ne se redessine pas d'elle-même : sans cette minuterie, l'application laissée
+   ouverte à 17 h 50 n'afficherait jamais le rappel de 18 h. Un seul réveil, à l'instant du
+   basculement — pas de scrutation périodique. */
+let minuterieRappelSupp = null;
+function programmerRappelSupps() {
+  if (minuterieRappelSupp) { clearTimeout(minuterieRappelSupp); minuterieRappelSupp = null; }
+  const n = new Date();
+  if (n.getHours() >= HEURE_RAPPEL_SUPP) return;
+  const cible = new Date(n.getFullYear(), n.getMonth(), n.getDate(), HEURE_RAPPEL_SUPP, 0, 2);
+  minuterieRappelSupp = setTimeout(() => { minuterieRappelSupp = null; renderSupps(); }, cible - n);
+}
+
 function renderSupps() {
   const box = $('#supps');
   const list = S().supps || [];
+  programmerRappelSupps();
   if (!list.length) { box.innerHTML = ''; return; }
   const taken = suppsOf(curDate);
   const s = sumEntries(taken);
@@ -3288,7 +3384,7 @@ function renderSupps() {
         (n > 1 ? '<b class="n">×' + n + '</b>' : '') +
         (sp.dose && !n ? '<b class="n">' + esc(sp.dose) + '</b>' : '') +
         (n ? '<b class="x" data-del="' + esc(sp.id) + '">✕</b>' : '') + '</span>';
-    }).join('') + '</div></div>';
+    }).join('') + '</div>' + rappelSupps(list, taken) + '</div>';
 }
 
 $('#supps').onclick = e => {
@@ -3368,14 +3464,13 @@ function itemHtml(i, idx) {
 function totalsHtml(items) {
   const t = sumItems(items);
   return '<div class="row between" style="padding:10px 2px 2px;font-weight:700;font-size:15px">' +
-    '<span>Total</span><span>' + r0(t.kcal) + ' kcal &nbsp;·&nbsp; ' +
-    '<span style="color:var(--prot)">' + r0(t.prot) + '</span> / ' +
-    '<span style="color:var(--carb)">' + r0(t.carb) + '</span> / ' +
-    '<span style="color:var(--fat)">' + r0(t.fat) + '</span> g' +
-    (t.fiber ? ' &nbsp;·&nbsp; <span style="color:var(--fib)">' + r0(t.fiber) + ' g fibres</span>' : '') +
+    '<span>Total</span><span>' + r0(t.kcal) + ' kcal &nbsp;·&nbsp; ' + macrosChiffres(t) +
+    /* L'alcool et l'hydratation restent à part, et c'est voulu : l'alcool n'appartient à
+       aucune fourchette, l'eau n'est pas un macronutriment. Seuls les quatre nutriments
+       à fourchette sont alignés. */
     (t.alc ? ' &nbsp;·&nbsp; <span style="color:var(--warn)">' + r0(t.alc) + ' g alcool</span>' : '') +
     (t.water ? ' &nbsp;·&nbsp; <span style="color:#38bdf8">💧 ' + r0(t.water) + ' ml</span>' : '') +
-    '</span></div>';
+    '</span></div>' + legendeMacros('justify-content:flex-end;padding:0 2px');
 }
 
 /* Éditeur commun : création (photo / manuel) et modification d'une entrée */
@@ -4491,13 +4586,13 @@ function renderHistory() {
       (function(){ const sc = seanceDuJour(d); if (!sc) return '';
          const a = activiteParId(sc.a);
          return ' <span style="font-size:11px">' + (a ? a.ico : '💪') + '</span>'; })() + '</div>' +
-      '<div class="m">P ' + r0(t.prot) + ' · G ' + r0(t.carb) + ' · L ' + r0(t.fat) +
-      (t.fiber ? ' · F ' + r0(t.fiber) : '') + ' g' +
+      '<div class="m">' + macrosInitiales(t) +
       (t.alc ? ' · 🍷 ' + r0(t.alc) + ' g' : '') +
       (t.water ? ' · 💧 ' + (t.water / 1000).toFixed(1) + ' L' : '') + '</div></div>' +
       '<span class="pill' + (over ? ' over' : '') + '">' + (cible ? (over ? '+' : '') + r0(t.kcal - cible) : '—') + '</span>' +
       '<div class="v">' + r0(t.kcal) + '</div></div>';
-  }).join('') : '<div class="empty" style="padding:18px">Aucune journée enregistrée sur la période.</div>';
+  }).join('') + legendeMacros('padding:9px 2px 0')
+    : '<div class="empty" style="padding:18px">Aucune journée enregistrée sur la période.</div>';
 }
 
 $('#dayList').onclick = e => {
@@ -4761,8 +4856,7 @@ function renderFoodsSettings() {
     ? list.map(f =>
         '<div class="entry" data-foodid="' + esc(f.id) + '" style="padding:10px 12px">' +
         '<div class="grow"><div class="nm">' + esc(f.name) + '</div>' +
-        '<div class="dt">' + r0(f.qty) + ' g · P ' + r0(f.prot) + ' G ' + r0(f.carb) + ' L ' + r0(f.fat) +
-        (f.fiber ? ' F ' + r0(f.fiber) : '') +
+        '<div class="dt">' + r0(f.qty) + ' g · ' + macrosInitiales(f) +
         (f.water ? ' · 💧 ' + r0(f.water) + ' ml' : '') + '</div></div>' +
         '<div class="kc">' + r0(f.kcal) + '<small>kcal</small></div></div>').join('')
     : '<div class="empty" style="padding:14px 8px">Aucun aliment favori.</div>';
@@ -5501,7 +5595,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v10.1' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v10.2' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
@@ -5527,7 +5621,13 @@ try {
 
 // on repasse sur la journée du jour si l'app a été laissée ouverte la veille
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && curDate !== TODAY() && !$('.sheet')) { curDate = TODAY(); renderToday(); }
+  if (document.hidden || $('.sheet')) return;
+  if (curDate !== TODAY()) { curDate = TODAY(); renderToday(); return; }
+  /* Même journée, mais l'heure a pu franchir 18 h pendant que l'app dormait : iOS suspend
+     les minuteries en arrière-plan, la minuterie du rappel ne se déclenche donc pas. Le
+     rappel doit être réévalué au retour, sans quoi il n'apparaîtrait qu'au prochain
+     rechargement complet — c'est-à-dire rarement, sur une app gardée en mémoire. */
+  renderSupps();
 });
 
 // installations antérieures à la v2.6 : on ancre la référence sur le poids courant,
