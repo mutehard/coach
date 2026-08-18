@@ -3119,17 +3119,16 @@ function renderToday() {
 
   /* HIÉRARCHIE DES VERDICTS.
 
-     Quatre fourchettes indépendantes ne peuvent pas contrôler l'énergie : on peut
-     être « dans la zone » sur les quatre et se situer plusieurs centaines de
-     kilocalories à côté de la cible. Sur un profil de 78 kg, l'état « tout vert »
-     couvrait 795 kcal d'amplitude — assez pour prendre du poids en cherchant à en
-     perdre, avec quatre coches vertes à l'écran.
+     Quatre planchers atteints ne garantissent pas la cible énergétique : on peut les
+     tenir tous les quatre et se situer plusieurs centaines de kilocalories à côté.
+     C'était déjà vrai des fourchettes de la v3.0, où l'état « tout vert » couvrait
+     795 kcal d'amplitude sur un profil de 78 kg — assez pour prendre du poids en
+     cherchant à en perdre, avec quatre coches vertes à l'écran. Le passage aux
+     planchers seuls en v12.0 n'y change rien : c'est inhérent à des seuils
+     indépendants.
 
-     Ce n'est pas rattrapable en resserrant les bornes : c'est inhérent à des
-     fourchettes indépendantes. On énonce donc l'ordre. L'ÉNERGIE commande la masse
-     corporelle, les MACRONUTRIMENTS commandent la composition et la santé. Tant que
-     l'écart énergétique dépasse 10 %, il prime et les fourchettes sont annoncées
-     comme secondaires. */
+     On énonce donc l'ordre. L'ÉNERGIE commande la masse corporelle, les
+     MACRONUTRIMENTS commandent la composition et la santé. */
   /* Le VERDICT porte sur la moyenne de sept jours, plus sur la journée : voir
      `bilanEnergieHebdo`. Le compteur du jour reste affiché au-dessus, comme outil de
      pilotage — mais il ne juge plus, parce qu'il n'en a pas la précision. */
