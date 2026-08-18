@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v11.1</title>
+<title>Coach v12.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,20 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.0 — **Fonction dimensionnante : la forme du seuil se deduit de la physiologie.**
+            Les quatre plafonds de macronutriments disparaissent : aucun n'avait de borne
+            haute documentee chez le sujet sain. Les planchers sont refondes sur un POIDS
+            DE REFERENCE corrige de l'adiposite, une table profil x visee pour les proteines,
+            le volume d'entrainement pour les glucides, l'energie pour les fibres.
+            La VISEE devient un champ propre : le document distingue perte de gras et
+            recomposition, que le signe de `aim` confondait — d'ou 164 g de proteines la ou
+            son exemple en calcule 137.
+            Nouveaux signaux : controle de coherence des planchers contre la cible, verdict
+            energetique porte sur sept jours et non sur la journee, plafond d'alcool
+            HEBDOMADAIRE, alerte de disponibilite energetique sous 30 kcal/kg de masse
+            maigre, plancher energetique absolu (1,2 x metabolisme de base).
+            L'eau suit enfin le cyclage des seances : 1500 ml + 600 ml par heure d'effort.
+            Source : COACH-FOURCHETTES-SPEC v2.0.
     v11.1 — Icone propre pour le scan, a la place de la loupe. La loupe evoque une RECHERCHE,
             et l'application en a justement une — la saisie des treize chiffres — que le meme
             symbole designerait aussi bien : deux fonctions voisines sous un seul signe.
@@ -1063,7 +1077,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v11.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1139,11 +1153,15 @@ const DEFAULTS = {
     /* `goals` porte, pour les macronutriments, le seuil MINIMUM de la journée ; `goalsMax`
        porte le plafond. Pour les calories et l'hydratation, `goals` reste une cible unique :
        l'anneau et la jauge d'eau n'ont pas de sens en fourchette. */
-    goals: { kcal: 2200, prot: 130, carb: 240, fat: 53, fiber: 30, water: 2500 },
-    goalsMax: { prot: 188, carb: 320, fat: 90, fiber: 45 },
+    /* `water` porte le plancher de BASE, hors effort : la part liée aux séances est
+       ajoutée jour par jour par `eauDuJour()`. */
+    goals: { kcal: 2200, prot: 130, carb: 240, fat: 53, fiber: 31, water: 1500 },
+    /* Zéro = pas de plafond. Les quatre macronutriments n'en ont plus depuis la
+       v12.0 ; seul l'alcool en garde un, HEBDOMADAIRE et non journalier. */
+    goalsMax: { prot: 0, carb: 0, fat: 0, fiber: 0, alc: 100 },
     /* `bodyFat` à 0 signifie « inconnu » : les protéines retombent alors sur le
        poids total. Renseigné, il fait basculer le calcul sur la masse maigre. */
-    profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0, bodyFat: 0 },
+    profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0, but: 'maintien', bodyFat: 0 },
     /* Activités, avec le coût énergétique DÉDUIT du profil (v5.0).
 
        Musculation et course à pied ne se valent pas : à 78 kg, 60 min de musculation
@@ -1238,61 +1256,290 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 /* -------------------------------------------------------------------------
-   Fourchettes nutritionnelles déduites du profil (v3.0)
+   Seuils nutritionnels déduits du profil (v12.0)
    -------------------------------------------------------------------------
-   Chaque macronutriment porte un plancher et un plafond, et non plus une cible
-   unique. Les repères retenus, tous rapportés au poids de corps :
+   LA FORME DU SEUIL SE DÉDUIT DE LA PHYSIOLOGIE, elle n'est pas imposée.
 
-     protéines  1,7 g/kg (2,0 en déficit) à 2,5 g/kg
-     lipides    0,7 g/kg à 1,2 g/kg — en dessous de 0,7, les fonctions
-                hormonales et l'absorption des vitamines liposolubles pâtissent
-     glucides   2 g/kg, plancher absolu 120 g, jusqu'au solde énergétique
-                disponible quand protéines et lipides sont à leur minimum
-     fibres     25 g à 45 g, cible 14 g pour 1000 kcal (repère ANSES : 30 g/jour)
+   Jusqu'en v11, les quatre macronutriments portaient un plancher ET un plafond,
+   par symétrie. Une fourchette bilatérale n'est pourtant légitime que si les DEUX
+   bornes correspondent à un risque documenté. Ce n'était le cas d'aucune des quatre :
 
-   Ces valeurs sont des repères de population générale, pas une prescription :
-   toutes restent modifiables une à une dans les Réglages. */
-function fourchettesProfil(kg, kcal, deficit, mg) {
-  const p = Math.max(20, kg || 75), k = Math.max(1200, kcal || 2000);
+     protéines  aucune borne haute établie chez le sujet sain (Antonio 2016, un an
+                à plus de 3 g/kg sans altération rénale, hépatique ni lipidique) ;
+     lipides    la borne à 35 % de l'énergie est une convention de répartition, pas
+                un seuil de risque — les régimes méditerranéens cardioprotecteurs
+                (PREDIMED) tournent autour de 40 % ;
+     glucides   le plafond valait exactement le solde énergétique une fois servis
+                les deux autres planchers : un résidu arithmétique, sans contenu ;
+     fibres     les bénéfices croissent au-delà de 29 g sans retournement connu
+                (Reynolds 2019) ; la vraie limite est la tolérance digestive, qui
+                varie d'un facteur deux entre individus.
 
-  /* Protéines. Rapportées à la MASSE MAIGRE quand le taux de masse grasse est
-     connu : à 78 kg, 156 g valent 2,35 g/kg de masse maigre à 15 % de gras mais
-     2,86 à 30 %. Même chiffre affiché, besoins réels très différents. Sans cette
-     donnée on retombe sur le poids total, moins juste mais toujours défendable. */
-  const mm = mg > 0 ? p * (1 - mg / 100) : 0;
-  let protMin = mm > 0 ? Math.round(mm * (deficit ? 2.4 : 2.0))
-                       : Math.round(p * (deficit ? 2.0 : 1.7));
-  let protMax = mm > 0 ? Math.round(mm * 3.0) : Math.round(p * 2.5);
+   Une borne artificielle coûte cher : elle affiche un manque là où il n'y en a pas,
+   suggère une cible là où il n'y a qu'un minimum, et dilue l'attention sur des
+   signaux sans valeur. Les quatre plafonds sont donc posés à 0 — la convention
+   « 0 = pas de plafond » existait déjà et `jaugeMacro` sait l'afficher.
 
-  /* Les plafonds sont bornés par l'énergie disponible, sans quoi, chez un profil
-     léger ou en gros déficit, protéines et lipides au maximum consommaient à eux
-     seuls la quasi-totalité du budget et ne laissaient plus de place aux glucides. */
-  protMax = Math.min(protMax, Math.round(0.45 * k / 4));
-  protMin = Math.min(protMin, protMax);
-  let fatMin = Math.round(p * 0.7);
-  const fatMax = Math.min(Math.round(p * 1.2), Math.round(0.35 * k / 9));
-  fatMin = Math.min(fatMin, fatMax);
+   Ce qui garde deux bornes : le seul rythme de variation du poids (trop lent = pas
+   de progrès, trop rapide = perte de masse maigre). Ce qui n'en garde qu'une haute :
+   l'alcool, qui n'a aucun apport minimal.
 
-  /* Glucides : variable d'ajustement, dont les DEUX bornes se déduisent de la même
-     logique — le solde énergétique. Le plafond est ce qui reste quand protéines et
-     lipides sont au minimum, le plancher ce qui reste quand ils sont au maximum.
+   COHÉRENCE. L'ancien modèle garantissait par construction que la somme des
+   planchers tenait dans la cible, puisque le plancher glucides était le résidu.
+   Ce n'est plus vrai : des planchers indexés sur le poids et le volume peuvent
+   dépasser la cible énergétique. C'est justement l'information la plus utile du
+   système — elle dit qu'un déficit est incompatible avec un volume d'entraînement —
+   et `coherencePlanchers()` la calcule.
 
-     C'est ce qui garantit que la somme des planchers ne dépasse JAMAIS la cible :
-       planchers = k − 4·(protMax − protMin) − 9·(fatMax − fatMin) < k
-     En v3.0 les deux bornes venaient de logiques incommensurables — un ratio au
-     poids pour le plancher, un solde énergétique pour le plafond. Elles se
-     croisaient (fourchette « 120–120 g ») et les planchers pouvaient réclamer
-     plus d'énergie que la cible n'en accordait, rendant l'objectif inatteignable
-     par construction. Ne pas revenir à un plancher exprimé en g/kg. */
-  const carbMax = Math.max(0, Math.round((k - protMin * 4 - fatMin * 9) / 4));
-  let carbMin = Math.max(0, Math.round((k - protMax * 4 - fatMax * 9) / 4));
-  if (carbMin > carbMax) carbMin = carbMax;
+   Source : COACH-FOURCHETTES-SPEC v2.0 (18 août 2026), dont les références sont
+   reportées dans CONTEXTE.md. */
 
-  const fiber = clamp(Math.round(k / 1000 * 14), 25, 45);
+/* POIDS DE RÉFÉRENCE — la base de tous les g/kg.
+
+   Le tissu adipeux ne consomme pas de protéines et n'a pas de besoin lipidique
+   structurel : appliquer 2 g/kg à une personne de 110 kg à 40 % de gras produit une
+   cible absurde. On passe par `masse maigre / 0,75` plutôt que par la masse maigre
+   brute, sans quoi les besoins d'un sujet normalement constitué seraient
+   sous-estimés. Le correctif ne s'applique qu'AU-DELÀ du seuil d'adiposité : en
+   deçà, le poids total reste la meilleure base. */
+function poidsReference(p) {
+  const kg = Math.max(20, (p && p.weight) || 75);
+  const mg = (p && p.bodyFat) || 0;
+  if (mg > 0) {
+    const seuil = p.sex === 'f' ? 32 : 25;
+    return mg > seuil ? kg * (1 - mg / 100) / 0.75 : kg;
+  }
+  /* Masse grasse inconnue : l'IMC sert de garde-fou grossier mais utile. */
+  const t = Math.max(1.2, (p.height || 175) / 100);
+  return kg / (t * t) > 27 ? 25 * t * t : kg;
+}
+
+/* PROFIL D'EFFORT — classé sur le NOMBRE DE SÉANCES déclarées, pas sur `act`.
+
+   Le document donne pour chaque ligne une plage de `act` ET un nombre de séances
+   (« 2 à 4 / sem », « 5 et + »). Les deux se contredisent dans l'application : le
+   choix « Légère (1 à 3 séances/semaine) » vaut act = 1,375, ce qui tombe dans la
+   bande « sédentaire » du document et donnerait 1,2 g/kg de protéines à quelqu'un
+   qui s'entraîne trois fois par semaine. Le nombre de séances est le critère le
+   plus spécifique, et l'application le connaît déjà — il est donc retenu. `act` ne
+   sert que de repli quand aucune activité n'est déclarée.
+
+   Force et endurance partagent la même bande de `act` (1,6 – 1,9) et ne se
+   distinguent que par la NATURE des séances : elles sont départagées par la part
+   d'énergie hebdomadaire venant des activités à distance (course) plutôt qu'à
+   durée (musculation). Sans cette distinction, le plancher glucides varierait du
+   simple au double sans qu'aucune donnée ne tranche. */
+function profilEffort(p) {
+  let seances = 0, eDuree = 0, eDistance = 0;
+  activites().forEach(a => {
+    const k = clamp(r0(a.parSemaine), 0, 7);
+    if (k <= 0) return;
+    seances += k;
+    const e = k * coutSeance(a, (p && p.weight) || 75);
+    if (a.type === 'distance') eDistance += e; else eDuree += e;
+  });
+  if (!seances) {
+    const act = (p && p.act) || 1.55;
+    return act < 1.4 ? 'sedentaire' : act < 1.6 ? 'modere' : 'force';
+  }
+  if (seances <= 1) return 'sedentaire';
+  if (seances <= 4) return 'modere';
+  return eDistance > eDuree ? 'endurance' : 'force';
+}
+
+/* VISÉE — ce que l'utilisateur cherche à faire, distinct de l'écart énergétique.
+
+   La table des protéines a trois colonnes : perte de gras, maintien / recomposition,
+   prise de masse. Ce ne sont PAS le signe de `aim` : l'exemple de référence du
+   document décrit une recomposition menée à −400 kcal, donc en déficit. Confondre
+   les deux donnait 164 g de protéines là où le document en calcule 137, l'écart
+   venant de la colonne employée et non de l'arithmétique.
+
+   `profile.but` porte donc la visée. Absente — installations antérieures — elle se
+   déduit du signe de `aim`, ce qui reproduit exactement le comportement d'avant : la
+   recomposition ne s'obtient qu'en la choisissant explicitement. */
+function viseeDe(p) {
+  const b = p && p.but;
+  if (b === 'perte' || b === 'maintien' || b === 'prise') return b;
+  const aim = +(p && p.aim) || 0;
+  return aim < 0 ? 'perte' : aim > 0 ? 'prise' : 'maintien';
+}
+
+/* Planchers protéiques en g/kg de poids de référence (§4.1 du document).
+   La ligne `senior` s'applique à tous les profils au-delà de 65 ans : la résistance
+   anabolique liée à l'âge (consensus PROT-AGE, Bauer 2013) prime sur le volume. */
+const PROT_PLANCHER = {
+  sedentaire: { perte: 1.2, maintien: 1.0, prise: 1.4 },
+  modere:     { perte: 1.8, maintien: 1.5, prise: 1.6 },
+  force:      { perte: 2.1, maintien: 1.7, prise: 1.8 },
+  endurance:  { perte: 1.8, maintien: 1.5, prise: 1.6 },
+  senior:     { perte: 1.4, maintien: 1.1, prise: 1.3 }
+};
+/* Planchers glucidiques en g/kg de PR, fonction du VOLUME et non de l'objectif.
+   Volontairement au bas des fourchettes publiées (Burke 2011, position ACSM 2016) :
+   l'application s'adresse majoritairement à des utilisateurs en déficit, pour qui la
+   reconstitution complète du glycogène n'est ni possible ni recherchée. */
+const CARB_PLANCHER = { sedentaire: 2.0, modere: 3.0, force: 4.0, endurance: 6.0 };
+function fourchettesProfil(profil, kcal) {
+  const p = profil || {};
+  const PR = poidsReference(p);
+  const k = Math.max(1000, kcal || 2000);
+  const eff = profilEffort(p);
+  const aim = +p.aim || 0;
+
+  /* PROTÉINES. Table profil × objectif, puis modulation par l'agressivité du
+     déficit : c'est le déficit, et non l'entraînement seul, qui justifie de monter
+     dans le haut des fourchettes publiées (+25 % à −500 kcal/j, +10 % à −200). */
+  const ligne = (p.age > 65 ? PROT_PLANCHER.senior : PROT_PLANCHER[eff]) || PROT_PLANCHER.modere;
+  const modul = aim < 0 ? 1 + Math.abs(aim) / 2000 : 1;
+  const prot = Math.round(PR * ligne[viseeDe(p)] * modul);
+
+  /* LIPIDES. Double critère indispensable : un pourcentage seul s'effondre quand
+     l'énergie baisse — 20 % de 1600 kcal ne font que 36 g — et un g/kg seul ignore
+     les cibles élevées. En dessous, la testostérone totale baisse de 10 à 15 %
+     chez l'homme (Whittaker & Wu 2021), sans compter l'absorption des vitamines
+     liposolubles. Le plancher absolu de 0,6 g/kg n'est jamais franchi. */
+  const fat = Math.max(Math.round(Math.max(PR * 0.8, 0.20 * k / 9)), Math.round(PR * 0.6));
+
+  /* GLUCIDES. Fonction du VOLUME d'entraînement, pas de l'objectif. */
+  const carb = Math.round(PR * (CARB_PLANCHER[eff] || CARB_PLANCHER.modere));
+
+  /* FIBRES. Proportionnelles à l'énergie : le forfait de 30 g était punitif à
+     1500 kcal et insuffisant à 3500. La règle des 14 g / 1000 kcal converge vers
+     30 g autour de 2100 kcal, ce qui la rend compatible avec le repère ANSES —
+     le niveau n'était pas faux, c'est son caractère forfaitaire qui l'était. */
+  const fiber = Math.max(Math.round(k / 1000 * 14), 25);
+
   return {
-    min: { prot: protMin, carb: carbMin, fat: fatMin, fiber: Math.min(fiber, 30) },
-    max: { prot: protMax, carb: carbMax, fat: fatMax, fiber: 45 }
+    min: { prot: prot, carb: carb, fat: fat, fiber: fiber },
+    /* Zéro signifie « pas de plafond ». Aucun des quatre n'a de borne haute
+       documentée : voir l'en-tête de section. */
+    max: { prot: 0, carb: 0, fat: 0, fiber: 0 },
+    profilEffort: eff, poidsReference: PR
   };
+}
+
+/* CIBLE ÉNERGÉTIQUE — Mifflin-St Jeor, borné par le bas.
+
+   Le plancher absolu manquait : l'ancien code s'arrêtait à 1200 kcal pour tout le
+   monde. Deux bornes s'appliquent désormais, et c'est la plus haute qui gagne :
+   1,2 × métabolisme de base, et 1500 kcal chez l'homme / 1200 chez la femme. En
+   dessous, la couverture des besoins en micronutriments n'est plus atteignable par
+   l'alimentation courante, et la masse maigre paie le déficit. */
+function metabolismeBase(p, kg) {
+  const poids = kg || p.weight || 75;
+  return 10 * poids + 6.25 * (p.height || 175) - 5 * (p.age || 35) + (p.sex === 'h' ? 5 : -161);
+}
+function cibleEnergetique(p, kg) {
+  const bmr = metabolismeBase(p, kg);
+  const brut = bmr * (p.act || 1.55) + (+p.aim || 0);
+  const plancher = Math.max(1.2 * bmr, p.sex === 'f' ? 1200 : 1500);
+  return { kcal: Math.round(Math.max(brut, plancher) / 10) * 10,
+           bmr: bmr, plancher: Math.round(plancher), bride: brut < plancher };
+}
+
+/* CONTRÔLE DE COHÉRENCE — le signal que l'ancien modèle ne pouvait pas produire.
+
+   Des planchers indexés sur le poids et le volume peuvent réclamer plus d'énergie
+   que la cible n'en accorde. Cela veut dire quelque chose de précis : le déficit
+   visé est incompatible avec le volume d'entraînement déclaré, et l'utilisateur va
+   dégrader ses performances et sa masse maigre sans comprendre pourquoi. Deux
+   leviers, et deux seulement : réduire le déficit, ou réduire le volume.
+
+   La marge est rendue telle quelle : une marge faible mais positive est une
+   information en soi — le système tient, mais il est tendu. */
+function coherencePlanchers(min, kcal) {
+  const besoin = min.prot * 4 + min.fat * 9 + min.carb * 4;
+  const marge = (kcal || 0) - besoin;
+  return { besoin: Math.round(besoin), marge: Math.round(marge),
+           pct: kcal > 0 ? marge / kcal : 0,
+           tenable: marge >= 0, tendu: marge >= 0 && kcal > 0 && marge < kcal * 0.08 };
+}
+
+/* BILAN ÉNERGÉTIQUE HEBDOMADAIRE — l'échelle à laquelle le jugement devient solide.
+
+   Une estimation sur photo porte 20 à 30 % d'erreur par repas ; sur une journée à
+   trois repas l'incertitude du total reste de 12 à 17 %. Annoncer « reste 845 kcal »
+   à l'unité près affiche une précision que la donnée ne porte pas. Sur sept jours,
+   les erreurs indépendantes se compensent en partie et l'incertitude tombe vers
+   5 à 7 % : c'est là, et pas avant, qu'un verdict a du sens.
+
+   Le compteur journalier reste donc affiché — c'est un outil de PILOTAGE — mais les
+   mots « tenue », « écart », « dérive » sont réservés à la moyenne. Seules les
+   journées renseignées comptent : une journée vide n'est pas un jeûne. */
+function bilanEnergieHebdo(date) {
+  let sKcal = 0, sCible = 0, n = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = shiftD(date, -i);
+    const t = sumEntries(entriesOf(d));
+    if (!(t.kcal > 0)) continue;
+    sKcal += t.kcal; sCible += objectifsDuJour(d).kcal; n++;
+  }
+  if (!n || !sCible) return null;
+  const moy = sKcal / n, cible = sCible / n;
+  const ecart = moy - cible;
+  return { jours: n, moyenne: Math.round(moy), cible: Math.round(cible),
+           ecart: Math.round(ecart), pct: ecart / cible,
+           /* ±10 % de tolérance : au-delà seulement, l'écart dépasse le bruit. */
+           dansTolerance: Math.abs(ecart) <= cible * 0.10 };
+}
+
+/* ALCOOL — charge HEBDOMADAIRE, jamais journalière.
+
+   C'est la charge cumulée qui porte le risque (Wood 2018, 599 912 buveurs) : au-delà
+   de 100 g d'éthanol par semaine la mortalité toutes causes croît de façon continue,
+   sans seuil protecteur en dessous. Un plafond journalier normaliserait au contraire
+   une consommation quotidienne. La FRÉQUENCE est signalée à part du volume : les
+   deux confondus sont moins informatifs que séparés. */
+function alcoolHebdo(date) {
+  let g = 0, jours = 0;
+  for (let i = 0; i < 7; i++) {
+    const a = sumEntries(entriesOf(shiftD(date, -i))).alc || 0;
+    if (a > 0) { g += a; jours++; }
+  }
+  const plafond = (S().goalsMax || {}).alc || 100;
+  return { g: Math.round(g), jours: jours, plafond: plafond,
+           depasse: g > plafond, frequent: jours > 4 };
+}
+
+/* DISPONIBILITÉ ÉNERGÉTIQUE — la seule grandeur qui justifie une alerte franche.
+
+   DE = (énergie ingérée − dépense d'exercice) / masse maigre. En dessous de
+   30 kcal/kg de masse maigre et par jour, on documente des perturbations
+   endocriniennes, une baisse de densité minérale osseuse et une dégradation de la
+   masse maigre, chez les deux sexes (Loucks 2011 ; consensus RED-S, Mountjoy 2018).
+
+   Pas de borne haute : au-dessus, on est en surplus, ce que la cible énergétique
+   gouverne déjà. Renvoie `null` sans masse grasse connue — la calculer sur le poids
+   total donnerait un chiffre faussement rassurant chez un sujet adipeux.
+
+   Se juge sur les journées TERMINÉES, jamais sur celle en cours. Une journée en cours
+   est incomplète par construction : à midi, 1500 kcal déjà mangées sur 2300 donnent une
+   disponibilité de 17 kcal/kg et déclenchent l'alerte tous les jours avant le dîner.
+   C'est la même erreur que celle corrigée en v10.1 sur l'analyse hebdomadaire — une
+   journée partielle a exactement la forme d'une journée terminée frugale.
+
+   Le seuil décrit d'ailleurs un état CHRONIQUE, pas un accident d'une journée : la
+   moyenne des journées renseignées de la semaine écoulée est la bonne échelle. */
+function disponibiliteEnergetique(date) {
+  const p = S().profile || {};
+  if (!(p.bodyFat > 0) || !(p.weight > 0)) return null;
+  const mm = p.weight * (1 - p.bodyFat / 100);
+  if (!(mm > 0)) return null;
+  let somme = 0, n = 0;
+  for (let i = 1; i <= 7; i++) {
+    const d = shiftD(date, -i);
+    const t = sumEntries(entriesOf(d));
+    if (!(t.kcal > 0)) continue;
+    const s = seanceDuJour(d);
+    const cout = s ? coutSeance(Object.assign({}, activiteParId(s.a) || {}, { volume: s.v }), p.weight) : 0;
+    somme += (t.kcal - cout) / mm; n++;
+  }
+  /* Trois journées au moins : en dessous, la moyenne n'est pas une moyenne. */
+  if (n < 3) return null;
+  const de = somme / n;
+  return { de: Math.round(de), jours: n, masseMaigre: Math.round(mm * 10) / 10,
+           alerte: de < 30 };
 }
 
 /* Quels plafonds sont de vraies limites à ne pas franchir.
@@ -1398,9 +1645,43 @@ function objectifsDuJour(date) {
   /* Alias à plat des planchers (`prot`, `carb`, `fat`, `fiber`) : le coach et les
      messages de fin de journée lisent `g.prot` sans connaître les fourchettes.
      Les exposer ici évite de dupliquer la logique de cyclage dans chaque vue. */
-  return { kcal: Math.max(0, g.kcal + d), water: g.water, min: min, max: max,
+  return { kcal: Math.max(0, g.kcal + d), water: eauDuJour(date), min: min, max: max,
            prot: min.prot, carb: min.carb, fat: min.fat, fiber: min.fiber,
            delta: d, train: estJourEntrainement(date), seance: seanceDuJour(date) };
+}
+
+/* Durée d'une séance, en heures.
+
+   Les activités à DISTANCE ne stockent pas de durée : il faut une allure. 10 km/h,
+   soit 6 min/km, est une allure de coureur loisir. C'est une hypothèse assumée, et
+   elle n'entre que dans le calcul de l'eau — un plancher souple, où une erreur de
+   20 % sur l'allure déplace la cible de 120 ml. Elle ne touche à aucun calcul
+   énergétique, qui passent tous par `coutSeance`. */
+const ALLURE_KMH = 10;
+function heuresSeance(a, volume) {
+  const v = Math.max(0, r0(volume));
+  if (!a) return 0;
+  return a.type === 'distance' ? v / ALLURE_KMH : v / 60;
+}
+
+/* HYDRATATION — plancher souple, seule composante variable : l'effort.
+
+   La référence EFSA de 2,5 L/jour porte sur l'apport hydrique TOTAL, dont 20 à 30 %
+   viennent des aliments : la cible de boisson correspondante est de 1,75 à 2,0 L, pas
+   2,5 L. Ce sont de surcroît des apports adéquats de population, observés, et non des
+   besoins individuels — chez l'adulte sain au repos la soif régule efficacement
+   l'osmolalité. Afficher « 2 650 ml » à 50 ml près suggérait une exactitude qui
+   n'existe pas.
+
+   Ce qui est réellement fondé, c'est la compensation des pertes sudorales à l'effort
+   (position ACSM). L'eau suit donc désormais le cyclage des séances, comme l'énergie
+   et les glucides — elle en était jusqu'ici la seule exclue. */
+function eauDuJour(date) {
+  const base = (S().goals || {}).water || 1500;
+  const s = seanceDuJour(date);
+  if (!s) return base;
+  const h = heuresSeance(activiteParId(s.a), s.v);
+  return Math.round((base + 600 * h) / 50) * 50;
 }
 
 /* Un plafond doit toujours rester au-dessus de son plancher, y compris après une
@@ -1442,6 +1723,35 @@ function normaliserFourchettes() {
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 })();
 
+/* Reprise vers le modèle à planchers (v12.0).
+
+   Deux gestes, et deux seulement :
+
+   1. Les quatre plafonds passent à 0. C'est le changement de MODÈLE, pas un
+      changement d'objectif : aucune valeur que l'utilisateur ait pu vouloir n'est
+      perdue, puisqu'un plafond sans fondement n'était pas un objectif.
+   2. Le plafond d'alcool hebdomadaire apparaît, à 100 g.
+
+   Les PLANCHERS ne sont PAS recalculés. Ils changent pourtant beaucoup — les
+   protéines d'un profil modéré en déficit passent d'environ 2,4 g/kg de masse maigre
+   à 1,8 g/kg de poids de référence — mais les réécrire en silence effacerait des
+   valeurs réglées à la main. C'est la règle déjà retenue en v3.0, et le bandeau de
+   réajustement existe précisément pour proposer le recalcul à l'utilisateur.
+
+   `goalsWeight` est effacé pour que ce bandeau se déclenche : sans cela, un
+   utilisateur dont le poids n'a pas bougé garderait indéfiniment des planchers
+   calculés sous l'ancien modèle, sans jamais se voir proposer la mise à jour. */
+(function migrerV12() {
+  const s = BRUT_STOCKE.settings;
+  if (!s || !s.goalsMax) return;                 // installation neuve : rien à reprendre
+  const gx = S().goalsMax || (S().goalsMax = {});
+  if (gx.alc !== undefined) return;              // migration déjà passée
+  ['prot', 'carb', 'fat', 'fiber'].forEach(k => { gx[k] = 0; });
+  gx.alc = 100;
+  S().goalsWeight = 0;
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+})();
+
 /* Reprise des installations antérieures à la v3.0 : les cibles uniques existantes
    deviennent les planchers, sans y toucher, et seuls les plafonds sont déduits du
    profil. Recalculer aussi les planchers modifierait en silence des objectifs que
@@ -1450,7 +1760,7 @@ function normaliserFourchettes() {
   const s = BRUT_STOCKE.settings;
   if (!s || s.goalsMax) return;
   const g = S().goals, p = S().profile || {};
-  const f = fourchettesProfil(p.weight, g.kcal, (p.aim || 0) < 0, p.bodyFat);
+  const f = fourchettesProfil(p, g.kcal);
   S().goalsMax = f.max;
   if (!(g.fiber > 0)) g.fiber = f.min.fiber;
   normaliserFourchettes();
@@ -2448,11 +2758,14 @@ $('#goalsNag').onclick = e => {
   const p = S().profile;
   const pc = poidsCourant();
   if (e.target.closest('#gnOk')) {
-    const bmr = 10 * pc.kg + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
-    const kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
-    const f = fourchettesProfil(pc.kg, kcal, p.aim < 0, p.bodyFat);
+    /* Le poids LISSÉ sert de base, pas la dernière pesée : le seuil de réajustement
+       est à 500 g quand le bruit quotidien atteint 1 à 2 kg. */
+    const prof = Object.assign({}, p, { weight: pc.kg });
+    const ce = cibleEnergetique(prof);
+    const kcal = ce.kcal;
+    const f = fourchettesProfil(prof, kcal);
     S().goals = { kcal: kcal, prot: f.min.prot, carb: f.min.carb, fat: f.min.fat,
-                  fiber: f.min.fiber, water: eauObjectif(pc.kg, p.act) };
+                  fiber: f.min.fiber, water: eauObjectif() };
     S().goalsMax = f.max;
     S().goalsWeight = pc.kg;
     save(); renderToday(); renderHistory(); renderSettings();
@@ -2708,13 +3021,32 @@ function renderToday() {
      corporelle, les MACRONUTRIMENTS commandent la composition et la santé. Tant que
      l'écart énergétique dépasse 10 %, il prime et les fourchettes sont annoncées
      comme secondaires. */
-  const ecart = t.kcal - g.kcal;
-  const horsCible = g.kcal > 0 && t.kcal > 0 && Math.abs(ecart) > g.kcal * 0.10;
-  $('#macroHead').innerHTML = !t.kcal ? ''
-    : horsCible
-      ? '<div class="prio warn"><b>' + (ecart > 0 ? '+' : '−') + r0(Math.abs(ecart)) +
-        ' kcal sur la journée.</b> C\'est ce chiffre qui décide de ton poids : il passe avant les fourchettes ci-dessous.</div>'
-      : '<div class="prio ok"><b>Énergie tenue.</b> Les fourchettes affinent la composition.</div>';
+  /* Le VERDICT porte sur la moyenne de sept jours, plus sur la journée : voir
+     `bilanEnergieHebdo`. Le compteur du jour reste affiché au-dessus, comme outil de
+     pilotage — mais il ne juge plus, parce qu'il n'en a pas la précision. */
+  const bil = bilanEnergieHebdo(curDate);
+  const de = disponibiliteEnergetique(curDate);
+  let tete = '';
+  if (de && de.alerte) {
+    /* La disponibilité énergétique passe AVANT tout le reste : c'est un seuil de
+       sécurité, pas un objectif de composition. */
+    tete = '<div class="prio warn"><b>Disponibilité énergétique à ' + r0(de.de) +
+      ' kcal/kg de masse maigre</b>, moyenne sur ' + r0(de.jours) + ' jours terminés. ' +
+      'En dessous de 30, les fonctions endocriniennes et la masse osseuse se dégradent. ' +
+      'Mange davantage, ou allège les séances.</div>';
+  } else if (bil && bil.jours >= 3) {
+    tete = bil.dansTolerance
+      ? '<div class="prio ok"><b>Énergie tenue sur ' + bil.jours + ' jours.</b> Moyenne ' +
+        r0(bil.moyenne) + ' kcal pour une cible de ' + r0(bil.cible) + '. Les planchers ' +
+        'ci-dessous affinent la composition.</div>'
+      : '<div class="prio warn"><b>' + (bil.ecart > 0 ? '+' : '−') + r0(Math.abs(bil.ecart)) +
+        ' kcal par jour en moyenne sur ' + bil.jours + ' jours.</b> C\'est cette moyenne ' +
+        'qui décide de ton poids, pas une journée isolée.</div>';
+  } else if (t.kcal > 0) {
+    tete = '<div class="prio ok"><b>Pilotage du jour.</b> Le bilan énergétique se juge ' +
+           'sur sept jours : il faut au moins trois journées renseignées.</div>';
+  }
+  $('#macroHead').innerHTML = tete;
 
   /* Protéines en grammes par kilo, la seule unité qui ait un sens pour la prise de muscle.
 
@@ -2724,19 +3056,28 @@ function renderToday() {
      (23 g) et un décompte, et laissait croire qu'il fallait RÉDUIRE le nombre de prises.
      Le principe nutritionnel est juste, mais une information qu'on ne comprend pas ne
      sert à rien. Ne pas la réintroduire sans une formulation testée. */
-  const poids = (S().profile || {}).weight || 0;
+  /* Les g/kg sont rapportés au POIDS DE RÉFÉRENCE, la base de tous les planchers :
+     les afficher sur le poids total donnerait un ratio qui ne correspond à aucune
+     recommandation chez un sujet adipeux. */
+  const PR = poidsReference(S().profile || {});
   const fr1 = v => v.toFixed(1).replace('.', ',');
   let info = '';
-  if (poids && t.prot) {
-    info = '<b>' + fr1(t.prot / poids) + ' g/kg</b> de protéines<em> · zone ' + fr1(g.min.prot / poids) +
-           (g.max.prot > 0 ? ' à ' + fr1(g.max.prot / poids) : '') + ' g/kg</em>';
+  if (PR > 0 && t.prot) {
+    info = '<b>' + fr1(t.prot / PR) + ' g/kg</b> de protéines<em> · plancher ' +
+           fr1(g.min.prot / PR) + ' g/kg</em>';
   }
   /* L'alcool apporte 7 kcal/g sans être ni glucide, ni lipide, ni protéine : dès
-     qu'il y en a, l'anneau cesse d'égaler 4P + 4G + 9L et les fourchettes décrochent
-     de la cible énergétique sans que rien ne l'explique. On le dit. */
+     qu'il y en a, l'anneau cesse d'égaler 4P + 4G + 9L et les planchers décrochent
+     de la cible énergétique sans que rien ne l'explique. On le dit — et on rapporte
+     la charge à la SEMAINE, seule échelle où le seuil de risque est établi. */
   if (t.alc > 0) {
+    const al = alcoolHebdo(curDate);
     info += (info ? '<br>' : '') + '<b style="color:var(--warn)">' + r0(t.alc) + ' g d\'alcool</b>' +
-            '<em> ≈ ' + r0(t.alc * 7) + ' kcal, hors fourchettes ci-dessus</em>';
+            '<em> ≈ ' + r0(t.alc * 7) + ' kcal, hors planchers ci-dessus</em>';
+    info += '<br><em>' + r0(al.g) + ' g sur sept jours' +
+            (al.depasse ? ', <b style="color:var(--warn)">au-delà du repère de ' + r0(al.plafond) + ' g</b>'
+                        : ' — repère : ' + r0(al.plafond) + ' g') +
+            (al.frequent ? ' · ' + al.jours + ' jours sur 7' : '') + '</em>';
   }
   $('#protInfo').innerHTML = info;
   $('#macros').innerHTML = defs.map(a => jaugeMacro(a[0], a[1], a[2], a[3], a[4], a[5])).join('');
@@ -4257,9 +4598,14 @@ function donneesCoach(nbJours, exclureJourCourant) {
               objectif: p.aim < 0 ? 'perte de poids' : p.aim > 0 ? 'prise de poids' : 'maintien',
               ecart_calorique_vise: p.aim },
     objectifs: { kcal_moyenne: g.kcal, eau_ml: g.water,
-                 note: 'les macronutriments sont donnes en [plancher, plafond]',
-                 proteines_g: [g.prot, gx.prot || null], glucides_g: [g.carb, gx.carb || null],
-                 lipides_g: [g.fat, gx.fat || null], fibres_g: [g.fiber, gx.fiber || null] },
+                 note: 'les macronutriments sont des PLANCHERS a atteindre : aucun des quatre '
+                     + 'n a de plafond documente chez le sujet sain. Le seul plafond du systeme '
+                     + 'est celui de l alcool, et il est HEBDOMADAIRE.',
+                 proteines_min_g: g.prot, glucides_min_g: g.carb,
+                 lipides_min_g: g.fat, fibres_min_g: g.fiber,
+                 alcool_max_g_par_semaine: gx.alc || 100,
+                 poids_de_reference_kg: Math.round(poidsReference(p) * 10) / 10,
+                 profil_effort: profilEffort(p), visee: viseeDe(p) },
     activites_declarees: activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0)
       .map(a => ({ nom: a.nom, seances_par_semaine: r0(a.parSemaine),
                    volume_habituel: r0(a.volume) + (a.type === 'distance' ? ' km' : ' min'),
@@ -4324,8 +4670,8 @@ Règles :
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé ;
 - le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte, \
 0,25 à 0,5 % en prise ;
-- les objectifs de macronutriments sont donnés en [plancher, plafond] ; dépasser le plafond \
-de protéines ou de fibres n'est pas un défaut ;
+- les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
+ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne \
 en ordres de grandeur, jamais au gramme près ;
 - si la question sort de ton domaine ou demande un avis médical, dis-le et renvoie vers un \
@@ -4374,8 +4720,11 @@ Règles d'analyse :
 Si l'écart énergétique est important, il passe avant tout le reste ;
 - juge le rythme de variation du poids en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte, \
 0,25 à 0,5 % en prise, au-delà la part de masse maigre perdue ou de gras pris augmente ;
-- les objectifs de macronutriments sont donnés sous forme [plancher, plafond]. Dépasser le plafond \
-de protéines ou de fibres n'est PAS un défaut ;
+- les objectifs de macronutriments sont des PLANCHERS. Aucun des quatre n'a de plafond documenté \
+chez le sujet sain : ne signale JAMAIS un dépassement de protéines, de lipides, de glucides ou de \
+fibres comme un défaut. Le seul excès qui compte est énergétique, et la cible kcal le porte déjà ;
+- l'alcool est le seul nutriment à plafond, et il est HEBDOMADAIRE : 100 g d'éthanol sur sept jours. \
+Juge la charge de la semaine, jamais une soirée isolée ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne sur les \
 TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun chiffre au gramme près ;
 - une journée absente signifie « non renseignée », pas « jeûne » ;
@@ -4682,8 +5031,15 @@ function jugerRythme(kgSem, poids, aim) {
   const pct = kgSem / poids * 100;
   const p1 = Math.abs(pct).toFixed(2).replace('.', ',');
   if (aim < 0) {
-    if (pct <= -1.0) return { couleur: orange, cls: 'warn', titre: 'Perte trop rapide.',
-      texte: p1 + ' % du poids par semaine. Au-delà de 1 %, la part de masse maigre perdue augmente : réduis le déficit.' };
+    /* Au-delà d'un IMC de 30, la masse grasse mobilisable est plus abondante et la
+       borne haute se déplace à 1,2 %/semaine. Appliquer 1 % à tout le monde signalait
+       comme excessive une perte parfaitement tenable chez un sujet en obésité. */
+    const pr = S().profile || {};
+    const t = Math.max(1.2, (pr.height || 175) / 100);
+    const limite = (poids / (t * t)) > 30 ? -1.2 : -1.0;
+    if (pct <= limite) return { couleur: orange, cls: 'warn', titre: 'Perte trop rapide.',
+      texte: p1 + ' % du poids par semaine. Au-delà de ' + Math.abs(limite).toFixed(1).replace('.', ',') +
+             ' %, la part de masse maigre perdue augmente : réduis le déficit.' };
     if (pct <= -0.5) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
       texte: p1 + ' % du poids par semaine, dans la zone qui préserve la masse maigre.' };
     if (pct < -0.1) return { couleur: vert, cls: 'ok', titre: 'Perte lente.',
@@ -5415,10 +5771,9 @@ function editSupp(sp, isNew) {
    Il porte sur les BOISSONS seules — l'eau apportée par les aliments solides, de l'ordre
    de 20 à 30 % des apports, n'est pas comptée, donc pas non plus visée. Valeur à ajuster
    librement : c'est un repère, pas une prescription. */
-function eauObjectif(poids, act) {
-  const ml = poids * 30 + Math.max(0, (act - 1.2)) * 1000;
-  return clamp(Math.round(ml / 50) * 50, 1200, 4500);
-}
+/* Plancher de BASE, hors effort. La part liée aux séances est ajoutée jour par jour
+   par `eauDuJour()` : c'est elle, et elle seule, qui a un fondement solide. */
+function eauObjectif() { return 1500; }
 
 /* Calcul des objectifs — Mifflin-St Jeor */
 $('#btnCalc').onclick = () => {
@@ -5435,9 +5790,16 @@ $('#btnCalc').onclick = () => {
       .map(([v, l]) => '<option value="' + v + '"' + (Math.abs(p.act - v) < .01 ? ' selected' : '') + '>' + l + '</option>').join('') +
     '</select></label>' +
     '<label class="f"><span>Masse grasse (%)</span><input class="in" id="cMg" inputmode="numeric" placeholder="inconnue" value="' + (p.bodyFat > 0 ? p.bodyFat : '') + '"></label>' +
-    '<label class="f"><span>Objectif</span><select class="in" id="cAim">' +
-    [[-500, 'Perdre du poids (−500 kcal)'], [-250, 'Perdre doucement (−250 kcal)'], [0, 'Maintenir'], [250, 'Prendre doucement (+250 kcal)'], [500, 'Prendre du poids (+500 kcal)']]
+    '<label class="f"><span>Écart énergétique</span><select class="in" id="cAim">' +
+    [[-500, 'Déficit marqué (−500 kcal)'], [-250, 'Déficit doux (−250 kcal)'], [0, 'À l\'équilibre'], [250, 'Surplus doux (+250 kcal)'], [500, 'Surplus marqué (+500 kcal)']]
       .map(([v, l]) => '<option value="' + v + '"' + (p.aim == v ? ' selected' : '') + '>' + l + '</option>').join('') +
+    '</select></label>' +
+    /* La VISÉE est séparée de l'écart énergétique : une recomposition se mène en
+       déficit, et n'appelle pourtant pas le même plancher protéique qu'une perte de
+       gras assumée. Les confondre était l'écart le plus net avec le document. */
+    '<label class="f"><span>Ce que tu cherches</span><select class="in" id="cBut">' +
+    [['perte', 'Perdre du gras'], ['maintien', 'Recomposition / maintien'], ['prise', 'Prendre du muscle']]
+      .map(([v, l]) => '<option value="' + v + '"' + (viseeDe(p) === v ? ' selected' : '') + '>' + l + '</option>').join('') +
     '</select></label>' +
     '<div id="cRes" class="note" style="margin-bottom:13px"></div>' +
     '<button class="btn pri" id="cOk">Appliquer ces objectifs</button>',
@@ -5449,25 +5811,46 @@ $('#btnCalc').onclick = () => {
         weight: parseFloat(String(el.querySelector('#cW').value).replace(',', '.')) || 70,
         act: parseFloat(el.querySelector('#cAct').value),
         aim: parseFloat(el.querySelector('#cAim').value),
+        but: el.querySelector('#cBut').value,
         bodyFat: clamp(r0(el.querySelector('#cMg').value), 0, 60)
       });
+      /* Libellés du profil d'effort. Table close, indexée par une valeur que seule
+         `profilEffort()` produit : rien ici ne vient d'une saisie. */
+      const LIB_EFFORT = { sedentaire: 'sédentaire', modere: 'sportif modéré',
+                           force: 'force, volume élevé', endurance: 'endurance, volume élevé' };
       function compute() {
         const v = get();
-        const bmr = 10 * v.weight + 6.25 * v.height - 5 * v.age + (v.sex === 'h' ? 5 : -161);
-        const tdee = bmr * v.act;
-        const kcal = Math.max(1200, Math.round((tdee + v.aim) / 10) * 10);
-        const f = fourchettesProfil(v.weight, kcal, v.aim < 0, v.bodyFat);
-        const water = eauObjectif(v.weight, v.act);
-        const zone = k => f.min[k] + ' à ' + f.max[k] + ' g';
+        const ce = cibleEnergetique(v);
+        const kcal = ce.kcal;
+        const f = fourchettesProfil(v, kcal);
+        const water = eauObjectif();
+        const coh = coherencePlanchers(f.min, kcal);
+        /* Tout ce qui suit est NUMÉRIQUE — chaque valeur sort de `Math.round`, de
+           `r0` ou de `toFixed` — à l'exception du libellé de profil, échappé ici. */
+        const nb = x => String(r0(x));
+        const eff = esc(v.age > 65 ? 'senior' : (LIB_EFFORT[f.profilEffort] || '—'));
+        const PR = f.poidsReference.toFixed(1).replace('.', ',');
+        const plancher = k => '<b>≥ ' + nb(f.min[k]) + ' g</b>';
         el.querySelector('#cRes').innerHTML =
-          'Métabolisme de base ' + r0(bmr) + ' kcal · dépense estimée ' + r0(tdee) + ' kcal/jour.<br>' +
-          (v.bodyFat > 0
-            ? '<em>Protéines calculées sur ta masse maigre (' + (v.weight * (1 - v.bodyFat / 100)).toFixed(1).replace('.', ',') + ' kg).</em><br>'
-            : '<em>Masse grasse inconnue : protéines calculées sur le poids total, moins juste au-delà de 25 % de gras.</em><br>') +
-          '<b>Objectif : ' + kcal + ' kcal</b><br>' +
-          'Protéines ' + zone('prot') + ' · glucides ' + zone('carb') + '<br>' +
-          'Lipides ' + zone('fat') + ' · fibres ' + zone('fiber') + '<br>' +
-          '<b>Hydratation : ' + water + ' ml de boissons</b>, activité comprise.';
+          'Métabolisme de base ' + nb(ce.bmr) + ' kcal · dépense estimée ' +
+          nb(ce.bmr * v.act) + ' kcal/jour.<br>' +
+          '<em>Profil retenu : ' + eff + ' · poids de référence ' + PR + ' kg' +
+          (Math.abs(f.poidsReference - v.weight) > 0.5 ? ' (corrigé de l\'adiposité)' : '') +
+          '.</em><br><b>Objectif : ' + nb(kcal) + ' kcal</b>' +
+          (ce.bride ? ' <em>— relevé au plancher de sécurité de ' + nb(ce.plancher) +
+                      ' kcal</em>' : '') + '<br>' +
+          'Protéines ' + plancher('prot') + ' · glucides ' + plancher('carb') + '<br>' +
+          'Lipides ' + plancher('fat') + ' · fibres ' + plancher('fiber') + '<br>' +
+          '<em>Ce sont des planchers : aucun de ces quatre nutriments n\'a de plafond ' +
+          'documenté chez le sujet sain.</em><br>' +
+          '<b>Hydratation : ≥ ' + nb(water) + ' ml</b> au repos, + 600 ml par heure de séance.' +
+          (coh.tenable
+            ? (coh.tendu ? '<br><span style="color:var(--warn)">Marge de ' + nb(coh.marge) +
+                ' kcal seulement entre les planchers et la cible : le système tient, mais ' +
+                'il est tendu.</span>' : '')
+            : '<br><span style="color:var(--bad)"><b>Incompatible.</b> Les planchers réclament ' +
+              nb(coh.besoin) + ' kcal pour une cible de ' + nb(kcal) + '. Réduis le déficit, ' +
+              'ou réduis le volume d\'entraînement hebdomadaire.</span>');
         return { v, kcal, f, water };
       }
       let cur = compute();
@@ -5632,12 +6015,14 @@ function sanitizeBackup(inc) {
          l'objectif simple, et c'est le comportement attendu d'une sauvegarde
          antérieure à la v3.0. La cohérence plancher/plafond est rétablie à l'import. */
       goalsMax: { prot: pos(gx.prot, 1000), carb: pos(gx.carb, 2000),
-                  fat: pos(gx.fat, 1000), fiber: pos(gx.fiber, 200) },
+                  fat: pos(gx.fat, 1000), fiber: pos(gx.fiber, 200),
+                  alc: gx.alc === undefined ? 100 : pos(gx.alc, 1000) },
       profile: { sex: p.sex === 'f' ? 'f' : 'h',
                  age: clamp(pos(p.age, 120, 35), 10, 120),
                  height: clamp(pos(p.height, 250, 175), 100, 250),
                  weight: clamp(Number(p.weight) || 75, 20, 400),
                  act: clamp(Number(p.act) || 1.55, 1, 2.5),
+                 but: ['perte','maintien','prise'].indexOf(p.but) >= 0 ? p.but : undefined,
                  aim: clamp(num(p.aim), -1500, 1500),
                  bodyFat: clamp(num(p.bodyFat), 0, 60) }
     },
@@ -5739,11 +6124,11 @@ $('#fImp').onchange = e => {
           if (fourni('goalsMax')) DB.settings.goalsMax = s.goalsMax;
           else if (s.goals) {
             const pr = DB.settings.profile || {};
-            DB.settings.goalsMax = fourchettesProfil(pr.weight, s.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).max;
+            DB.settings.goalsMax = fourchettesProfil(pr, s.goals.kcal).max;
           }
           if (s.goals && !fourniGoal('fiber')) {
             const pr = DB.settings.profile || {};
-            DB.settings.goals.fiber = fourchettesProfil(pr.weight, s.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).min.fiber;
+            DB.settings.goals.fiber = fourchettesProfil(pr, s.goals.kcal).min.fiber;
           }
           normaliserFourchettes();
           if (s.model) DB.settings.model = s.model;
@@ -5783,12 +6168,12 @@ $('#fImp').onchange = e => {
           if (!fourni('goalsMax')) {
             const pr = DB.settings.profile || {};
             DB.settings.goalsMax = fourni('goals')
-              ? fourchettesProfil(pr.weight, DB.settings.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).max
+              ? fourchettesProfil(pr, DB.settings.goals.kcal).max
               : avant.goalsMax;
           }
           if (fourni('goals') && !fourniGoal('fiber')) {
             const pr = DB.settings.profile || {};
-            DB.settings.goals.fiber = fourchettesProfil(pr.weight, DB.settings.goals.kcal, (pr.aim || 0) < 0, pr.bodyFat).min.fiber;
+            DB.settings.goals.fiber = fourchettesProfil(pr, DB.settings.goals.kcal).min.fiber;
           }
           normaliserFourchettes();
           if (!DB.settings.apiKey) DB.settings.apiKey = avant.apiKey;
@@ -5925,7 +6310,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v11.1' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.0' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
