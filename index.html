@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.3</title>
+<title>Coach v12.4</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,15 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.4 — Les deux boutons des reglages Groq avaient des HAUTEURS differentes, 61 px contre
+            42 : `.row` centre par defaut au lieu d'etirer, et « Charger les modeles » passait
+            a la ligne (143 px de texte pour 124 disponibles). Le libelle devient
+            « Actualiser » et la rangee etire ses enfants — verifie identique de 320 a 560 px.
+            Les reglages annoncaient encore « un plancher a atteindre et un plafond a ne pas
+            depasser » avec une section nommee « Fourchettes », alors que la v12.0 a supprime
+            les quatre plafonds. Le texte contredisait le modele sous les yeux de
+            l'utilisateur ; la colonne « Maxi » reste disponible comme reglage personnel mais
+            n'est plus presentee comme la norme.
     v12.3 — Le bilan energetique disait « les planchers CI-DESSOUS » alors que les jauges
             sont au-dessus : `#macroHead` est monte apres `#macros`. L'erreur remontait a la
             v7.2 au moins ; en v12.0 le texte a ete reecrit (« fourchettes » -> « planchers »)
@@ -1064,8 +1073,12 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
         </select>
       </label>
       <div id="quotaInfo" class="tiny" style="margin-bottom:10px"></div>
-      <div class="row" style="gap:9px">
-        <button class="btn sm grow" id="sModelLoad">↻ Charger les modèles</button>
+      <!-- `align-items:stretch` : `.row` centre par défaut, si bien qu'un libellé qui
+           passe à la ligne rendait un bouton plus haut que l'autre (61 px contre 42).
+           Le libellé est en outre raccourci pour tenir sur une ligne — « ↻ Charger les
+           modèles » mesure 143 px pour 124 disponibles. -->
+      <div class="row" style="gap:9px;align-items:stretch">
+        <button class="btn sm grow" id="sModelLoad">↻ Actualiser</button>
         <button class="btn sm grow" id="sTest">Tester la clé</button>
       </div>
       <p class="tiny" style="margin-top:10px">La clé est stockée uniquement sur cet appareil. Elle n'est envoyée qu'à api.groq.com.</p>
@@ -1077,8 +1090,11 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
         <label class="f"><span>Calories (kcal)</span><input class="in" id="gKcal" inputmode="numeric"></label>
         <label class="f"><span>Hydratation (ml)</span><input class="in" id="gWater" inputmode="numeric"></label>
       </div>
-      <h3 class="sub">Fourchettes des macronutriments</h3>
-      <p class="tiny" style="margin:-2px 0 10px">Un plancher à atteindre et un plafond à ne pas dépasser. Laisse un plafond vide pour revenir à un objectif simple sur cette ligne.</p>
+      <h3 class="sub">Planchers des macronutriments</h3>
+      <!-- Depuis la v12.0 aucun des quatre n'a de plafond documenté : la colonne « Maxi »
+           reste disponible comme réglage personnel, mais ce n'est plus la norme et le
+           texte ne doit plus la présenter comme telle. -->
+      <p class="tiny" style="margin:-2px 0 10px">Un seuil minimum à atteindre chaque jour. Aucun de ces quatre nutriments n'a de plafond établi chez le sujet sain : la colonne « Maxi » reste vide sauf si tu veux t'en fixer un.</p>
       <div class="fourch">
         <div class="hdr"><span></span><span>Mini</span><span>Maxi</span></div>
         <label><span>Protéines (g)</span><input class="in" id="gProt" inputmode="numeric"><input class="in" id="xProt" inputmode="numeric"></label>
@@ -1125,7 +1141,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -6450,7 +6466,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.3' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.4' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
