@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.2</title>
+<title>Coach v12.3</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.3 — Le bilan energetique disait « les planchers CI-DESSOUS » alors que les jauges
+            sont au-dessus : `#macroHead` est monte apres `#macros`. L'erreur remontait a la
+            v7.2 au moins ; en v12.0 le texte a ete reecrit (« fourchettes » -> « planchers »)
+            sans que la direction soit questionnee, donc recopiee. Les quatre references
+            directionnelles de l'application sont desormais verifiees contre l'ordre reel
+            du document.
     v12.2 — **Theme « Dossard ».** L'application passe en clair : noir sur blanc franc,
             angles vifs, une seule couleur saturee — le jaune de dossard de course, reserve
             au signal (bouton principal, onglet actif, badges autonomes) et jamais decoratif.
@@ -1119,7 +1125,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -3125,7 +3131,11 @@ function renderToday() {
     tete = bil.dansTolerance
       ? '<div class="prio ok"><b>Énergie tenue sur ' + bil.jours + ' jours.</b> Moyenne ' +
         r0(bil.moyenne) + ' kcal pour une cible de ' + r0(bil.cible) + '. Les planchers ' +
-        'ci-dessous affinent la composition.</div>'
+        /* CI-DESSUS : `#macroHead` est monté APRÈS `#macros` dans le document, les jauges
+           sont donc au-dessus de ce message. L'erreur remontait à la v7.2 ; en v12.0 le
+           texte a été réécrit (« fourchettes » → « planchers ») sans que la direction soit
+           questionnée. Vérifier l'ordre du DOM avant d'écrire « ci-dessus » ou « ci-dessous ». */
+        'ci-dessus affinent la composition.</div>'
       : '<div class="prio warn"><b>' + (bil.ecart > 0 ? '+' : '−') + r0(Math.abs(bil.ecart)) +
         ' kcal par jour en moyenne sur ' + bil.jours + ' jours.</b> C\'est cette moyenne ' +
         'qui décide de ton poids, pas une journée isolée.</div>';
@@ -6440,7 +6450,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.2' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.3' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
