@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.4</title>
+<title>Coach v12.5</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,12 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.5 — Suppression du fondu blanc sous la barre de titre, sur tous les ecrans. Un degrade
+            de 16 px y adoucissait le defilement tant que le theme etait sombre et les cartes
+            sans bord franc. Sur le theme clair il recouvrait le bord SUPERIEUR du cadre place
+            dessous et l'effacait — il masquait justement ce qui donne sa forme a la carte.
+            La barre a un fond opaque : le contenu passe proprement derriere elle au
+            defilement, coupe net, sans trainee.
     v12.4 — Les deux boutons des reglages Groq avaient des HAUTEURS differentes, 61 px contre
             42 : `.row` centre par defaut au lieu d'etirer, et « Charger les modeles » passait
             a la ligne (143 px de texte pour 124 disponibles). Le libelle devient
@@ -608,8 +614,11 @@ h1,h2,h3,p{margin:0}
 #app{max-width:560px;margin:0 auto;padding:0 16px calc(84px + var(--sab));min-height:100vh}
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:8px;
   padding:calc(var(--sat) + 14px) 0 10px;position:sticky;top:0;background:var(--bg);z-index:20}
-.topbar::after{content:'';position:absolute;left:-16px;right:-16px;top:100%;height:16px;
-  background:linear-gradient(var(--bg),transparent);pointer-events:none}
+/* PAS DE FONDU sous la barre. Un dégradé de 16 px y adoucissait le défilement tant
+   que le thème était sombre et les cartes sans bord franc. Sur le thème clair, il
+   recouvrait le bord supérieur du cadre placé dessous et le faisait disparaître —
+   le fondu masquait justement ce qui donne sa forme à la carte. La barre a un fond
+   opaque, ce qui suffit : le contenu passe proprement derrière elle. */
 .brand{display:flex;align-items:center;gap:9px;font-weight:700;letter-spacing:-.3px;font-size:19px}
 .brand .logo{width:30px;height:30px;flex:none;display:block}
 .brand .logo svg{width:100%;height:100%;display:block}
@@ -1141,7 +1150,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.5 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -6465,7 +6474,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.4' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.5' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
