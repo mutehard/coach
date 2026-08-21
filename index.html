@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.6</title>
+<title>Coach v12.7</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,21 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.7 — Vignette emoji retiree des lignes de repas : l'icone du moment figure deja dans
+            l'en-tete juste au-dessus, la repeter n'ajoutait aucune information.
+            **Phase de demarrage sur les quinze premiers jours.** L'analyse recevait toutes
+            les donnees mais rien qui lui dise depuis quand la personne enregistre ; elle
+            concluait donc a une stagnation au bout d'une semaine. Or un poids qui ne descend
+            pas sur deux semaines ne demontre RIEN — les variations d'eau, de glycogene et de
+            contenu digestif depassent la perte de gras attendue sur cette duree. La charge
+            porte desormais `suivi.anciennete_jours` et une `phase`, et la consigne interdit
+            les conclusions que la periode ne soutient pas.
+            Le verdict LOCAL du rythme de poids suit la meme regle : « Pas de perte » devient
+            « Trop tot pour conclure » avant le seizieme jour. Seul ce verdict-la change ;
+            l'alerte de perte trop rapide reste intacte des le premier jour.
+            L'anciennete est mesuree contre AUJOURD'HUI dans les deux cas : la calculer contre
+            la fin de fenetre d'analyse, qui s'arrete hier, faisait diverger les deux parties
+            du meme ecran d'un jour.
     v12.6 — **Nouvelle mascotte, en cinq poses.** Le shaker dessine en SVG cede la place a
             un personnage illustre qui se MUSCLE a mesure que la jauge de calories se
             remplit : poses 1, 3, 5, 8 et 10 dixiemes, choisies au plus proche. Le principe
@@ -818,8 +833,6 @@ h1,h2,h3,p{margin:0}
 .meal .mh em{font-style:normal;color:var(--dim2);font-weight:600;font-size:12px}
 .entry{display:flex;gap:11px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:10px 12px;margin-bottom:7px}
 .entry:active{background:var(--card2)}
-.entry .th{width:44px;height:44px;border-radius:0;object-fit:cover;flex:none;background:var(--card2)}
-.entry .th.ph{display:flex;align-items:center;justify-content:center;font-size:19px}
 .entry .nm{font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .entry .dt{font-size:11.5px;color:var(--dim2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .entry .kc{font-weight:700;font-size:15px;flex:none}
@@ -1183,7 +1196,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.6 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.7 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1572,6 +1585,45 @@ function coherencePlanchers(min, kcal) {
   return { besoin: Math.round(besoin), marge: Math.round(marge),
            pct: kcal > 0 ? marge / kcal : 0,
            tenable: marge >= 0, tendu: marge >= 0 && kcal > 0 && marge < kcal * 0.08 };
+}
+
+/* ANCIENNETÉ DU SUIVI — depuis combien de jours cette personne enregistre.
+
+   Mesurée sur l'ÉCART DE DATES depuis la première entrée, pas sur le nombre de
+   journées renseignées : ce qui compte ici est le temps écoulé depuis le début,
+   parce que c'est lui qui borne ce que les données peuvent démontrer.
+
+   En dessous de `SUIVI_DEMARRAGE` jours, deux conclusions courantes ne sont pas
+   soutenues : qu'un poids qui ne descend pas prouve l'absence de déficit — les
+   variations d'eau, de glycogène et de contenu digestif dépassent largement la
+   perte de gras attendue sur cette durée — et qu'un plancher non atteint traduit
+   un manque de sérieux, alors que changer ses habitudes prend des semaines.
+
+   Ce seuil sert donc d'abord l'EXACTITUDE. Qu'il rende aussi l'application moins
+   décourageante au démarrage en est la conséquence, pas la raison. */
+const SUIVI_DEMARRAGE = 15;
+
+/* Toujours mesurée par rapport à AUJOURD'HUI, jamais par rapport à la fin de la
+   fenêtre d'analyse. « Depuis combien de jours j'enregistre » est une propriété du
+   moment présent, pas de la période examinée.
+
+   Le calcul par rapport à la fin de fenêtre — qui s'arrête hier pour l'analyse —
+   donnait un jour de moins que le verdict local du rythme de poids : au quatorzième
+   jour, l'analyse se croyait en démarrage pendant que le verdict juste au-dessus
+   affichait « Pas de perte ». Deux parties du même écran se contredisaient.
+
+   Comptage INCLUSIF : le jour de la première entrée est le jour 1, ce qui fait des
+   jours 1 à 15 la phase de démarrage, conformément à « les quinze premiers jours ». */
+function ancienneteSuivi() {
+  const dates = (DB.entries || []).map(e => e && e.date).filter(Boolean);
+  if (!dates.length) return 0;
+  let mini = dates[0];
+  for (let i = 1; i < dates.length; i++) if (dates[i] < mini) mini = dates[i];
+  return Math.max(0, Math.round((parseD(TODAY()) - parseD(mini)) / DAY)) + 1;
+}
+function enDemarrage() {
+  const j = ancienneteSuivi();
+  return j > 0 && j <= SUIVI_DEMARRAGE;
 }
 
 /* BILAN ÉNERGÉTIQUE HEBDOMADAIRE — l'échelle à laquelle le jugement devient solide.
@@ -3252,8 +3304,10 @@ function renderToday() {
       es.map(e => {
         const st = sumItems(e.items);
         const names = (e.items || []).map(i => i.name).join(', ');
+        /* Pas de vignette : l'icone du moment figure deja dans l'en-tete juste
+           au-dessus, et la repeter sur chaque ligne du meme repas n'ajoute aucune
+           information — seulement du poids visuel. */
         return '<div class="entry" data-id="' + esc(e.id) + '">' +
-          '<div class="th ph">' + m.ico + '</div>' +
           '<div class="grow"><div class="nm">' + esc(e.title) + '</div><div class="dt">' + esc(names || '—') + '</div></div>' +
           '<div class="kc">' + r0(st.kcal) + '<small>kcal</small></div></div>';
       }).join('') + '</div>';
@@ -4720,6 +4774,13 @@ function donneesCoach(nbJours, exclureJourCourant) {
         : 'la journee en cours est incluse et peut etre INCOMPLETE : ne conclus rien de son '
           + 'total, elle n est pas terminee.'
     },
+    /* Combien de jours cette personne enregistre-t-elle. Envoye pour que le modele
+       n ait pas a le deduire des dates, et surtout pour qu il sache quand une
+       conclusion sur la tendance de poids est prematuree. */
+    suivi: (function () {
+      return { anciennete_jours: ancienneteSuivi(), seuil_demarrage_jours: SUIVI_DEMARRAGE,
+               phase: enDemarrage() ? 'demarrage' : 'etabli' };
+    })(),
     profil: { sexe: p.sex === 'f' ? 'femme' : 'homme', age: p.age, taille_cm: p.height,
               poids_kg: p.weight, masse_grasse_pct: p.bodyFat > 0 ? p.bodyFat : null,
               masse_maigre_kg: p.bodyFat > 0 ? Math.round(p.weight * (1 - p.bodyFat / 100) * 10) / 10 : null,
@@ -4889,10 +4950,25 @@ TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun
 Ne réclame pas les données du jour et n'en déduis aucun manque ;
 - l'alcool apporte 7 kcal/g sans appartenir à aucun macronutriment : ses calories comptent dans "kcal" \
 mais ne remplissent aucune fourchette ;
-- appuie-toi sur les aliments réellement consommés pour donner des conseils CONCRETS, pas des généralités.
+- appuie-toi sur les aliments réellement consommés pour donner des conseils CONCRETS, pas des généralités ;
+- ANCIENNETÉ DU SUIVI. Le bloc "suivi" dit depuis combien de jours cette personne enregistre. \
+Quand "phase" vaut "demarrage" — moins de quinze jours — plusieurs conclusions ne sont PAS SOUTENUES \
+par les données, et s'en abstenir est une question d'exactitude avant d'être une question de ton :
+  · un poids qui ne descend pas sur une ou deux semaines ne démontre RIEN. Les variations d'eau, de \
+glycogène et de contenu digestif dépassent largement la perte de gras attendue sur cette durée. \
+N'écris ni « stagnation », ni « le déficit n'est pas réel », ni « ton apport est proche du maintien » ;
+  · un plancher de fibres ou de protéines encore loin du compte est ATTENDU à ce stade : changer ses \
+habitudes et ses quantités demande des semaines, pas des jours. Ne le présente pas comme un manquement ;
+  · dis explicitement ce que la période ne permet pas encore de conclure, puis nomme ce qui est DÉJÀ \
+acquis — la régularité de l'enregistrement, un plancher tenu, une habitude installée ;
+  · un seul changement à installer, choisi pour être tenable, pas trois.
+  Au-delà de quinze jours, "phase" vaut "etabli" : reprends alors le ton habituel, direct et exigeant, \
+et juge la tendance de poids sans ménagement.
 
 Ton : direct, professionnel, tutoiement, français. Trois constats et trois conseils au maximum. \
 "niveau" vaut "ok", "attention" ou "alerte". Pas de flatterie, pas de préambule. \
+Encourager n'est pas flatter : au démarrage, rappeler ce qu'une période courte ne peut pas montrer \
+est un constat, pas une consolation. \
 Si les données sont trop maigres pour conclure, dis-le franchement dans "bilan".`;
 
 async function lancerAnalyse(nbJours) {
@@ -5192,6 +5268,11 @@ function jugerRythme(kgSem, poids, aim) {
   if (!(poids > 0)) return { couleur: neutre, cls: '', titre: 'Rythme', texte: 'poids de référence inconnu.' };
   const pct = kgSem / poids * 100;
   const p1 = Math.abs(pct).toFixed(2).replace('.', ',');
+  /* Le verdict d'ABSENCE de progrès est le seul que l'ancienneté change : une perte
+     trop rapide reste digne d'être signalée dès le premier jour, un rythme correct
+     reste correct. C'est l'affirmation « il ne se passe rien » qui, elle, exige un
+     recul que les premières semaines n'ont pas. */
+  const demarrage = enDemarrage();
   if (aim < 0) {
     /* Au-delà d'un IMC de 30, la masse grasse mobilisable est plus abondante et la
        borne haute se déplace à 1,2 %/semaine. Appliquer 1 % à tout le monde signalait
@@ -5206,6 +5287,14 @@ function jugerRythme(kgSem, poids, aim) {
       texte: p1 + ' % du poids par semaine, dans la zone qui préserve la masse maigre.' };
     if (pct < -0.1) return { couleur: vert, cls: 'ok', titre: 'Perte lente.',
       texte: p1 + ' % par semaine — tenable, mais sous la zone de 0,5 à 1 %.' };
+    /* Avant `SUIVI_DEMARRAGE` jours, « la tendance ne descend pas » n'est pas une
+       observation mais une SUR-INTERPRÉTATION : sur deux semaines, les variations
+       d'eau, de glycogène et de contenu digestif dépassent la perte de gras
+       attendue. Le verdict dit donc ce qu'il en est vraiment — trop tôt — au lieu
+       de renvoyer l'utilisateur à sa cible ou à sa rigueur. */
+    if (demarrage) return { couleur: neutre, cls: '', titre: 'Trop tôt pour conclure.',
+      texte: 'Sur les premières semaines, les variations d\'eau masquent la perte de gras. ' +
+             'Continue à enregistrer : la tendance devient lisible vers un mois.' };
     return { couleur: neutre, cls: '', titre: 'Pas de perte.',
       texte: 'La tendance ne descend pas. Revois la cible ou la régularité du suivi.' };
   }
@@ -5214,6 +5303,9 @@ function jugerRythme(kgSem, poids, aim) {
       texte: p1 + ' % par semaine. Au-delà de 0,5 %, la part de gras prise augmente nettement.' };
     if (pct >= 0.1) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
       texte: p1 + ' % par semaine, dans la zone d\'une prise majoritairement maigre.' };
+    if (demarrage) return { couleur: neutre, cls: '', titre: 'Trop tôt pour conclure.',
+      texte: 'Quelques semaines sont nécessaires avant qu\'une prise se distingue du bruit ' +
+             'de la balance. Continue à enregistrer.' };
     return { couleur: neutre, cls: '', titre: 'Pas de prise.',
       texte: 'La tendance ne monte pas. Augmente la cible énergétique.' };
   }
@@ -6481,7 +6573,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.6' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.7' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
