@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.11</title>
+<title>Coach v12.12</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,23 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.12 — **Periodes du Suivi : 30 jours, 3 mois, 6 mois.** Sept jours ne soutenaient
+             aucune lecture de cet ecran — ni une tendance de poids, qui demande dix jours
+             au minimum, ni une moyenne de calories que deux repas de fete faussaient. La
+             fenetre la plus courte est desormais celle de l'analyse, un mois.
+             **La courbe de poids a des axes.** Poids en ordonnee, graduations rondes ;
+             dates absolues en abscisse. Et l'ABSCISSE COUVRE TOUTE LA PERIODE CHOISIE, non
+             plus le seul intervalle des pesees : la courbe remplissait la largeur quel que
+             soit le selecteur, et trois pesees faites en une semaine avaient l'air d'en
+             couvrir six mois. Un trou de pesees se voit maintenant comme un trou.
+             **La tendance annonce son echeance.** « Pas assez de recul » ne disait ni
+             laquelle des deux conditions manquait — trois pesees, dix jours d'ecart — ni
+             pour combien de temps. On lit desormais « tendance dans 6 jours », « apres une
+             pesee de plus », ou les deux.
+             Corrige au passage : une base pleine de pesees anciennes affichait « saisis une
+             premiere pesee », alors que la fenetre de huit semaines seule etait vide ; et
+             un poids stable s'annoncait « −0,00 kg/sem. », un signe pour une direction que
+             le chiffre ne porte pas.
     v12.11 — **La mascotte parle dans l'Analyse du Suivi.** Neuvieme pose, doigt pointe vers
              l'utilisateur, l'autre main sur la hanche. Fixe. Elle se tient a cote de la prose
              qu'elle « dit » : le texte d'accroche AVANT l'analyse, le bilan APRES. Constats
@@ -1207,9 +1224,13 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
   <!-- ============ SUIVI (identifiants internes : history) ============ -->
   <section id="view-history" class="hidden">
     <div class="seg" style="margin-bottom:12px">
-      <button data-range="7" class="on">7 jours</button>
-      <button data-range="30">30 jours</button>
-      <button data-range="90">90 jours</button>
+      <!-- Sept jours ne soutenaient aucune des lectures de cet ecran : ni une tendance
+           de poids, qui demande dix jours au minimum, ni une moyenne de calories que
+           deux repas de fete suffisaient a fausser. La fenetre la plus courte est
+           desormais celle de l'analyse, un mois. -->
+      <button data-range="30" class="on">30 jours</button>
+      <button data-range="90">3 mois</button>
+      <button data-range="180">6 mois</button>
     </div>
     <div class="kpi" id="hKpi"></div>
     <div id="analyse"></div>
@@ -1327,7 +1348,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.11 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -5318,7 +5339,7 @@ $('#btnManual').onclick = () => {
 /* =========================================================================
    7. Vue « Suivi »
    ========================================================================= */
-let range = 7;
+let range = 30;
 
 function daysBack(n) {
   const out = [];
@@ -5344,7 +5365,8 @@ function barChart(days, vals, goal, unite, c1, c2) {
       '" width="' + w.toFixed(2) + '" height="' + Math.max(h, v > 0 ? 2 : 1).toFixed(2) +
       '" rx="' + Math.min(w / 2, 2.5).toFixed(2) + '" fill="' + col + '"/>';
   });
-  const step = n <= 8 ? 1 : (n <= 31 ? 5 : 15);
+  /* Un repere tous les 24 px environ : au-dela les dates se chevauchent. */
+  const step = n <= 8 ? 1 : n <= 31 ? 5 : n <= 100 ? 15 : 30;
   days.forEach((d, i) => {
     if (i % step === 0 || i === n - 1) {
       const dd = parseD(d);
@@ -5368,13 +5390,39 @@ function barChart(days, vals, goal, unite, c1, c2) {
    fonctionnent sur données éparses comme sur données quotidiennes.
    Le poids brut varie de 1 à 2 kg par jour pour des raisons étrangères à la masse grasse ;
    c'est la pente, pas la dernière valeur, qui dit si quelque chose bouge. */
+/* Deux conditions ouvrent la tendance : TROIS pesees et DIX jours d'ecart entre la
+   premiere et la derniere. « Pas assez de recul » ne disait ni laquelle manquait ni
+   pour combien de temps — l'utilisateur n'avait aucun moyen de savoir s'il devait
+   attendre ou se peser. On annonce donc l'echeance.
+
+   Le delai se compte depuis la PREMIERE pesee, pas depuis la derniere : c'est elle
+   qui fixe la date au plus tot ou l'ecart de dix jours peut exister. */
+function attenteTendance(pts) {
+  /* `pts` est la fenetre de huit semaines, pas tout l'historique : une base pleine de
+     pesees anciennes donne une fenetre vide, et « saisis une premiere pesee » serait
+     alors faux. */
+  if (!pts.length) return (DB.weights || []).length
+    ? 'tendance : aucune pesée depuis 8 semaines'
+    : 'tendance : saisis une première pesée';
+  const manque = Math.max(0, TENDANCE_PESEES - pts.length);
+  const ecoule = Math.round((parseD(TODAY()) - parseD(pts[0].date)) / DAY);
+  const reste = Math.max(0, TENDANCE_JOURS - ecoule);
+  if (!reste && !manque) return 'tendance : pèse-toi à nouveau pour l\'ouvrir';
+  const bouts = [];
+  if (reste) bouts.push('dans ' + reste + (reste > 1 ? ' jours' : ' jour'));
+  if (manque) bouts.push(manque > 1 ? 'après ' + manque + ' pesées de plus' : 'après une pesée de plus');
+  return 'tendance ' + bouts.join(', ');
+}
+
+const TENDANCE_PESEES = 3, TENDANCE_JOURS = 10;
+
 function tendancePoids(pts) {
-  if (pts.length < 3) return null;
+  if (pts.length < TENDANCE_PESEES) return null;
   const t0 = parseD(pts[0].date).getTime();
   const xs = pts.map(p => (parseD(p.date).getTime() - t0) / DAY);
   const ys = pts.map(p => p.kg);
   const jours = xs[xs.length - 1] - xs[0];
-  if (jours < 10) return null;   // trop court pour distinguer une tendance du bruit
+  if (jours < TENDANCE_JOURS) return null;   // trop court pour distinguer une tendance du bruit
   const n = xs.length;
   const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
   let num = 0, den = 0;
@@ -5385,34 +5433,88 @@ function tendancePoids(pts) {
            debut: my + pente * (xs[0] - mx), fin: my + pente * (xs[n - 1] - mx) };
 }
 
-function lineChart(pts) {
+/* Largeur reservee a gauche pour les poids en ordonnee. « 100,5 » a 10 px tient en
+   26 px ; 32 laisse la marge et le blanc avant la courbe. */
+const CGX = 32;
+
+/* Pas d'ordonnee « rond » : le plus petit de la liste qui tient l'amplitude en cinq
+   intervalles au plus. Sans cela les graduations tomberaient sur 75,83 kg et le
+   lecteur devrait calculer au lieu de lire.
+   CINQ et non quatre : a quatre, une amplitude de 6 kg n'obtenait que deux
+   graduations, et un poids stable une seule. La hauteur du trace, 110 px, en accepte
+   six sans que les etiquettes se touchent. */
+function pasEchelle(amplitude) {
+  const pas = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20];
+  return pas.find(p => amplitude / p <= 5) || 50;
+}
+
+/* Courbe de poids. L'ABSCISSE COUVRE TOUTE LA PERIODE CHOISIE, pas seulement
+   l'intervalle des pesees : sinon la courbe remplit la largeur quel que soit le
+   selecteur, et trois pesees faites en une semaine ont l'air d'en couvrir six mois.
+   Avec les bornes de periode, un trou de pesees se voit comme un trou. */
+function lineChart(pts, debutPeriode) {
   if (pts.length < 2) return '<div class="empty" style="padding:20px">Saisis ton poids au moins deux fois pour voir la courbe.</div>';
   const xs = pts.map(p => parseD(p.date).getTime());
   const ys = pts.map(p => p.kg);
-  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const x0 = debutPeriode ? parseD(debutPeriode).getTime() : Math.min(...xs);
+  const x1 = Math.max(parseD(TODAY()).getTime(), ...xs);
   const y0 = Math.min(...ys), y1 = Math.max(...ys);
   const span = Math.max(y1 - y0, 0.8), lo = y0 - span * 0.18, hi = y1 + span * 0.18;
-  const plotH = CBASE - CTOP, m = 4;
-  const X = t => x1 === x0 ? CW / 2 : m + ((t - x0) / (x1 - x0)) * (CW - m * 2);
+  const plotH = CBASE - CTOP, gauche = CGX, droite = CW - 4;
+  const X = t => x1 === x0 ? (gauche + droite) / 2
+                           : gauche + ((t - x0) / (x1 - x0)) * (droite - gauche);
   const Y = v => CBASE - ((v - lo) / (hi - lo)) * plotH;
+
+  /* Ordonnee : graduations rondes, cantonnees a l'interieur de l'echelle. */
+  const pas = pasEchelle(hi - lo);
+  let grille = '', ordonnee = '';
+  for (let v = Math.ceil(lo / pas) * pas; v <= hi + 1e-9; v += pas) {
+    const y = Y(v);
+    if (y < CTOP - 1 || y > CBASE + 1) continue;
+    grille += '<line class="gl" x1="' + gauche + '" y1="' + y.toFixed(2) +
+      '" x2="' + droite + '" y2="' + y.toFixed(2) + '" opacity=".55"/>';
+    ordonnee += '<text class="gt" x="' + (gauche - 6) + '" y="' + (y + 3.4).toFixed(2) +
+      '" text-anchor="end">' + fmtKg(v, pas) + '</text>';
+  }
+
+  /* Abscisse : quatre reperes au plus, en dates absolues, aux bornes reelles de la
+     periode — donc lisibles meme la ou aucune pesee n'a ete faite. */
+  const jours = Math.max(1, Math.round((x1 - x0) / DAY));
+  const nRep = Math.min(4, jours + 1);
+  let abscisse = '';
+  for (let i = 0; i < nRep; i++) {
+    const t = x0 + (x1 - x0) * (i / (nRep - 1 || 1));
+    const dt = new Date(t);
+    abscisse += '<text class="gt" x="' + X(t).toFixed(2) + '" y="' + CLAB +
+      '" text-anchor="' + (i === 0 ? 'start' : i === nRep - 1 ? 'end' : 'middle') + '">' +
+      dt.getDate() + '/' + (dt.getMonth() + 1) + '</text>';
+  }
+
   const d = pts.map((p, i) => (i ? 'L' : 'M') + X(xs[i]).toFixed(2) + ' ' + Y(p.kg).toFixed(2)).join(' ');
   const dots = pts.map((p, i) => '<circle cx="' + X(xs[i]).toFixed(2) + '" cy="' + Y(p.kg).toFixed(2) + '" r="3" fill="#141414"/>').join('');
   const delta = ys[ys.length - 1] - ys[0];
   const tr = tendancePoids(pts);
   const ligneTendance = tr
-    ? '<line x1="' + X(x0).toFixed(2) + '" y1="' + Y(tr.debut).toFixed(2) +
-      '" x2="' + X(x1).toFixed(2) + '" y2="' + Y(tr.fin).toFixed(2) +
+    ? '<line x1="' + X(Math.min(...xs)).toFixed(2) + '" y1="' + Y(tr.debut).toFixed(2) +
+      '" x2="' + X(Math.max(...xs)).toFixed(2) + '" y2="' + Y(tr.fin).toFixed(2) +
       '" stroke="#84878c" stroke-width="1.6" stroke-dasharray="5 4"/>'
     : '';
-  return '<svg class="chart" viewBox="0 0 ' + CW + ' 150">' +
-    '<line class="gl" x1="0" y1="' + CBASE + '" x2="' + CW + '" y2="' + CBASE + '"/>' + ligneTendance +
-    '<path d="' + d + '" fill="none" stroke="#141414" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>' + dots +
-    '<text class="gt" x="0" y="' + CLAB + '">' + ys[0].toFixed(1) + ' kg</text>' +
-    '<text class="gt" x="' + (CW / 2) + '" y="' + CLAB + /* Ce <text> est du TEXTE a 10 px, pas un trait de graphique : seuil 4,5:1. */
-    '" text-anchor="middle" fill="' + (delta <= 0 ? '#1f7a44' : '#a55708') + '">' +
-    (delta > 0 ? '+' : '') + delta.toFixed(1) + ' kg</text>' +
-    '<text class="gt" x="' + CW + '" y="' + CLAB + '" text-anchor="end">' + ys[ys.length - 1].toFixed(1) + ' kg</text>' +
-    '</svg>';
+  return '<svg class="chart" viewBox="0 0 ' + CW + ' 150">' + grille +
+    '<line class="gl" x1="' + gauche + '" y1="' + CBASE + '" x2="' + droite + '" y2="' + CBASE + '"/>' +
+    '<line class="gl" x1="' + gauche + '" y1="' + CTOP + '" x2="' + gauche + '" y2="' + CBASE + '"/>' +
+    ligneTendance +
+    '<path d="' + d + '" fill="none" stroke="#141414" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>' +
+    dots + ordonnee + abscisse + '</svg>' +
+    /* Ce texte est du TEXTE a 10 px, pas un trait de graphique : seuil 4,5:1. */
+    '<div class="tiny" style="text-align:right;margin-top:2px">' +
+    (tr ? '— — tendance · ' : '') + '<span style="color:' + (delta <= 0 ? '#1f7a44' : '#a55708') + '">' +
+    (delta > 0 ? '+' : '−') + Math.abs(delta).toFixed(1).replace('.', ',') + ' kg</span> entre la première et la dernière pesée</div>';
+}
+
+/* Une graduation au demi-kilo doit montrer sa decimale, une au kilo non : afficher
+   « 76,0 » a cote de « 77,0 » suggere une precision que le pas ne porte pas. */
+function fmtKg(v, pas) {
+  return (pas < 1 ? v.toFixed(1) : v.toFixed(0)).replace('.', ',');
 }
 
 /* Jugement du rythme de variation du poids (v4.0).
@@ -5670,21 +5772,24 @@ function renderHistory() {
   $('#chartWater').innerHTML = barChart(days, per.map(p => p.water), g.water, 'ml', '#2ea8e0', '#1a7fb0');
 
   const wpts = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).filter(w => w.date >= days[0]);
-  $('#chartWeight').innerHTML = lineChart(wpts);
+  $('#chartWeight').innerHTML = lineChart(wpts, days[0]);
   /* Le rythme se lit sur une fenêtre fixe de 8 semaines, indépendante du sélecteur :
-     une tendance calculée sur 7 jours ne serait que du bruit, et la valeur ne doit pas
-     changer quand on bascule entre 7, 30 et 90 jours. */
+     la valeur ne doit pas changer quand on bascule entre 30 jours, 3 mois et 6 mois. */
   const fenetre = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
     .filter(w => w.date >= shiftD(TODAY(), -56));
   const tr = tendancePoids(fenetre);
   if (!tr) {
-    $('#wRate').innerHTML = '<span>tendance : pas assez de recul</span>';
+    $('#wRate').textContent = attenteTendance(fenetre);
     $('#wJuge').innerHTML = '';
   } else {
     const j = jugerRythme(tr.rythme, tr.fin || (S().profile || {}).weight, (S().profile || {}).aim || 0);
     $('#wRate').innerHTML =
       '<b style="color:' + j.couleur + '">' +
-      (tr.rythme > 0 ? '+' : '−') + Math.abs(tr.rythme).toFixed(2).replace('.', ',') + ' kg/sem.</b>' +
+      /* Le signe suit la valeur AFFICHEE, pas la valeur calculee : une pente de
+         -0,001 s'arrondit a 0,00 et « −0,00 kg/sem. » annoncerait une direction
+         que le chiffre ne porte pas. */
+      (Math.abs(tr.rythme) < 0.005 ? '' : tr.rythme > 0 ? '+' : '−') +
+      Math.abs(tr.rythme).toFixed(2).replace('.', ',') + ' kg/sem.</b>' +
       '<span> tendance sur ' + tr.n + ' pesées, ' + tr.jours + ' jours</span>';
     $('#wJuge').innerHTML = '<div class="prio ' + j.cls + '"><b>' + esc(j.titre) + '</b> ' + esc(j.texte) + '</div>';
   }
@@ -6747,7 +6852,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.11' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.12' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
