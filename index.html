@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.13</title>
+<title>Coach v12.14</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,20 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v12.14 — **Verdict « Perte lente » reecrit.** Il annoncait un chiffre et une limite sans
+             dire si c'etait bien ou pas grave : desormais il nomme la perte REELLE, situe la
+             zone optimale et laisse le choix explicite (garder le rythme ou resserrer le
+             deficit) plutot que de la qualifier de simplement « tenable ».
+             **Tirets cadratins retires de tout le texte visible.** Quatorze occurrences :
+             titre de la carte seance, note d'alcool, deux legendes de graphique (poids et
+             calories, remplacees par un double trait d'union qui garde l'effet pointille),
+             textes de reglages (quota, stockage, volume photo), libelles du selecteur
+             d'intensite de seance, message « aucune seance », deux notes de formulaire
+             (quantite de reference, modeles de complement), note du plancher de securite
+             energetique, et deux messages d'erreur (stockage plein, relance impossible).
+             Les tirets utilises comme SYMBOLE D'ABSENCE (repas sans nom, cible non definie)
+             sont conserves : ce n'est pas la meme fonction, un simple trait ne se lirait pas
+             comme un signe d'absence aussi clairement.
     v12.13 — **Nouveaux logos.** L'icone d'accueil et la marque de l'en-tete viennent des deux
              fichiers livres dans `Logo/`. Le trace SVG du shaker, dessine en v2.16, est
              retire : il n'avait plus d'emploi.
@@ -1377,7 +1391,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.13 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v12.14 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1540,7 +1554,7 @@ function save() {
     try { localStorage.setItem(KEY, JSON.stringify(DB)); return true; }
     catch (e) {
       const victim = DB.entries.filter(x => x.thumb).sort((a, b) => a.ts - b.ts)[0];
-      if (!victim) { toast("Stockage plein — pense à exporter puis effacer d'anciennes journées"); return false; }
+      if (!victim) { toast("Stockage plein : pense à exporter puis effacer d'anciennes journées"); return false; }
       delete victim.thumb;
     }
   }
@@ -3333,7 +3347,7 @@ $('#btnTrain').onclick = () => {
   /* `frDate` renvoie « Aujourd'hui » ou « Hier » pour les dates proches : préfixer
      par « du » donnerait « Séance du Aujourd'hui ». */
   const j = frDate(curDate);
-  sheet(/^(Aujourd|Hier|Demain)/i.test(j) ? 'Séance — ' + j : 'Séance du ' + j,
+  sheet(/^(Aujourd|Hier|Demain)/i.test(j) ? 'Séance : ' + j : 'Séance du ' + j,
     '<p class="tiny" style="margin:-2px 0 12px">L\'énergie est calculée depuis ton poids et le volume réel de la séance. ' +
     'Elle est <b>redistribuée</b> sur la semaine, jamais ajoutée : ton facteur d\'activité compte déjà tes entraînements.</p>' +
     (html || '<div class="empty" style="padding:16px">Aucune activité configurée. Renseigne tes séances par semaine dans Réglages.</div>') +
@@ -3482,7 +3496,7 @@ function renderToday() {
             '<em> ≈ ' + r0(t.alc * 7) + ' kcal, hors planchers ci-dessus</em>';
     info += '<br><em>' + r0(al.g) + ' g sur sept jours' +
             (al.depasse ? ', <b style="color:var(--warn)">au-delà du repère de ' + r0(al.plafond) + ' g</b>'
-                        : ' — repère : ' + r0(al.plafond) + ' g') +
+                        : ', repère : ' + r0(al.plafond) + ' g') +
             (al.frequent ? ' · ' + al.jours + ' jours sur 7' : '') + '</em>';
   }
   $('#protInfo').innerHTML = info;
@@ -4627,7 +4641,7 @@ function openEditor(entry, ctx) {
         loader(false);
         // on ne perd jamais le repas en cours : l'éditeur revient, l'erreur s'affiche dedans
         openEditor(Object.assign({}, entry, keep, { title: previous.plat, items: items }),
-                   Object.assign({}, ctx, { error: 'Relance impossible — ' + err.message }));
+                   Object.assign({}, ctx, { error: 'Relance impossible : ' + err.message }));
       }
     };
 
@@ -5394,7 +5408,7 @@ function barChart(days, vals, goal, unite, c1, c2) {
     (gy !== null ? '<line x1="0" y1="' + gy.toFixed(2) + '" x2="' + CW + '" y2="' + gy.toFixed(2) +
       '" stroke="#84878c" stroke-width="1" stroke-dasharray="5 4"/>' : '') +
     labs + '</svg>' +
-    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">— — objectif ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
+    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">- - objectif ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
 }
 
 /* Régression linéaire sur les pesées : avec une pesée hebdomadaire, une moyenne mobile
@@ -5519,7 +5533,7 @@ function lineChart(pts, debutPeriode) {
     dots + ordonnee + abscisse + '</svg>' +
     /* Ce texte est du TEXTE a 10 px, pas un trait de graphique : seuil 4,5:1. */
     '<div class="tiny" style="text-align:right;margin-top:2px">' +
-    (tr ? '— — tendance · ' : '') + '<span style="color:' + (delta <= 0 ? '#1f7a44' : '#a55708') + '">' +
+    (tr ? '- - tendance · ' : '') + '<span style="color:' + (delta <= 0 ? '#1f7a44' : '#a55708') + '">' +
     (delta > 0 ? '+' : '−') + Math.abs(delta).toFixed(1).replace('.', ',') + ' kg</span> entre la première et la dernière pesée</div>';
 }
 
@@ -5567,7 +5581,9 @@ function jugerRythme(kgSem, poids, aim) {
     if (pct <= -0.5) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
       texte: p1 + ' % du poids par semaine, dans la zone qui préserve la masse maigre.' };
     if (pct < -0.1) return { couleur: vert, cls: 'ok', titre: 'Perte lente.',
-      texte: p1 + ' % par semaine — tenable, mais sous la zone de 0,5 à 1 %.' };
+      texte: p1 + ' % par semaine : c\'est une perte réelle, juste en dessous de la zone ' +
+             'optimale (0,5 à 1 %). Rien à changer si ce rythme te convient ; resserre ' +
+             'légèrement le déficit si tu veux accélérer.' };
     /* Avant `SUIVI_DEMARRAGE` jours, « la tendance ne descend pas » n'est pas une
        observation mais une SUR-INTERPRÉTATION : sur deux semaines, les variations
        d'eau, de glycogène et de contenu digestif dépassent la perte de gras
@@ -5895,7 +5911,7 @@ function renderSettings() {
      du budget : tout le reste n'était qu'estimation à partir du nombre de caractères. */
   const dc = S().dernierCout;
   $('#quotaInfo').innerHTML =
-    (dc ? 'Dernière analyse' + (dc.photo ? ' photo' : ' texte') + ' — <b>' + dc.p + '</b> envoyés, <b>' +
+    (dc ? 'Dernière analyse' + (dc.photo ? ' photo' : ' texte') + ' : <b>' + dc.p + '</b> envoyés, <b>' +
           dc.c + '</b> générés.<br>Réservé sur le quota : <b>' + (dc.reserve || dc.t) + ' / 8000</b> par minute' +
           ' · marge de réponse actuelle ' + budgetReponse() + '.<br>' : '') +
     '';
@@ -5923,7 +5939,7 @@ function renderSettings() {
     DB.entries.length + ' repas · ' + DB.weights.length + ' pesées · ' +
     (S().templates || []).length + ' repas habituels · ' + (S().foods || []).length + ' aliments · ' +
     (S().supps || []).length + ' compléments · ' + (S().waterPresets || []).length + ' volumes\n' +
-    (bytes / 1024).toFixed(0) + ' Ko utilisés — sans photos stockées, plusieurs années de journal tiennent dans l\'espace du navigateur\n' +
+    (bytes / 1024).toFixed(0) + ' Ko utilisés. Sans photos stockées, plusieurs années de journal tiennent dans l\'espace du navigateur\n' +
     'Dernière sauvegarde : ' + (le ? new Date(le).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : 'jamais');
   $('#storInfo').style.whiteSpace = 'pre-line';
 }
@@ -5934,8 +5950,8 @@ $('#sModel').onchange = e => { S().model = e.target.value; save(); toast('Modèl
 $('#sImgPx').onchange = e => {
   S().imgPx = +e.target.value; save();
   toast('Photos en ' + S().imgPx + ' px' +
-        (S().imgPx === 512 ? ' — consommation minimale' :
-         S().imgPx === 768 ? ' — réglage recommandé' : ' — étiquettes plus lisibles'));
+        (S().imgPx === 512 ? ' (consommation minimale)' :
+         S().imgPx === 768 ? ' (réglage recommandé)' : ' (étiquettes plus lisibles)'));
 };
 
 $('#sModelLoad').onclick = async () => {
@@ -5969,9 +5985,9 @@ $('#sTest').onclick = async () => {
 
 /* Réglage des activités. Le coût de chaque séance s'affiche à côté de ses champs :
    c'est ce qui rend visible le rapport de 1 à 2 entre musculation et course. */
-const MET_MUSCU = [[3.5, 'Légère — beaucoup de repos entre séries'],
-                   [5.0, 'Modérée — séance classique'],
-                   [6.0, 'Intense — séries enchaînées, peu de pause']];
+const MET_MUSCU = [[3.5, 'Légère (beaucoup de repos entre séries)'],
+                   [5.0, 'Modérée (séance classique)'],
+                   [6.0, 'Intense (séries enchaînées, peu de pause)']];
 
 function renderActivites() {
   const box = $('#sActs');
@@ -6034,7 +6050,7 @@ function majTrainInfo() {
   const base = S().goals.kcal;
   const poids = (S().profile || {}).weight || 0;
   if (!h.E) {
-    $('#trainInfo').innerHTML = 'Aucune séance déclarée — toutes les journées ont la même cible.';
+    $('#trainInfo').innerHTML = 'Aucune séance déclarée. Toutes les journées ont la même cible.';
     return;
   }
   const lignes = activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0).map(a =>
@@ -6107,7 +6123,7 @@ function editFood(f) {
     '<div class="grid2">' +
     '<label class="f"><span>Nom</span><input class="in" id="fdN" value="' + esc(o.name) + '" placeholder="Yaourt grec 0 %"></label>' +
     '<label class="f"><span>Quantité de référence (g)</span><input class="in" id="fd_qty" inputmode="numeric" value="' + r0(o.qty) + '"></label></div>' +
-    '<p class="tiny" style="margin:-4px 0 10px">Valeurs correspondant à cette quantité — celles du pot ou de la portion, pas celles pour 100 g si la quantité de référence est différente.</p>' +
+    '<p class="tiny" style="margin:-4px 0 10px">Valeurs correspondant à cette quantité : celles du pot ou de la portion, pas celles pour 100 g si la quantité de référence est différente.</p>' +
     '<div class="grid3">' +
     ['kcal|kcal', 'prot|Prot.', 'carb|Gluc.', 'fat|Lip.', 'fiber|Fibres', 'alc|Alcool'].map(x => {
       const k = x.split('|')[0], l = x.split('|')[1];
@@ -6259,7 +6275,7 @@ $('#btnSuppAdd').onclick = () => {
   const restants = SUPP_MODELES.filter(m => dejaLa.indexOf(m.name.toLowerCase()) < 0);
   sheet('Ajouter un complément',
     (restants.length
-      ? '<p class="tiny" style="margin-bottom:8px">Modèles courants — valeurs typiques, à corriger d\'après l\'étiquette de ton produit.</p>' +
+      ? '<p class="tiny" style="margin-bottom:8px">Modèles courants : valeurs typiques, à corriger d\'après l\'étiquette de ton produit.</p>' +
         '<div class="supps" style="margin-bottom:14px">' +
         restants.map((m, i) => '<span class="chip" data-tpl="' + i + '">+ ' + esc(m.name) + '</span>').join('') +
         '</div>'
@@ -6382,8 +6398,8 @@ $('#btnCalc').onclick = () => {
           '<em>Profil retenu : ' + eff + ' · poids de référence ' + PR + ' kg' +
           (Math.abs(f.poidsReference - v.weight) > 0.5 ? ' (corrigé de l\'adiposité)' : '') +
           '.</em><br><b>Objectif : ' + nb(kcal) + ' kcal</b>' +
-          (ce.bride ? ' <em>— relevé au plancher de sécurité de ' + nb(ce.plancher) +
-                      ' kcal</em>' : '') + '<br>' +
+          (ce.bride ? ' <em>(relevé au plancher de sécurité de ' + nb(ce.plancher) +
+                      ' kcal)</em>' : '') + '<br>' +
           'Protéines ' + plancher('prot') + ' · glucides ' + plancher('carb') + '<br>' +
           'Lipides ' + plancher('fat') + ' · fibres ' + plancher('fiber') + '<br>' +
           '<em>Ce sont des planchers : aucun de ces quatre nutriments n\'a de plafond ' +
@@ -6864,7 +6880,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.13' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v12.14' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
