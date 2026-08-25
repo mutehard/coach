@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v12.14</title>
+<title>Coach v13.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,36 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.0 — **Fonction dimensionnante : la PAUSE DECLAREE.** Vacances, semaine chargee,
+            coupure assumee. Un interrupteur dans les Reglages ; pendant qu'il est actif,
+            l'application CONTINUE d'enregistrer mais cesse de JUGER.
+            Physiologiquement ce n'est pas un accroc : une pause alimentaire planifiee
+            repose l'axe leptine/thyroide et ameliore l'observance en phase de perte
+            prolongee. L'outil devait cesser de la traiter comme un relachement.
+            Ce que la pause fait, et rien de plus :
+              · le bilan energetique hebdomadaire ECARTE ces journees du calcul ;
+              · le plafond d'alcool cesse de juger la semaine — le total reste AFFICHE et
+                exact, seul le verdict s'abstient, le repere des 100 g/semaine portant sur
+                une consommation CHRONIQUE, ce que deux semaines de vacances ne sont pas ;
+              · les pesees de la periode sortent de la REGRESSION : sodium, alcool et
+                glycogene retiennent de l'eau, et une seule pesee gonflee suffit a faire
+                basculer une pente calculee sur huit semaines. Mesure sur un cas reel :
+                la tendance passait de +0,08 kg/sem. (faussee) a -0,20 (la vraie) ;
+              · elles restent TRACEES sur le graphique, en cercle CREUX, avec une legende.
+                On ne cache rien : on dit seulement qu'elles ne fondent pas la tendance ;
+              · le bandeau « objectifs a reajuster » se tait, sinon les cibles se
+                recalculeraient sur un poids de vacances ;
+              · l'analyse IA recoit `en_pause` sur CHAQUE journee, plus un compte et une
+                consigne dans le bloc `suivi` — un drapeau par ligne et non une liste de
+                periodes a recouper, que le modele ignorerait la moitie du temps.
+            Ce qu'elle ne fait JAMAIS : effacer, masquer ou modifier une donnee. Les
+            chiffres bruts du Suivi (moyenne, jours suivis) ne bougent pas non plus : ils
+            decrivent, ils ne jugent pas.
+            La DISPONIBILITE ENERGETIQUE n'est PAS mise en pause : c'est un seuil de
+            securite (RED-S), pas un objectif de composition. Manger trop peu reste
+            dangereux en vacances comme ailleurs.
+            Les pauses sont RESTAUREES par l'import, contrairement a l'analyse ou au chat :
+            ce ne sont pas des etats de session mais un fait date du suivi.
     v12.14 — **Verdict « Perte lente » reecrit.** Il annoncait un chiffre et une limite sans
              dire si c'etait bien ou pas grave : desormais il nomme la perte REELLE, situe la
              zone optimale et laisse le choix explicite (garder le rythme ou resserrer le
@@ -1360,6 +1390,15 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
     </div>
 
     <div class="card">
+      <h2>Pause</h2>
+      <!-- Vacances, semaine chargée, coupure assumée. Une pause alimentaire planifiée
+           est un outil légitime dans une phase de perte prolongée, pas un accroc :
+           l'application continue d'enregistrer, elle cesse simplement de juger. -->
+      <p class="tiny" style="margin:-2px 0 10px">Pendant une pause, tes journées sont <b>enregistrées normalement</b>, mais elles ne comptent ni dans le bilan énergétique de la semaine, ni dans le plafond d'alcool, ni dans ta tendance de poids. Rien n'est effacé ni masqué. Le seuil de sécurité de la disponibilité énergétique, lui, reste actif.</p>
+      <div id="sPause"></div>
+    </div>
+
+    <div class="card">
       <h2>Repas habituels</h2>
       <div id="sTpls"></div>
       <p class="tiny" style="margin-top:10px">Depuis le journal, ouvre un repas déjà enregistré et touche « Enregistrer comme repas habituel ». Tu pourras ensuite lui associer des compléments ici.</p>
@@ -1391,7 +1430,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v12.14 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1451,6 +1490,13 @@ const DEFAULTS = {
     remindAfter: 0,
     weightRemind: 0,
     goalsWeight: 0,
+    /* PAUSE DECLAREE (« diet break »). Tableau de periodes {debut, fin}, `fin` a null
+       tant que la pause court. Un TABLEAU et non un simple drapeau : les periodes
+       passees doivent rester connues, sinon la tendance de poids se remettrait a
+       compter des pesees de vacances des la pause refermee.
+       Rien n'est jamais efface ni cache : les journees restent enregistrees et
+       visibles, seuls les JUGEMENTS s'abstiennent. */
+    pauses: [],
     quota: null,
     analyse: null,
     chat: [],
@@ -1821,6 +1867,67 @@ function enDemarrage() {
   return j > 0 && j <= SUIVI_DEMARRAGE;
 }
 
+/* =========================================================================
+   PAUSE DÉCLARÉE (« diet break »)
+   =========================================================================
+
+   Une coupure assumée n'est pas un accroc : dans une phase de perte prolongée,
+   une pause alimentaire repose l'axe leptine/thyroïde et améliore l'observance
+   à long terme. L'application doit donc CONTINUER à enregistrer sans se mettre
+   à juger comme une dérive ce qui est un choix.
+
+   Ce que la pause fait, et rien de plus :
+     · les verdicts HEBDOMADAIRES (énergie, alcool) s'abstiennent ;
+     · les pesées de la période sortent du calcul de TENDANCE ;
+     · l'analyse IA reçoit le contexte, comme elle reçoit déjà la phase de démarrage.
+
+   Ce qu'elle ne fait JAMAIS : effacer, masquer ou modifier une donnée. Les
+   journées restent enregistrées, les pesées restent tracées sur le graphique.
+   Les chiffres bruts du Suivi (moyenne, jours suivis) ne bougent pas non plus —
+   ils décrivent, ils ne jugent pas.
+
+   La disponibilité énergétique n'est PAS mise en pause : c'est un seuil de
+   sécurité (RED-S), pas un objectif de composition. Manger trop peu reste
+   dangereux en vacances comme ailleurs. */
+function pauses() { return (S().pauses || []).filter(p => p && p.debut); }
+
+/* Une date tombe-t-elle dans une pause ? `fin` absente = pause encore ouverte. */
+function enPause(date) {
+  const d = date || TODAY();
+  return pauses().some(p => d >= p.debut && (!p.fin || d <= p.fin));
+}
+
+/* La pause en cours, ou null. Il ne peut y en avoir qu'une : `demarrerPause`
+   referme la précédente avant d'en ouvrir une. */
+function pauseEnCours() { return pauses().find(p => !p.fin) || null; }
+
+function demarrerPause() {
+  const l = S().pauses || (S().pauses = []);
+  if (pauseEnCours()) return false;
+  l.push({ debut: TODAY(), fin: null });
+  save();
+  return true;
+}
+
+function terminerPause() {
+  const p = pauseEnCours();
+  if (!p) return false;
+  /* La pause se referme sur HIER si elle a commencé avant aujourd'hui : le jour
+     du retour est un jour de reprise, pas un jour de vacances. Une pause ouverte
+     et refermée le même jour reste sur ce jour, sinon `fin` précéderait `debut`. */
+  p.fin = p.debut === TODAY() ? TODAY() : shiftD(TODAY(), -1);
+  save();
+  return true;
+}
+
+/* Jours cumulés de pause sur une fenêtre, pour annoncer le contexte au modèle
+   et à l'utilisateur sans avoir à énumérer les périodes. */
+function joursEnPause(depuis, jusqu) {
+  let n = 0;
+  for (let d = depuis; d <= jusqu; d = shiftD(d, 1)) if (enPause(d)) n++;
+  return n;
+}
+
 /* BILAN ÉNERGÉTIQUE HEBDOMADAIRE — l'échelle à laquelle le jugement devient solide.
 
    Une estimation sur photo porte 20 à 30 % d'erreur par repas ; sur une journée à
@@ -1833,17 +1940,21 @@ function enDemarrage() {
    mots « tenue », « écart », « dérive » sont réservés à la moyenne. Seules les
    journées renseignées comptent : une journée vide n'est pas un jeûne. */
 function bilanEnergieHebdo(date) {
-  let sKcal = 0, sCible = 0, n = 0;
+  let sKcal = 0, sCible = 0, n = 0, pause = 0;
   for (let i = 0; i < 7; i++) {
     const d = shiftD(date, -i);
+    /* Les journées de pause sont ÉCARTÉES du verdict, pas effacées : les compter
+       ferait conclure à une dérive là où il y a un choix assumé. On retient
+       toutefois combien il y en a, pour pouvoir le dire. */
+    if (enPause(d)) { pause++; continue; }
     const t = sumEntries(entriesOf(d));
     if (!(t.kcal > 0)) continue;
     sKcal += t.kcal; sCible += objectifsDuJour(d).kcal; n++;
   }
-  if (!n || !sCible) return null;
+  if (!n || !sCible) return pause ? { pause: pause, jours: 0 } : null;
   const moy = sKcal / n, cible = sCible / n;
   const ecart = moy - cible;
-  return { jours: n, moyenne: Math.round(moy), cible: Math.round(cible),
+  return { jours: n, pause: pause, moyenne: Math.round(moy), cible: Math.round(cible),
            ecart: Math.round(ecart), pct: ecart / cible,
            /* ±10 % de tolérance : au-delà seulement, l'écart dépasse le bruit. */
            dansTolerance: Math.abs(ecart) <= cible * 0.10 };
@@ -1857,14 +1968,21 @@ function bilanEnergieHebdo(date) {
    une consommation quotidienne. La FRÉQUENCE est signalée à part du volume : les
    deux confondus sont moins informatifs que séparés. */
 function alcoolHebdo(date) {
-  let g = 0, jours = 0;
+  let g = 0, jours = 0, pause = 0;
   for (let i = 0; i < 7; i++) {
-    const a = sumEntries(entriesOf(shiftD(date, -i))).alc || 0;
+    const d = shiftD(date, -i);
+    if (enPause(d)) pause++;
+    const a = sumEntries(entriesOf(d)).alc || 0;
     if (a > 0) { g += a; jours++; }
   }
   const plafond = (S().goalsMax || {}).alc || 100;
-  return { g: Math.round(g), jours: jours, plafond: plafond,
-           depasse: g > plafond, frequent: jours > 4 };
+  /* Le TOTAL reste exact et affiché : c'est un fait, et le masquer serait mentir.
+     Seul le JUGEMENT s'abstient si la semaine touche une pause — le repère des
+     100 g/semaine porte sur une consommation CHRONIQUE (Wood 2018), et deux
+     semaines de vacances entourées de semaines normales n'en sont pas une. */
+  const juge = pause === 0;
+  return { g: Math.round(g), jours: jours, plafond: plafond, pause: pause,
+           depasse: juge && g > plafond, frequent: juge && jours > 4 };
 }
 
 /* DISPONIBILITÉ ÉNERGÉTIQUE — la seule grandeur qui justifie une alerte franche.
@@ -3139,7 +3257,10 @@ $('#celeb').onclick = e => {
 function poidsCourant() {
   const w = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
     .filter(x => x.date >= shiftD(TODAY(), -56));
-  const tr = tendancePoids(w);
+  /* Hors pause : sans cela, une pesée de vacances gonflée d'eau déclencherait le
+     bandeau « objectifs à réajuster » et ferait recalculer les cibles sur un poids
+     qui n'est pas le vrai. */
+  const tr = tendancePoids(peseesHorsPause(w));
   if (tr) return { kg: Math.round(tr.fin * 10) / 10, lisse: true };
   const dernier = w[w.length - 1];
   return { kg: dernier ? dernier.kg : ((S().profile || {}).weight || 0), lisse: false };
@@ -3151,7 +3272,10 @@ function goalsBanner() {
   const hide = () => { box.className = 'hidden'; box.innerHTML = ''; };
   const ref = S().goalsWeight || 0, p = S().profile || {};
   const pc = poidsCourant();
-  if (curDate !== TODAY() || !ref || !pc.kg) return hide();
+  /* Pendant une pause, on ne propose PAS de réajuster les cibles : le poids affiché
+     est celui d'avant la coupure, et recalculer sur des vacances n'a aucun sens.
+     La proposition reviendra d'elle-même au retour. */
+  if (curDate !== TODAY() || !ref || !pc.kg || enPause(curDate)) return hide();
   const ecart = pc.kg - ref;
   if (Math.abs(ecart) < 0.5) return hide();
 
@@ -3443,7 +3567,19 @@ function renderToday() {
   const bil = bilanEnergieHebdo(curDate);
   const de = disponibiliteEnergetique(curDate);
   let tete = '';
-  if (de && de.alerte) {
+  if (enPause(curDate)) {
+    /* En pause, on remplace le verdict par le rappel de ce qui tourne : le compteur
+       du jour et les jauges restent au-dessus, ils décrivent sans juger. La
+       disponibilité énergétique, elle, garde sa priorité juste en dessous. */
+    tete = '<div class="prio ok"><b>Pause en cours.</b> Ta journée est enregistrée ' +
+           'normalement, mais elle ne compte ni dans le bilan de la semaine ni dans ' +
+           'ta tendance de poids. Profite.</div>';
+    if (de && de.alerte) {
+      tete += '<div class="prio warn"><b>Disponibilité énergétique à ' + r0(de.de) +
+        ' kcal/kg de masse maigre.</b> Ce seuil-là reste actif en pause : en dessous ' +
+        'de 30, les fonctions endocriniennes et la masse osseuse se dégradent. Mange davantage.</div>';
+    }
+  } else if (de && de.alerte) {
     /* La disponibilité énergétique passe AVANT tout le reste : c'est un seuil de
        sécurité, pas un objectif de composition. */
     tete = '<div class="prio warn"><b>Disponibilité énergétique à ' + r0(de.de) +
@@ -3461,7 +3597,16 @@ function renderToday() {
         'ci-dessus affinent la composition.</div>'
       : '<div class="prio warn"><b>' + (bil.ecart > 0 ? '+' : '−') + r0(Math.abs(bil.ecart)) +
         ' kcal par jour en moyenne sur ' + bil.jours + ' jours.</b> C\'est cette moyenne ' +
-        'qui décide de ton poids, pas une journée isolée.</div>';
+        'qui décide de ton poids, pas une journée isolée.' +
+        (bil.pause ? ' Les ' + bil.pause + ' jours de pause de la semaine sont écartés du calcul.' : '') +
+        '</div>';
+  } else if (bil && bil.pause && t.kcal > 0) {
+    /* Semaine de reprise : trop peu de jours hors pause pour un verdict, mais la
+       raison n'est pas un défaut de saisie — le dire, sinon le message précédent
+       reprocherait un manque qui n'existe pas. */
+    tete = '<div class="prio ok"><b>Retour de pause.</b> ' + bil.pause +
+           ' des sept derniers jours étaient en pause. Le bilan de la semaine reprendra ' +
+           'quand trois journées hors pause seront enregistrées.</div>';
   } else if (t.kcal > 0) {
     tete = '<div class="prio ok"><b>Pilotage du jour.</b> Le bilan énergétique se juge ' +
            'sur sept jours : il faut au moins trois journées renseignées.</div>';
@@ -3639,6 +3784,11 @@ function iconeCodeBarres(px) {
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
+
+/* Pose un fragment CONSTRUIT PAR L'APPLICATION dans un conteneur. N'accepte jamais
+   de saisie utilisateur non echappee : tout ce qui vient de l'exterieur passe par
+   `esc` avant d'arriver ici, comme partout ailleurs dans le fichier. */
+function poserHtml(box, html) { box.innerHTML = html; }
 
 $('#dPrev').onclick = () => { curDate = shiftD(curDate, -1); renderToday(); };
 $('#dNext').onclick = () => { if (curDate < TODAY()) { curDate = shiftD(curDate, 1); renderToday(); } };
@@ -4915,8 +5065,11 @@ function donneesCoach(nbJours, exclureJourCourant) {
      ligne. Les clés répétées soixante fois coûtaient 35 % du volume pour zéro
      information. Le modèle lit parfaitement ce format dès lors que l'en-tête le
      précède. Mesuré : 95 caractères par journée en objet nommé, 62 en ligne. */
+  /* `en_pause` voyage AVEC chaque journée, et non comme une liste de périodes à
+     part : le modèle lit une ligne à la fois, et une période qu'il devrait recouper
+     avec des dates serait ignorée la moitié du temps. */
   const colJours = ['date', 'kcal_consommees', 'kcal_cible', 'proteines_g', 'glucides_g',
-                    'lipides_g', 'fibres_g', 'alcool_g', 'eau_ml', 'nb_prises', 'seance'];
+                    'lipides_g', 'fibres_g', 'alcool_g', 'eau_ml', 'nb_prises', 'seance', 'en_pause'];
   const journees = jours.map(d => {
     const t = sumEntries(entriesOf(d));
     const o = objectifsDuJour(d);
@@ -4926,7 +5079,8 @@ function donneesCoach(nbJours, exclureJourCourant) {
     return [d, r0(t.kcal), r0(o.kcal), r0(t.prot), r0(t.carb), r0(t.fat), r0(t.fiber),
             r0(t.alc), r0(t.water),
             entriesOf(d).filter(e => e.meal !== DRINK && e.meal !== SUPP).length,
-            a ? a.nom + ' ' + r0(sc.v) + (a.type === 'distance' ? ' km' : ' min') : ''];
+            a ? a.nom + ' ' + r0(sc.v) + (a.type === 'distance' ? ' km' : ' min') : '',
+            enPause(d) ? 1 : 0];
   }).filter(Boolean);
 
   /* CATALOGUE DES ALIMENTS. Envoyer chaque occurrence de chaque repas est hors de
@@ -4961,7 +5115,7 @@ function donneesCoach(nbJours, exclureJourCourant) {
     .filter(x => x.date >= depuis);
   const wReg = DB.weights.slice().sort((x, y) => x.date.localeCompare(y.date))
     .filter(x => x.date >= shiftD(TODAY(), -56));
-  const tr = tendancePoids(wReg);
+  const tr = tendancePoids(peseesHorsPause(wReg));
 
   /* SÉANCES datées, avec leur coût réel. */
   const colSeances = ['date', 'activite', 'volume', 'unite', 'cout_kcal'];
@@ -4992,8 +5146,20 @@ function donneesCoach(nbJours, exclureJourCourant) {
        n ait pas a le deduire des dates, et surtout pour qu il sache quand une
        conclusion sur la tendance de poids est prematuree. */
     suivi: (function () {
+      const np = joursEnPause(depuis, jusqu);
       return { anciennete_jours: ancienneteSuivi(), seuil_demarrage_jours: SUIVI_DEMARRAGE,
-               phase: enDemarrage() ? 'demarrage' : 'etabli' };
+               phase: enDemarrage() ? 'demarrage' : 'etabli',
+               /* PAUSE DECLAREE. Le drapeau `en_pause` de chaque journee dit lesquelles ;
+                  ces deux champs evitent au modele d avoir a les compter. */
+               pause_en_cours: !!pauseEnCours(),
+               jours_en_pause_sur_la_periode: np,
+               note_pause: np
+                 ? 'certaines journees sont marquees en_pause=1 : coupure VOLONTAIRE et '
+                   + 'assumee (vacances, semaine chargee). Ce n est pas un relachement subi. '
+                   + 'N en tire aucun reproche, ne les compte pas dans un ecart energetique '
+                   + 'ni dans une charge d alcool, et ne conclus rien de la variation de poids '
+                   + 'sur ces jours : sodium, alcool et glycogene retiennent de l eau.'
+                 : 'aucune journee en pause sur la periode.' };
     })(),
     profil: { sexe: p.sex === 'f' ? 'femme' : 'homme', age: p.age, taille_cm: p.height,
               poids_kg: p.weight, masse_grasse_pct: p.bodyFat > 0 ? p.bodyFat : null,
@@ -5105,6 +5271,9 @@ Règles :
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne \
 en ordres de grandeur, jamais au gramme près ;
+- une journée dont "en_pause" vaut 1 est une coupure VOLONTAIRE (vacances, pause planifiée) : \
+ne la compte ni dans un écart énergétique ni dans une charge d'alcool, ne la présente jamais \
+comme un relâchement, et n'en conclus rien sur le poids — l'eau y masque la masse grasse ;
 - si la question sort de ton domaine ou demande un avis médical, dis-le et renvoie vers un \
 médecin. N'invente jamais une donnée absente du suivi : dis qu'elle manque.
 
@@ -5160,6 +5329,14 @@ Juge la charge de la semaine, jamais une soirée isolée ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne sur les \
 TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun chiffre au gramme près ;
 - une journée absente signifie « non renseignée », pas « jeûne » ;
+- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 est une coupure VOLONTAIRE et assumée : \
+vacances, semaine chargée, pause alimentaire planifiée. C'est un outil légitime en phase de perte \
+prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge \
+d'alcool, ne la présente jamais comme un manquement, et n'en tire aucune conclusion sur la \
+variation de poids — sodium, alcool et glycogène y retiennent de l'eau et masquent la masse grasse. \
+Si la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse \
+les autres normalement. Si la personne est encore en pause, ne propose aucun changement à \
+appliquer maintenant : formule ce qui sera à reprendre au retour ;
 - la période s'arrête HIER : la journée en cours est exclue parce qu'elle serait incomplète. \
 Ne réclame pas les données du jour et n'en déduis aucun manque ;
 - l'alcool apporte 7 kcal/g sans appartenir à aucun macronutriment : ses calories comptent dans "kcal" \
@@ -5442,6 +5619,19 @@ function attenteTendance(pts) {
 
 const TENDANCE_PESEES = 3, TENDANCE_JOURS = 10;
 
+/* Pesées retenues pour la RÉGRESSION. Celles prises pendant une pause en sortent :
+   sodium des repas au restaurant, alcool, glycogène plus haut, sommeil décalé — une
+   pesée de vacances peut monter de 1 à 2 kg sans qu'un gramme de gras ait bougé, et
+   une seule suffit à faire basculer une pente calculée sur huit semaines.
+   Elles restent AFFICHÉES sur le graphique, en cercle creux : on ne cache rien, on
+   dit seulement qu'elles ne fondent pas la tendance.
+   Si tout est en pause, on rend la série entière plutôt que rien : mieux vaut une
+   pente approximative qu'un écran muet. */
+function peseesHorsPause(pts) {
+  const hors = (pts || []).filter(p => !enPause(p.date));
+  return hors.length >= TENDANCE_PESEES ? hors : (pts || []);
+}
+
 function tendancePoids(pts) {
   if (pts.length < TENDANCE_PESEES) return null;
   const t0 = parseD(pts[0].date).getTime();
@@ -5517,14 +5707,23 @@ function lineChart(pts, debutPeriode) {
   }
 
   const d = pts.map((p, i) => (i ? 'L' : 'M') + X(xs[i]).toFixed(2) + ' ' + Y(p.kg).toFixed(2)).join(' ');
-  const dots = pts.map((p, i) => '<circle cx="' + X(xs[i]).toFixed(2) + '" cy="' + Y(p.kg).toFixed(2) + '" r="3" fill="#141414"/>').join('');
+  /* Une pesée de pause se trace en cercle CREUX : elle reste visible — rien n'est
+     caché — mais son aspect dit qu'elle ne fonde pas la tendance. */
+  const dots = pts.map((p, i) => '<circle cx="' + X(xs[i]).toFixed(2) + '" cy="' + Y(p.kg).toFixed(2) +
+    '" r="3"' + (enPause(p.date) ? ' fill="#ffffff" stroke="#141414" stroke-width="1.6"' : ' fill="#141414"') +
+    '/>').join('');
   const delta = ys[ys.length - 1] - ys[0];
-  const tr = tendancePoids(pts);
+  /* La ligne tracée doit correspondre au chiffre annoncé au-dessus du graphique :
+     même filtrage, sinon la pente dessinée contredirait le « kg/sem. » affiché. */
+  const reg = peseesHorsPause(pts);
+  const tr = tendancePoids(reg);
+  const xr = reg.map(p => parseD(p.date).getTime());
   const ligneTendance = tr
-    ? '<line x1="' + X(Math.min(...xs)).toFixed(2) + '" y1="' + Y(tr.debut).toFixed(2) +
-      '" x2="' + X(Math.max(...xs)).toFixed(2) + '" y2="' + Y(tr.fin).toFixed(2) +
+    ? '<line x1="' + X(Math.min(...xr)).toFixed(2) + '" y1="' + Y(tr.debut).toFixed(2) +
+      '" x2="' + X(Math.max(...xr)).toFixed(2) + '" y2="' + Y(tr.fin).toFixed(2) +
       '" stroke="#84878c" stroke-width="1.6" stroke-dasharray="5 4"/>'
     : '';
+  const nPause = pts.length - reg.length;
   return '<svg class="chart" viewBox="0 0 ' + CW + ' 150">' + grille +
     '<line class="gl" x1="' + gauche + '" y1="' + CBASE + '" x2="' + droite + '" y2="' + CBASE + '"/>' +
     '<line class="gl" x1="' + gauche + '" y1="' + CTOP + '" x2="' + gauche + '" y2="' + CBASE + '"/>' +
@@ -5534,7 +5733,12 @@ function lineChart(pts, debutPeriode) {
     /* Ce texte est du TEXTE a 10 px, pas un trait de graphique : seuil 4,5:1. */
     '<div class="tiny" style="text-align:right;margin-top:2px">' +
     (tr ? '- - tendance · ' : '') + '<span style="color:' + (delta <= 0 ? '#1f7a44' : '#a55708') + '">' +
-    (delta > 0 ? '+' : '−') + Math.abs(delta).toFixed(1).replace('.', ',') + ' kg</span> entre la première et la dernière pesée</div>';
+    (delta > 0 ? '+' : '−') + Math.abs(delta).toFixed(1).replace('.', ',') + ' kg</span> entre la première et la dernière pesée' +
+    /* La légende n'apparaît que s'il y a quelque chose à expliquer : sans pesée de
+       pause dans la fenêtre, elle serait du bruit. */
+    (nPause ? '<br>○ ' + nPause + (nPause > 1 ? ' pesées prises en pause, hors tendance' :
+                                                ' pesée prise en pause, hors tendance') : '') +
+    '</div>';
 }
 
 /* Une graduation au demi-kilo doit montrer sa decimale, une au kilo non : afficher
@@ -5803,8 +6007,8 @@ function renderHistory() {
   $('#chartWeight').innerHTML = lineChart(wpts, days[0]);
   /* Le rythme se lit sur une fenêtre fixe de 8 semaines, indépendante du sélecteur :
      la valeur ne doit pas changer quand on bascule entre 30 jours, 3 mois et 6 mois. */
-  const fenetre = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
-    .filter(w => w.date >= shiftD(TODAY(), -56));
+  const fenetre = peseesHorsPause(DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
+    .filter(w => w.date >= shiftD(TODAY(), -56)));
   const tr = tendancePoids(fenetre);
   if (!tr) {
     $('#wRate').textContent = attenteTendance(fenetre);
@@ -5930,6 +6134,7 @@ function renderSettings() {
   ['prot', 'carb', 'fat', 'fiber'].forEach(k =>
     $('#x' + k.charAt(0).toUpperCase() + k.slice(1)).value = gx[k] > 0 ? gx[k] : '');
   renderActivites();
+  renderPauseSettings();
   renderFoodsSettings();
   renderTplsSettings();
   renderSuppsSettings();
@@ -6154,6 +6359,65 @@ function editFood(f) {
       };
     });
 }
+
+/* Bloc « Pause » des Réglages : l'interrupteur, plus l'historique des périodes
+   passées. Les montrer n'est pas décoratif — c'est ce qui explique pourquoi telle
+   pesée est en cercle creux ou telle semaine sans verdict.
+   Toutes les valeurs posées ici sont INTERNES (dates de l'application, entiers) ;
+   la seule qui parte en attribut passe par `esc`. */
+function renderPauseSettings() {
+  const box = $('#sPause');
+  if (!box) return;
+  const cur = pauseEnCours();
+  const passees = pauses().filter(p => p.fin).sort((a, b) => b.debut.localeCompare(a.debut));
+  let h = '';
+  if (cur) {
+    const n = joursEnPause(cur.debut, TODAY());
+    h += '<div class="prio ok" style="margin:0 0 10px"><b>Pause en cours depuis le ' +
+         frDate(cur.debut) + '.</b> ' + n + (n > 1 ? ' jours' : ' jour') +
+         ' pour l\'instant. Tes journées restent enregistrées.</div>' +
+         '<button class="btn sm pri" id="pauseStop" style="width:100%">Terminer la pause</button>';
+  } else {
+    h += '<button class="btn sm" id="pauseGo" style="width:100%">Démarrer une pause</button>';
+  }
+  if (passees.length) {
+    /* Date ABSOLUE ici, pas `frDate` : dans un intervalle, « du 16 août au Hier » ne
+       se lit pas. Les libellés relatifs servent à désigner une journée, pas à borner
+       une période. */
+    const abs = s => cap1(parseD(s).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }));
+    h += '<h3 class="sub">Pauses passées</h3>' + passees.slice(0, 6).map(p => {
+      const n = joursEnPause(p.debut, p.fin);
+      return '<div class="entry" style="padding:9px 12px"><div class="grow"><div class="nm">' +
+        (p.fin !== p.debut ? 'Du ' + abs(p.debut) + ' au ' + abs(p.fin) : 'Le ' + abs(p.debut)) + '</div>' +
+        '<div class="dt">' + n + ' jour' + (n > 1 ? 's' : '') + '</div></div>' +
+        '<button class="btn sm gho" data-pausedel="' + esc(p.debut) + '">Retirer</button></div>';
+    }).join('');
+  }
+  poserHtml(box, h);
+}
+
+$('#sPause').onclick = e => {
+  if (e.target.closest('#pauseGo')) {
+    demarrerPause();
+    renderPauseSettings(); renderToday(); renderHistory();
+    toast('Pause démarrée. Continue à enregistrer, rien ne sera jugé.');
+  } else if (e.target.closest('#pauseStop')) {
+    terminerPause();
+    renderPauseSettings(); renderToday(); renderHistory();
+    toast('Pause terminée. Le suivi reprend.');
+  } else {
+    const del = e.target.closest('[data-pausedel]');
+    if (del) {
+      /* Retirer une pause passée REND ses journées aux bilans : on confirme, parce
+         que le seul retour en arrière est de la redéclarer à la main. */
+      const d = del.getAttribute('data-pausedel');
+      if (!confirm('Retirer cette pause ? Ses journées et ses pesées seront de nouveau comptées dans les bilans et la tendance.')) return;
+      S().pauses = pauses().filter(p => p.debut !== d);
+      save(); renderPauseSettings(); renderToday(); renderHistory();
+      toast('Pause retirée');
+    }
+  }
+};
 
 function renderTplsSettings() {
   const box = $('#sTpls');
@@ -6540,6 +6804,15 @@ function sanitizeBackup(inc) {
           fiber: pos(x.fiber, 500)
         })),
       lastExport: num(s.lastExport), remindAfter: num(s.remindAfter), weightRemind: num(s.weightRemind),
+      /* Les pauses SONT restaurées, contrairement à l'analyse ou au chat : ce ne sont
+         pas des états de session mais un fait daté du suivi. Sans elles, une
+         restauration ferait rentrer les journées de vacances dans les bilans et
+         changerait la tendance de poids sans que rien ne l'explique.
+         `fin` reste null pour une pause encore ouverte ; on écarte l'incohérent. */
+      pauses: (Array.isArray(s.pauses) ? s.pauses : []).slice(0, 200)
+        .filter(x => x && typeof x === 'object' && isDate(x.debut))
+        .filter(x => x.fin == null || (isDate(x.fin) && x.fin >= x.debut))
+        .map(x => ({ debut: x.debut, fin: isDate(x.fin) ? x.fin : null })),
       // au dixième : le seuil de réajustement est à 500 g, un arrondi à l'entier fausserait la comparaison
       goalsWeight: clamp(Math.round((Number(s.goalsWeight) || 0) * 10) / 10, 0, 400),
       quota: null,
@@ -6880,7 +7153,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v12.14' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.0' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
