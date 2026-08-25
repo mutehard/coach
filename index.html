@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.1</title>
+<title>Coach v13.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,25 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.2 — **Definition des photos : « Detaillee » (1024 px) par defaut.** Les etiquettes se
+            lisent mal en 768 et l'estimation d'un repas gagne au detail. La v2.23 avait
+            abaisse a 768 pour tenir dans le quota gratuit ; le budget s'auto-calibre depuis
+            sur le cout reellement mesure, ce qui rend ce garde-fou moins necessaire.
+            CONTREPARTIE A CONNAITRE : une analyse en 1024 tient dans les 8000 jetons de la
+            minute, DEUX D'AFFILEE NON — la ou 768 le permettait (2 x 3929). L'attente est
+            calculee et annoncee par `attenteNecessaire()`, rien ne casse.
+            Changer `DEFAULTS` ne suffisait pas : `deepMerge` donne raison au stockage, et
+            une installation existante serait restee en 768 pour toujours. Migration ajoutee,
+            qui ne remonte QUE les installations restees sur l'ANCIEN DEFAUT — un choix
+            delibere, 512 ou 1024, n'est jamais touche.
+            PIEGE RENCONTRE, le meme qu'en v12.1 : `revReglages: 1` place dans `DEFAULTS`
+            etait herite par `deepMerge` sur les installations existantes, qui se croyaient
+            donc deja migrees — la migration ne tournait jamais. La revision se lit
+            desormais dans `BRUT_STOCKE`, jamais dans `S()`, comme `normaliserModele` prend
+            la version de ce qu'on ADOPTE.
+            Corrige au passage trois TIRETS CADRATINS oublies par le balayage de la v12.14 :
+            ceux des trois options du selecteur, en HTML statique et non dans une chaine JS.
+            Et le message de confirmation presentait toujours 768 comme « recommande ».
     v13.1 — **Trouve en revue de securite : une date bien formee mais inexistante cassait
             l'ecran Reglages, definitivement.** `isDate` ne verifiait que la FORME :
             « 2026-13-45 » et « 2026-02-30 » passaient. La v13.0 les a rendues fatales, en
@@ -1366,9 +1385,9 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
       </label>
       <label class="f"><span>Définition des photos envoyées</span>
         <select class="in" id="sImgPx">
-          <option value="512">Minimale — 512 px, deux fois moins qu'en 768</option>
-          <option value="768">Équilibrée — 768 px, recommandée</option>
-          <option value="1024">Détaillée — 1024 px, pour lire les petites étiquettes</option>
+          <option value="512">Minimale : 512 px, deux fois moins qu'en 768</option>
+          <option value="768">Équilibrée : 768 px</option>
+          <option value="1024">Détaillée : 1024 px, pour lire les petites étiquettes</option>
         </select>
       </label>
       <div id="quotaInfo" class="tiny" style="margin-bottom:10px"></div>
@@ -1449,7 +1468,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1524,7 +1543,15 @@ const DEFAULTS = {
     journalQuota: [],
     quotaUntil: 0,
     quotaJour: false,
-    imgPx: 768,
+    /* 1024 px par defaut : les etiquettes de produits se lisent mal en 768, et
+       l'estimation d'un repas gagne au detail. Le cout tient — une photo detaillee
+       reserve davantage sur le quota par minute, mais le budget de `coutPrevu()`
+       s'ajuste seul sur la derniere mesure reelle. */
+    imgPx: 1024,
+    /* Revision des PREFERENCES, distincte de `modele` qui ne porte que les seuils
+       nutritionnels : declencher `normaliserModele` pour un reglage de photo
+       remettrait `goalsWeight` a zero et reecrirait la cible d'hydratation. */
+    revReglages: 1,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -2301,6 +2328,34 @@ function normaliserModele(st, versionSource) {
   if (normaliserModele(S())) {
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
   }
+})();
+
+/* Reprise des PRÉFÉRENCES, une seule fois par révision.
+
+   La définition des photos passe de 768 à 1024 px par défaut. Changer `DEFAULTS` ne
+   suffit pas : `deepMerge` donne raison au stockage, et une installation existante
+   garderait 768 indéfiniment sans jamais voir la nouvelle valeur.
+
+   On ne remonte QUE les installations restées sur l'ANCIEN DÉFAUT. Un choix
+   délibéré — 512 pour économiser le quota, ou 1024 déjà posé — n'est pas touché :
+   remplacer un réglage que l'utilisateur a lui-même choisi serait une trahison, et
+   il n'y a aucun moyen de distinguer « 768 hérité » de « 768 voulu » autrement que
+   par cette règle. */
+(function migrerReglages() {
+  const s = BRUT_STOCKE.settings;
+  if (!s) return;                                // installation neuve : DEFAULTS suffit
+  /* LA RÉVISION SE LIT DANS LE STOCKAGE BRUT, jamais dans `S()`. `DEFAULTS` porte
+     `revReglages: 1` pour que rien ne se déclenche sur une installation neuve — mais
+     `deepMerge` comble les clés absentes avec le défaut, si bien qu'une installation
+     EXISTANTE, qui n'a jamais vu ce champ, hériterait de 1 et la migration se croirait
+     déjà passée.
+     C'est le piège du `goalsMax.alc: 100` de la v12.1, à l'identique : une valeur par
+     défaut qui fait croire à une migration qu'elle a déjà tourné. Même correctif que
+     `normaliserModele`, qui prend la version de ce qu'on ADOPTE et non de ce qu'on a. */
+  if (r0(s.revReglages) >= 1) return;
+  if (r0(s.imgPx) === 768) S().imgPx = 1024;
+  S().revReglages = 1;
+  try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 })();
 
 /* Reprise des installations antérieures à la v3.0 : les cibles uniques existantes
@@ -4945,7 +5000,7 @@ async function addPhoto(input) {
     const bmp = await loadBitmap(file);
     /* La consommation de jetons d'un modèle vision suit la définition de l'image :
        c'est le premier levier quand le quota journalier est la contrainte. */
-    pending.push({ big: toJpeg(bmp, S().imgPx || 768, 0.82), thumb: toJpeg(bmp, 220, 0.6) });
+    pending.push({ big: toJpeg(bmp, S().imgPx || 1024, 0.82), thumb: toJpeg(bmp, 220, 0.6) });
     if (bmp.close) bmp.close();
     renderTray();
     /* Point d'accroche pour une feuille qui gère elle-même l'état de son bouton — la
@@ -6145,7 +6200,7 @@ function fillModels() {
 function renderSettings() {
   $('#sKey').value = S().apiKey;
   fillModels();
-  $('#sImgPx').value = String(S().imgPx || 768);
+  $('#sImgPx').value = String(S().imgPx || 1024);
   /* Coût RÉEL de la dernière requête, rapporté par Groq. C'est la seule mesure fiable
      du budget : tout le reste n'était qu'estimation à partir du nombre de caractères. */
   const dc = S().dernierCout;
@@ -6191,7 +6246,7 @@ $('#sImgPx').onchange = e => {
   S().imgPx = +e.target.value; save();
   toast('Photos en ' + S().imgPx + ' px' +
         (S().imgPx === 512 ? ' (consommation minimale)' :
-         S().imgPx === 768 ? ' (réglage recommandé)' : ' (étiquettes plus lisibles)'));
+         S().imgPx === 768 ? ' (compromis)' : ' (réglage recommandé, étiquettes lisibles)'));
 };
 
 $('#sModelLoad').onclick = async () => {
@@ -6868,7 +6923,7 @@ function sanitizeBackup(inc) {
       dernierCout: null, coutsRep: [], journalQuota: [],
       /* le verrou est un état de session, jamais restauré depuis un fichier */
       quotaUntil: 0, quotaJour: false,
-      imgPx: [512, 768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 768,
+      imgPx: [512, 768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 1024,
       activites: (function () {
         /* On repart TOUJOURS du catalogue par défaut et on ne reprend du fichier que
            les valeurs réglables. Une activité inconnue importée n'aurait ni icône ni
@@ -7194,7 +7249,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.1' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.2' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
