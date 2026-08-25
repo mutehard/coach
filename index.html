@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.2</title>
+<title>Coach v13.3</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,29 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.3 — **Trois defauts trouves en verifiant si le modele suit un passage en PRISE DE
+            MASSE.** Il suit, mais trois choses clochaient.
+            1. LA BANNIERE « objectifs a reajuster » ANNONCAIT AUTRE CHOSE QUE CE QU'ELLE
+               APPLIQUE. Elle calculait ses chiffres a part — Mifflin en clair, puis
+               2,0 g/kg en deficit et 1,7 sinon — une regle anterieure a la table
+               `PROT_PLANCHER` de la v12.0. Mesure : -8 g de proteines en prise, +20 g en
+               deficit marque. Elle appelle desormais `cibleEnergetique` et
+               `fourchettesProfil`, exactement comme le bouton.
+            2. LA BORNE BASSE DE LA ZONE DE PRISE ETAIT A 0,1 %, quand le prompt d'analyse
+               annonce 0,25 %. Entre les deux, l'application disait « rythme optimal »
+               pendant que le modele, sur les memes donnees, placait la personne SOUS la
+               zone. Deux verdicts opposes sur le meme ecran. Aligne a 0,25 %.
+            3. IL MANQUAIT UN PALIER « PRISE LENTE ». La perte en a quatre (trop rapide,
+               optimal, lente, pas de perte), la prise n'en avait que trois : une
+               progression de 0,13 %/semaine passait pour optimale alors qu'elle est trop
+               lente pour construire du muscle. Palier ajoute, symetrique et de meme ton
+               que « Perte lente ».
+            Verifie par ailleurs, et correct sans modification : la cible energetique monte
+            avec `aim`, les planchers basculent sur la colonne `prise` de `PROT_PLANCHER`,
+            la modulation par l'agressivite du deficit ne s'applique qu'en deficit, fibres
+            et lipides suivent l'energie, la mascotte s'indexe sur le RATIO a la cible du
+            jour et non sur un deficit suppose, et la charge IA porte `visee: prise de
+            muscle`.
     v13.2 — **Definition des photos : « Detaillee » (1024 px) par defaut.** Les etiquettes se
             lisent mal en 768 et l'estimation d'un repas gagne au detail. La v2.23 avait
             abaisse a 768 pour tenir dans le quota gratuit ; le budget s'auto-calibre depuis
@@ -1468,7 +1491,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -3369,10 +3392,15 @@ function goalsBanner() {
   const ecart = pc.kg - ref;
   if (Math.abs(ecart) < 0.5) return hide();
 
-  const n = { kcal: 0, prot: 0 };
-  const bmr = 10 * pc.kg + 6.25 * p.height - 5 * p.age + (p.sex === 'h' ? 5 : -161);
-  n.kcal = Math.max(1200, Math.round((bmr * p.act + p.aim) / 10) * 10);
-  n.prot = Math.round(pc.kg * (p.aim < 0 ? 2.0 : 1.7));
+  /* LES MÊMES FONCTIONS QUE LE BOUTON, pas une formule parallèle. La bannière calculait
+     ses chiffres à part — Mifflin en clair, puis 2,0 g/kg en déficit et 1,7 sinon — une
+     règle qui datait d'avant la table `PROT_PLANCHER` de la v12.0. Elle annonçait donc
+     autre chose que ce que « Recalculer » applique : mesuré, −8 g en prise de masse et
+     +20 g en déficit marqué. Annoncer un chiffre puis en poser un autre est le défaut
+     le plus corrosif qui soit pour la confiance dans l'outil. */
+  const prof = Object.assign({}, p, { weight: pc.kg });
+  const ce = cibleEnergetique(prof);
+  const n = { kcal: ce.kcal, prot: fourchettesProfil(prof, ce.kcal).min.prot };
 
   box.className = '';
   box.innerHTML = '<div class="nag info"><div class="grow"><b>Objectifs à réajuster</b><span>' +
@@ -5892,8 +5920,19 @@ function jugerRythme(kgSem, poids, aim) {
   if (aim > 0) {
     if (pct >= 0.5) return { couleur: orange, cls: 'warn', titre: 'Prise trop rapide.',
       texte: p1 + ' % par semaine. Au-delà de 0,5 %, la part de gras prise augmente nettement.' };
-    if (pct >= 0.1) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
+    /* La borne basse est à 0,25 %, comme l'annonce le prompt d'analyse. Elle était à
+       0,1 % : entre les deux, l'application disait « optimal » quand le modèle, lisant
+       les mêmes données, plaçait la personne SOUS la zone. Deux verdicts opposés sur
+       le même écran. */
+    if (pct >= 0.25) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
       texte: p1 + ' % par semaine, dans la zone d\'une prise majoritairement maigre.' };
+    /* Symétrique de « Perte lente » : la prise avait trois paliers là où la perte en a
+       quatre, et une progression de 0,13 % passait pour optimale alors qu'elle est trop
+       lente pour construire du muscle efficacement. */
+    if (pct > 0.1) return { couleur: vert, cls: 'ok', titre: 'Prise lente.',
+      texte: p1 + ' % par semaine : tu montes vraiment, mais sous la zone optimale ' +
+             '(0,25 à 0,5 %). C\'est tenable si tu privilégies la qualité de la prise ; ' +
+             'ajoute 100 à 200 kcal si tu veux avancer plus vite.' };
     if (demarrage) return { couleur: neutre, cls: '', titre: 'Trop tôt pour conclure.',
       texte: 'Quelques semaines sont nécessaires avant qu\'une prise se distingue du bruit ' +
              'de la balance. Continue à enregistrer.' };
@@ -7249,7 +7288,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.2' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.3' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
