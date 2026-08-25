@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.0</title>
+<title>Coach v13.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,25 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.1 — **Trouve en revue de securite : une date bien formee mais inexistante cassait
+            l'ecran Reglages, definitivement.** `isDate` ne verifiait que la FORME :
+            « 2026-13-45 » et « 2026-02-30 » passaient. La v13.0 les a rendues fatales, en
+            introduisant `joursEnPause`, dont l'arithmetique de dates lance alors
+            `RangeError` et emporte tout le rendu des Reglages — un ecran mort ne se
+            reparant plus DEPUIS l'application.
+            Chemin complet : sauvegarde editee a la main -> import accepte -> Reglages
+            inutilisables. Corrige des deux cotes :
+              · `isDate` verifie desormais que la date EXISTE, par aller-retour — une
+                surcharge de mois ou de jour ne se reserialise pas a l'identique. Cela
+                protege aussi les dates de repas et de pesees, dont la faiblesse etait
+                anterieure a la v13.0 ;
+              · `pauses()` ecarte en plus toute periode invalide DEJA en memoire, et
+                `joursEnPause` rend 0 sur une entree douteuse plutot que de lancer, avec
+                une borne dure de boucle. La sanitisation est la bretelle, ce filtre est
+                la ceinture : une donnee peut etre corrompue sans passer par l'import.
+            Verifie : dateValide ne lance sur aucune des 13 entrees testees (null, objets,
+            31 fevrier, mois 13), les Reglages se rendent malgre trois pauses corrompues,
+            et seule la periode valide subsiste.
     v13.0 — **Fonction dimensionnante : la PAUSE DECLAREE.** Vacances, semaine chargee,
             coupure assumee. Un interrupteur dans les Reglages ; pendant qu'il est actif,
             l'application CONTINUE d'enregistrer mais cesse de JUGER.
@@ -1430,7 +1449,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -1889,7 +1908,20 @@ function enDemarrage() {
    La disponibilité énergétique n'est PAS mise en pause : c'est un seuil de
    sécurité (RED-S), pas un objectif de composition. Manger trop peu reste
    dangereux en vacances comme ailleurs. */
-function pauses() { return (S().pauses || []).filter(p => p && p.debut); }
+/* Une date de pause doit etre REELLE, pas seulement bien formee : « 2026-13-45 » passe
+   une verification de forme et fait ensuite lancer `RangeError` a toute arithmetique de
+   dates. La sanitisation d'import s'en charge deja, mais une donnee peut aussi etre
+   corrompue en place (stockage tronque, edition manuelle) — et un ecran qui plante ne
+   se repare plus depuis l'application. Ce filtre est la ceinture, l'import est la
+   bretelle. */
+function dateValide(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && dstr(parseD(s)) === s;
+}
+
+function pauses() {
+  return (S().pauses || []).filter(p =>
+    p && dateValide(p.debut) && (p.fin == null || (dateValide(p.fin) && p.fin >= p.debut)));
+}
 
 /* Une date tombe-t-elle dans une pause ? `fin` absente = pause encore ouverte. */
 function enPause(date) {
@@ -1923,8 +1955,11 @@ function terminerPause() {
 /* Jours cumulés de pause sur une fenêtre, pour annoncer le contexte au modèle
    et à l'utilisateur sans avoir à énumérer les périodes. */
 function joursEnPause(depuis, jusqu) {
+  if (!dateValide(depuis) || !dateValide(jusqu) || jusqu < depuis) return 0;
   let n = 0;
-  for (let d = depuis; d <= jusqu; d = shiftD(d, 1)) if (enPause(d)) n++;
+  /* Borne dure : meme sur des dates valides mais absurdement eloignees, la boucle doit
+     se terminer. Dix ans couvrent tout usage reel de l'application. */
+  for (let d = depuis, i = 0; d <= jusqu && i < 3700; d = shiftD(d, 1), i++) if (enPause(d)) n++;
   return n;
 }
 
@@ -6740,7 +6775,13 @@ function sanitizeBackup(inc) {
   // corrompue rend les graphiques et les jauges illisibles
   const pos = (v, max, def) => { const n = num(v); return n > 0 ? Math.min(n, max) : (def || 0); };
   const mealIds = ALL_MEALS;
-  const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s);
+  /* La forme NE SUFFIT PAS : « 2026-13-45 » satisfait la regex et produit pourtant une
+     date invalide, dont toute arithmetique lance `RangeError`. On verifie donc que la
+     date existe reellement, par aller-retour — `new Date(2026, 12, 45)` deborde sur un
+     autre mois et ne se reserialise pas a l'identique.
+     Trouve en revue de securite : une sauvegarde editee a la main suffisait a casser
+     definitivement l'ecran Reglages. */
+  const isDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && dstr(parseD(s)) === s;
 
   const entries = (inc.entries || []).filter(e => e && typeof e === 'object').map(e => {
     const o = {
@@ -7153,7 +7194,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.0' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.1' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
