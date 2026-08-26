@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.3</title>
+<title>Coach v13.4</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,33 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.4 — **Le Suivi echange le detail des journees contre deux visuels.**
+            MACRONUTRIMENTS PAR JOUR : quatre histogrammes, un par macro, chacun avec son
+            plancher. Le plancher trace est la MOYENNE des planchers du jour et non
+            `S().goals` : avec le cyclage, celui des glucides se deplace, et une ligne fixe
+            placerait la moitie des barres du mauvais cote.
+            ENTRAINEMENT ET REPOS : une bande d'une case par jour — seance, repos, non
+            renseigne — surmontant un ruban gris qui marque les periodes de pause. Ni un
+            histogramme ni une courbe : ce qu'on lit est un MOTIF, la regularite et les
+            trous.
+            La carte « Detail des journees » disparait, avec son CSS `.dayrow` / `.pill`.
+            ELLE PORTAIT UNE NAVIGATION : une ligne ouvrait la journee dans le Journal. Ce
+            chemin passe desormais par les fleches de date du Journal.
+            DEUX PIEGES RENCONTRES :
+              · `barChart` n'avait que DEUX identifiants de degrade, `bg2` et `bg2b`. Les
+                `id` SVG etant globaux au document, les quatre graphiques colores
+                partageaient le meme et prenaient tous la couleur du premier rendu. Un
+                identifiant par couleur desormais.
+              · un `stop-color="var(--prot)"` pose en ATTRIBUT SVG ne resout pas la
+                variable CSS : les barres seraient sorties noires. Table `COULEURS_MACRO`
+                en litteral, par paires haut/bas de degrade.
+            Le ruban de pause se dessine par PLAGES CONTIGUES : un rectangle par journee
+            laissait, coordonnees arrondies, un lisere blanc entre chaque case — une pause
+            d'une semaine avait l'air de sept pauses d'un jour.
+            Contrastes mesures sur blanc : encre 18,4 et gris de repos 3,19 tiennent le
+            seuil de 3:1. Le troisieme etat marque une ABSENCE et reste en piste tres
+            claire, avec une pastille CREUSE en legende — un rond plein annoncerait un
+            etat la ou il n'y a rien.
     v13.3 — **Trois defauts trouves en verifiant si le modele suit un passage en PRISE DE
             MASSE.** Il suit, mais trois choses clochaient.
             1. LA BANNIERE « objectifs a reajuster » ANNONCAIT AUTRE CHOSE QUE CE QU'ELLE
@@ -1232,15 +1259,7 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .rate{display:block;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;margin-top:3px}
 .rate b{font-weight:800;font-size:12.5px}
 .rate span{color:var(--dim2);font-weight:500;margin-left:5px}
-.dayrow{display:flex;align-items:center;gap:11px;padding:11px 2px;border-bottom:1px solid var(--line)}
-.dayrow:last-child{border-bottom:0}
-.dayrow .d{font-size:13.5px;font-weight:600}
-.dayrow .m{font-size:11px;color:var(--dim2);margin-top:1px}
-.dayrow .v{font-weight:700;font-size:14px;font-variant-numeric:tabular-nums}
-.pill{font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;background:#e3f3e8;color:var(--acc-l)}
-/* Le texte est plus sombre que --warn : la pastille a son propre fond teinte,
-   sur lequel --warn ne tient pas le seuil (4,41:1). */
-.pill.over{background:#fbe7d6;color:#9b5208}
+/* `.dayrow` et `.pill` sont partis avec la carte « Détail des journées » en v13.4. */
 
 /* ---------- divers ---------- */
 #toast{position:fixed;left:50%;bottom:calc(96px + var(--sab));transform:translateX(-50%);z-index:90;
@@ -1387,9 +1406,16 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
       <h2>Hydratation par jour</h2>
       <div id="chartWater"></div>
     </div>
+    <!-- Les quatre macronutriments partagent une carte : ce sont quatre lectures du
+         MÊME geste alimentaire, et les séparer en quatre cartes ferait perdre la
+         comparaison d'un coup d'œil. -->
     <div class="card">
-      <h2>Détail des journées</h2>
-      <div id="dayList"></div>
+      <h2>Macronutriments par jour</h2>
+      <div id="chartMacros"></div>
+    </div>
+    <div class="card">
+      <h2>Entraînement et repos</h2>
+      <div id="chartSeances"></div>
     </div>
   </section>
 
@@ -1491,7 +1517,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.3 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -2417,6 +2443,16 @@ const MACROS = [
   { k: 'fat',   nom: 'Lipides',   ini: 'L', col: 'var(--fat)' },
   { k: 'fiber', nom: 'Fibres',    ini: 'F', col: 'var(--fib)' }
 ];
+
+/* Les mêmes quatre teintes, en LITTÉRAL et par paires haut/bas de dégradé. Un
+   `stop-color="var(--prot)"` posé en ATTRIBUT SVG ne résout pas la variable CSS : la
+   barre sortirait noire. La seconde valeur est la teinte assombrie du dégradé. */
+const COULEURS_MACRO = {
+  prot:  ['#1d4e89', '#14385f'],
+  carb:  ['#856819', '#5e4a12'],
+  fat:   ['#932c52', '#6a1f3b'],
+  fiber: ['#3c783c', '#2a552a']
+};
 
 /* « 41 / 79 / 30 / 8 g » — les quatre valeurs, toujours les quatre, y compris à zéro : une
    valeur qui disparaît quand elle vaut zéro fait glisser les suivantes et rend la ligne
@@ -5672,9 +5708,12 @@ function daysBack(n) {
    sans cela (preserveAspectRatio="none") les textes des axes seraient étirés. */
 const CW = 360, CTOP = 8, CBASE = 118, CLAB = 134;
 
-function barChart(days, vals, goal, unite, c1, c2) {
+function barChart(days, vals, goal, unite, c1, c2, libelle) {
   const n = vals.length, plotH = CBASE - CTOP;
-  const gid = 'bg' + (c1 ? '2b' : '2');
+  /* UN IDENTIFIANT PAR COULEUR, et non deux en tout. Les `id` SVG sont globaux au
+     document : avec `bg2` et `bg2b` pour seules valeurs, quatre graphiques colorés
+     partageaient le même dégradé et prenaient tous la couleur du premier rendu. */
+  const gid = 'bg' + String(c1 || 'defaut').replace(/[^a-z0-9]/gi, '');
   const max = Math.max(goal || 0, ...vals, 1) * 1.12;
   const bw = CW / n, pad = Math.min(bw * 0.22, 2.4);
   let bars = '', labs = '';
@@ -5703,7 +5742,74 @@ function barChart(days, vals, goal, unite, c1, c2) {
     (gy !== null ? '<line x1="0" y1="' + gy.toFixed(2) + '" x2="' + CW + '" y2="' + gy.toFixed(2) +
       '" stroke="#84878c" stroke-width="1" stroke-dasharray="5 4"/>' : '') +
     labs + '</svg>' +
-    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">- - objectif ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
+    /* « objectif » pour une cible qu'on vise, « plancher » pour un seuil qu'on dépasse :
+       les macronutriments n'ont pas de plafond, et les appeler « objectif » laissait
+       croire qu'il ne fallait pas aller au-delà. */
+    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">- - ' + (libelle || 'objectif') +
+      ' ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
+}
+
+/* ENTRAÎNEMENT ET REPOS — une bande d'une case par jour, plus un ruban de pause.
+
+   Ni un histogramme ni une courbe : ce qu'on lit ici est un MOTIF — la régularité des
+   séances, les trous, les coupures. Une case pleine se compare à sa voisine d'un coup
+   d'œil, là où une barre de hauteur constante n'ajouterait rien.
+
+   Le ruban de pause est SOUS les cases et non derrière : une pause n'est pas un état de
+   la journée d'entraînement, c'est une période qui les recouvre. En gris neutre, jamais
+   en jaune d'accent — une pause n'est ni un succès ni une alerte. */
+const SW = 360, SCASE_H = 26, SCASE_Y = 4, SRUB_Y = 34, SRUB_H = 6, SLAB_Y = 54;
+
+function stripSeances(days) {
+  const n = days.length;
+  if (!n) return '<div class="empty" style="padding:18px">Aucune journée sur la période.</div>';
+  const bw = SW / n, pad = Math.min(bw * 0.18, 1.8);
+  let cases = '', ruban = '', labs = '';
+  let nSeances = 0, nRepos = 0, nPause = 0;
+  /* Les deux états PORTEURS d'information tiennent le seuil de 3:1 sur blanc — encre
+     18,4 et gris de repos 3,19. Le troisième marque une ABSENCE : il reste en piste
+     très claire, parce qu'il ne dit rien par lui-même, il dit qu'il n'y a rien. */
+  days.forEach((d, i) => {
+    const x = i * bw + pad, w = Math.max(bw - pad * 2, 0.8);
+    const train = estJourEntrainement(d);
+    const suivi = sumEntries(entriesOf(d)).kcal > 0;
+    if (enPause(d)) nPause++;
+    if (train) nSeances++; else if (suivi) nRepos++;
+    const col = train ? '#141414' : suivi ? '#8e918c' : '#ececea';
+    cases += '<rect x="' + x.toFixed(2) + '" y="' + SCASE_Y + '" width="' + w.toFixed(2) +
+      '" height="' + SCASE_H + '" rx="' + Math.min(w / 2, 2).toFixed(2) + '" fill="' + col + '"/>';
+  });
+  /* Le ruban se dessine par PLAGES CONTIGUËS et non jour par jour : un rectangle par
+     journée laissait, une fois les coordonnées arrondies au centième, un liseré blanc
+     entre chaque case — une pause d'une semaine avait l'air de sept pauses d'un jour. */
+  for (let i = 0; i < n; i++) {
+    if (!enPause(days[i])) continue;
+    let fin = i;
+    while (fin + 1 < n && enPause(days[fin + 1])) fin++;
+    ruban += '<rect x="' + (i * bw).toFixed(2) + '" y="' + SRUB_Y + '" width="' +
+      Math.max((fin - i + 1) * bw, 1).toFixed(2) + '" height="' + SRUB_H +
+      '" rx="' + Math.min(SRUB_H / 2, 3) + '" fill="#6e7175"/>';
+    i = fin;
+  }
+  const step = n <= 8 ? 1 : n <= 31 ? 5 : n <= 100 ? 15 : 30;
+  days.forEach((d, i) => {
+    if (i % step === 0 || i === n - 1) {
+      const dd = parseD(d);
+      labs += '<text class="gt" x="' + (i * bw + bw / 2).toFixed(2) + '" y="' + SLAB_Y +
+        '" text-anchor="middle">' + dd.getDate() + '/' + (dd.getMonth() + 1) + '</text>';
+    }
+  });
+  const lg = (c, t) => '<span><i style="background:' + c + '"></i>' + t + '</span>';
+  /* Pastille CREUSE pour l'absence : un rond plein annoncerait un état, alors qu'il
+     n'y a rien à cet endroit. */
+  const lgVide = t => '<span><i style="background:#fff;box-shadow:inset 0 0 0 1.5px #c9cbc7"></i>' + t + '</span>';
+  return '<svg class="chart" viewBox="0 0 ' + SW + ' 62">' + cases + ruban + labs + '</svg>' +
+    '<div class="lgd" style="padding:8px 2px 0">' +
+      lg('#141414', 'séance') + lg('#8e918c', 'repos') +
+      lgVide('non renseigné') + lg('#6e7175', 'pause') + '</div>' +
+    '<p class="tiny" style="margin-top:6px"><b>' + nSeances + '</b> séance' + (nSeances > 1 ? 's' : '') +
+    ' et <b>' + nRepos + '</b> jour' + (nRepos > 1 ? 's' : '') + ' de repos sur ' + n + ' jours' +
+    (nPause ? ', dont <b>' + nPause + '</b> en pause' : '') + '.</p>';
 }
 
 /* Régression linéaire sur les pesées : avec une pesée hebdomadaire, une moyenne mobile
@@ -6155,30 +6261,22 @@ function renderHistory() {
     $('#wJuge').innerHTML = '<div class="prio ' + j.cls + '"><b>' + esc(j.titre) + '</b> ' + esc(j.texte) + '</div>';
   }
 
-  const rows = days.slice().reverse().filter((d, i) => sumEntries(entriesOf(d)).kcal > 0);
-  $('#dayList').innerHTML = rows.length ? rows.map(d => {
-    const t = sumEntries(entriesOf(d));
-    /* Cible de CETTE journée, cyclage compris. Comparer à `S().goals` afficherait
-       un écart différent de celui du journal pour la même journée. */
-    const cible = objectifsDuJour(d).kcal;
-    const over = cible && t.kcal > cible;
-    return '<div class="dayrow" data-d="' + d + '"><div class="grow"><div class="d">' + frDate(d) +
-      (function(){ const sc = seanceDuJour(d); if (!sc) return '';
-         const a = activiteParId(sc.a);
-         return ' <span style="font-size:11px">' + (a ? a.ico : '💪') + '</span>'; })() + '</div>' +
-      '<div class="m">' + macrosInitiales(t) +
-      (t.alc ? ' · 🍷 ' + r0(t.alc) + ' g' : '') +
-      (t.water ? ' · 💧 ' + (t.water / 1000).toFixed(1) + ' L' : '') + '</div></div>' +
-      '<span class="pill' + (over ? ' over' : '') + '">' + (cible ? (over ? '+' : '') + r0(t.kcal - cible) : '—') + '</span>' +
-      '<div class="v">' + r0(t.kcal) + '</div></div>';
-  }).join('') + legendeMacros('padding:9px 2px 0')
-    : '<div class="empty" style="padding:18px">Aucune journée enregistrée sur la période.</div>';
-}
+  /* MACRONUTRIMENTS. Le plancher de référence est la MOYENNE des planchers du jour et
+     non `S().goals` : avec le cyclage, celui des glucides se déplace d'un jour à
+     l'autre, et une ligne fixe placerait la moitié des barres du mauvais côté. Même
+     traitement que la cible énergétique juste au-dessus. */
+  const planchers = days.map(d => objectifsDuJour(d).min);
+  const moyPlancher = k => planchers.reduce((a, m) => a + (m[k] || 0), 0) / (planchers.length || 1);
+  poserHtml($('#chartMacros'), MACROS.map(m => {
+    const sol = COULEURS_MACRO[m.k];
+    return '<h3 class="sub" style="margin-top:2px">' + m.nom + '</h3>' +
+      barChart(days, per.map(p => p[m.k] || 0), Math.round(moyPlancher(m.k)), 'g', sol[0], sol[1], 'plancher');
+  }).join('') +
+    (cycleOn ? '<p class="tiny" style="margin-top:8px">Le plancher des glucides suit le cyclage : ' +
+      'il monte les jours de séance et redescend les jours de repos. La ligne montre sa moyenne.</p>' : ''));
 
-$('#dayList').onclick = e => {
-  const row = e.target.closest('.dayrow');
-  if (row) { curDate = row.dataset.d; showTab('today'); }
-};
+  poserHtml($('#chartSeances'), stripSeances(days));
+}
 $$('.seg [data-range]').forEach(b => b.onclick = () => {
   $$('.seg [data-range]').forEach(x => x.classList.remove('on'));
   b.classList.add('on'); range = +b.dataset.range; renderHistory();
@@ -7288,7 +7386,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.3' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.4' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
