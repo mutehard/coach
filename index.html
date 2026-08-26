@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.4</title>
+<title>Coach v13.5</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,31 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.5 — **Deux points de `COACH-FOURCHETTES-SPEC-v2.md` remis en phase, dont un que la
+            v13.3 avait casse.**
+            PRISE DE MASSE : la spec §11 distingue DEUX zones selon l'anciennete —
+            0,25 a 0,5 %/semaine chez qui debute, 0,1 a 0,25 % chez un confirme, chez qui
+            le muscle vient plus lentement. Aucun champ ne porte cette anciennete, la
+            borne la plus large reste donc appliquee. La v13.3 les avait classees
+            « optimal » et « lente » : cela erigeait la bande du DEBUTANT en norme
+            universelle et declarait trop lent un confirme qui progresse exactement au bon
+            rythme. Les paliers deviennent « Rythme soutenu » et « Prise mesuree », et
+            disent A QUI chacun convient. Le prompt d'analyse portait la meme erreur : il
+            n'annoncait que la bande du debutant.
+            FIBRES, §7 ENFIN IMPLANTE : quand la moyenne sur quatorze jours reste plus de
+            10 g sous le plancher, l'application propose un palier au lieu d'afficher un
+            manque constant. Une hausse brutale des fibres est la principale cause
+            d'inconfort digestif, donc d'abandon.
+            SANS ETAT STOCKE : le palier vaut « ce que tu manges en ce moment + 5 g ». Il
+            avance donc seul a mesure que l'apport monte, et redescend si la personne
+            decroche — ce qu'une rampe fondee sur un calendrier ne saurait pas faire.
+            DEUX FENETRES, ET C'EST VOULU : quatorze jours pour DETECTER un ecart durable,
+            sept jours pour CALCULER le palier. Le premier jet calculait sur quatorze et
+            progressait a +2 g/semaine au lieu des +5 voulus, la moyenne longue retardant
+            sur l'apport reel — plancher atteint en dix semaines au lieu de cinq.
+            La charge du modele porte le bloc `palier_de_fibres`, sans quoi il reclamait le
+            plancher brut pendant que l'application proposait un palier : deux voix
+            contradictoires sur le meme sujet.
     v13.4 — **Le Suivi echange le detail des journees contre deux visuels.**
             MACRONUTRIMENTS PAR JOUR : quatre histogrammes, un par macro, chacun avec son
             plancher. Le plancher trace est la MOYENNE des planchers du jour et non
@@ -1517,7 +1542,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.4 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.5 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
     </div>
   </section>
@@ -2078,6 +2103,58 @@ function bilanEnergieHebdo(date) {
    sans seuil protecteur en dessous. Un plafond journalier normaliserait au contraire
    une consommation quotidienne. La FRÉQUENCE est signalée à part du volume : les
    deux confondus sont moins informatifs que séparés. */
+/* FIBRES — palier de progression (§7 de la spec, implanté en v13.5).
+
+   Le plancher ne bouge pas : il est physiologique, 14 g pour 1000 kcal. Ce qui change
+   est ce qu'on DEMANDE dans l'immédiat. Afficher un manque de 16 g tous les jours
+   pendant des semaines n'apprend rien et se lit comme un reproche.
+
+   POURQUOI PROGRESSER PLUTOT QU'EXIGER. Une augmentation brutale des fibres est la
+   principale cause d'inconfort digestif, et donc d'abandon. La spec propose +5 g par
+   semaine tant que la moyenne reste plus de 10 g sous le plancher.
+
+   SANS ETAT STOCKE. Le palier vaut « moyenne des 14 derniers jours + 5 g ». Il avance
+   donc de lui-meme a mesure que la moyenne monte, sans qu'aucune date de depart ne
+   soit a conserver — et il redescend si la personne decroche, ce qu'une rampe fondee
+   sur un calendrier ne saurait pas faire.
+
+   Quatorze jours renseignes ne sont pas exiges : cinq suffisent a poser une moyenne,
+   et attendre deux semaines pleines rendrait le palier muet chez qui saute des jours. */
+const FIBRES_ECART = 10, FIBRES_PAS = 5, FIBRES_JOURS_MINI = 5;
+
+function palierFibres(date) {
+  const plancher = objectifsDuJour(date || TODAY()).min.fiber || 0;
+  if (!(plancher > 0)) return null;
+  let somme = 0, n = 0;
+  for (let i = 1; i <= 14; i++) {
+    const t = sumEntries(entriesOf(shiftD(date || TODAY(), -i)));
+    if (!(t.kcal > 0)) continue;      // journée non renseignée, pas un jeûne
+    somme += t.fiber || 0; n++;
+  }
+  if (n < FIBRES_JOURS_MINI) return null;
+  const moyenne = somme / n;
+  if (moyenne >= plancher - FIBRES_ECART) return null;   // l'écart est rattrapable
+
+  /* DEUX FENETRES, ET C'EST VOULU. Les quatorze jours disent s'il y a un ecart DURABLE
+     a combler — c'est le declencheur de la spec. Mais le palier se calcule sur les SEPT
+     derniers jours, c'est-a-dire sur ce que la personne mange EN CE MOMENT.
+
+     Fonder le palier sur la moyenne a quatorze jours donnait une progression mesuree a
+     +2 g par semaine au lieu des +5 voulus : la moyenne longue retarde sur l'apport
+     reel, et la rampe se freinait elle-meme. Le plancher n'etait atteint qu'au bout de
+     dix semaines au lieu de quatre. */
+  let s7 = 0, n7 = 0;
+  for (let i = 1; i <= 7; i++) {
+    const t = sumEntries(entriesOf(shiftD(date || TODAY(), -i)));
+    if (!(t.kcal > 0)) continue;
+    s7 += t.fiber || 0; n7++;
+  }
+  const recent = n7 ? s7 / n7 : moyenne;
+  /* Le palier ne dépasse jamais le plancher : sinon il demanderait plus que la cible. */
+  return { moyenne: Math.round(moyenne), plancher: plancher, jours: n,
+           palier: Math.min(plancher, Math.round(recent) + FIBRES_PAS) };
+}
+
 function alcoolHebdo(date) {
   let g = 0, jours = 0, pause = 0;
   for (let i = 0; i < 7; i++) {
@@ -3798,6 +3875,15 @@ function renderToday() {
                         : ', repère : ' + r0(al.plafond) + ' g') +
             (al.frequent ? ' · ' + al.jours + ' jours sur 7' : '') + '</em>';
   }
+  /* Le palier de fibres ne s'affiche QUE s'il y a un écart durable à combler : le
+     reste du temps, la jauge suffit et ce message serait du bruit. */
+  const pf = palierFibres(curDate);
+  if (pf) {
+    info += (info ? '<br>' : '') +
+      '<b style="color:var(--fib)">Fibres : vise ' + pf.palier + ' g cette semaine</b>' +
+      '<em> · moyenne ' + pf.moyenne + ' g sur ' + pf.jours + ' jours, plancher ' +
+      pf.plancher + ' g. Monter par paliers évite l\'inconfort digestif.</em>';
+  }
   $('#protInfo').innerHTML = info;
   $('#macros').innerHTML = defs.map(a => jaugeMacro(a[0], a[1], a[2], a[3], a[4], a[5])).join('');
 
@@ -5356,6 +5442,18 @@ function donneesCoach(nbJours, exclureJourCourant) {
                    seuil_d_alerte: 30, sous_le_seuil: d.alerte }
                : null;   // masse grasse inconnue, ou moins de trois journées terminées
     })(),
+    /* Sans ce bloc, le modele signale le manque de fibres brut a chaque analyse, alors
+       que l'application propose deja un palier atteignable. Deux voix contradictoires
+       sur le meme sujet. */
+    palier_de_fibres: (function () {
+      const pf = palierFibres(jusqu);
+      return pf ? { moyenne_14j_g: pf.moyenne, plancher_g: pf.plancher,
+                    palier_propose_g: pf.palier, jours_pris_en_compte: pf.jours,
+                    note: 'progression de +5 g par semaine : une hausse brutale des fibres '
+                        + 'provoque un inconfort digestif et fait abandonner. Encourage le '
+                        + 'palier, ne reclame pas le plancher d un coup.' }
+                : null;   // ecart rattrapable, ou moins de cinq journees renseignees
+    })(),
     activites_declarees: activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0)
       .map(a => ({ nom: a.nom, seances_par_semaine: r0(a.parSemaine),
                    volume_habituel: r0(a.volume) + (a.type === 'distance' ? ' km' : ' min'),
@@ -5420,7 +5518,9 @@ Règles :
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé ;
 - le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
 (jusqu'a 1,2 % au-dela d'un IMC de 30, la masse grasse mobilisable etant plus abondante), \
-0,25 à 0,5 % en prise ;
+en prise, DEUX zones selon l'anciennete : 0,25 à 0,5 % chez qui débute en musculation, \
+0,1 à 0,25 % chez un pratiquant confirmé. Rien dans les données ne dit laquelle s'applique : \
+ne présente donc jamais 0,1 à 0,25 % comme trop lent, ni 0,25 à 0,5 % comme la seule norme ;
 - les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne \
@@ -5474,7 +5574,10 @@ Règles d'analyse :
 Si l'écart énergétique est important, il passe avant tout le reste ;
 - juge le rythme de variation du poids en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
 (jusqu'a 1,2 % au-dela d'un IMC de 30), \
-0,25 à 0,5 % en prise, au-delà la part de masse maigre perdue ou de gras pris augmente ;
+en prise, DEUX zones selon l'anciennete : 0,25 à 0,5 % chez qui débute, 0,1 à 0,25 % chez un \
+pratiquant confirmé — rien dans les données ne dit laquelle s'applique, ne présente donc jamais \
+la zone basse comme trop lente. Au-delà de ces zones, la part de masse maigre perdue ou de gras \
+pris augmente ;
 - les objectifs de macronutriments sont des PLANCHERS. Aucun des quatre n'a de plafond documenté \
 chez le sujet sain : ne signale JAMAIS un dépassement de protéines, de lipides, de glucides ou de \
 fibres comme un défaut. Le seul excès qui compte est énergétique, et la cible kcal le porte déjà ;
@@ -5483,6 +5586,10 @@ Juge la charge de la semaine, jamais une soirée isolée ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne sur les \
 TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun chiffre au gramme près ;
 - une journée absente signifie « non renseignée », pas « jeûne » ;
+- si le bloc "palier_de_fibres" est présent, l'application propose DÉJÀ une progression par \
+paliers de +5 g. Encourage ce palier et ne réclame pas le plancher d'un coup : une hausse \
+brutale des fibres provoque un inconfort digestif et fait abandonner. Si le bloc est absent, \
+l'écart est rattrapable et la consigne habituelle s'applique ;
 - PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 est une coupure VOLONTAIRE et assumée : \
 vacances, semaine chargée, pause alimentaire planifiée. C'est un outil légitime en phase de perte \
 prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge \
@@ -6026,19 +6133,23 @@ function jugerRythme(kgSem, poids, aim) {
   if (aim > 0) {
     if (pct >= 0.5) return { couleur: orange, cls: 'warn', titre: 'Prise trop rapide.',
       texte: p1 + ' % par semaine. Au-delà de 0,5 %, la part de gras prise augmente nettement.' };
-    /* La borne basse est à 0,25 %, comme l'annonce le prompt d'analyse. Elle était à
-       0,1 % : entre les deux, l'application disait « optimal » quand le modèle, lisant
-       les mêmes données, plaçait la personne SOUS la zone. Deux verdicts opposés sur
-       le même écran. */
-    if (pct >= 0.25) return { couleur: vert, cls: 'ok', titre: 'Rythme optimal.',
-      texte: p1 + ' % par semaine, dans la zone d\'une prise majoritairement maigre.' };
-    /* Symétrique de « Perte lente » : la prise avait trois paliers là où la perte en a
-       quatre, et une progression de 0,13 % passait pour optimale alors qu'elle est trop
-       lente pour construire du muscle efficacement. */
-    if (pct > 0.1) return { couleur: vert, cls: 'ok', titre: 'Prise lente.',
-      texte: p1 + ' % par semaine : tu montes vraiment, mais sous la zone optimale ' +
-             '(0,25 à 0,5 %). C\'est tenable si tu privilégies la qualité de la prise ; ' +
-             'ajoute 100 à 200 kcal si tu veux avancer plus vite.' };
+    /* DEUX ZONES LEGITIMES, ET NON UNE BONNE ET UNE MOINS BONNE. La spec §11 en
+       distingue deux selon l'anciennete d'entrainement : 0,25 a 0,5 %/semaine chez qui
+       DEBUTE, 0,1 a 0,25 % chez un pratiquant CONFIRME, chez qui le muscle vient plus
+       lentement. Aucun champ ne porte cette anciennete — la borne la plus large reste
+       donc appliquee, et les deux paliers disent seulement A QUI chaque rythme convient.
+
+       La v13.3 les avait classes « optimal » et « lente » : cela erigeait la bande du
+       debutant en norme universelle et declarait trop lent un confirme qui progresse
+       exactement au bon rythme. Le decoupage etait bon, le jugement ne l'etait pas. */
+    if (pct >= 0.25) return { couleur: vert, cls: 'ok', titre: 'Rythme soutenu.',
+      texte: p1 + ' % par semaine : la zone d\'une prise majoritairement maigre quand on ' +
+             'débute en musculation. Si tu t\'entraînes depuis des années, c\'est un peu ' +
+             'rapide — 0,1 à 0,25 % te ferait prendre moins de gras.' };
+    if (pct > 0.1) return { couleur: vert, cls: 'ok', titre: 'Prise mesurée.',
+      texte: p1 + ' % par semaine : exactement la zone d\'un pratiquant confirmé, chez qui ' +
+             'le muscle vient plus lentement. Si tu débutes, tu peux viser plus haut — ' +
+             '0,25 à 0,5 % — en ajoutant 100 à 200 kcal.' };
     if (demarrage) return { couleur: neutre, cls: '', titre: 'Trop tôt pour conclure.',
       texte: 'Quelques semaines sont nécessaires avant qu\'une prise se distingue du bruit ' +
              'de la balance. Continue à enregistrer.' };
@@ -7386,7 +7497,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.4' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.5' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
