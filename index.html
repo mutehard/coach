@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.9</title>
+<title>Coach v13.10</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,29 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.10 — **Un modele par emploi, et un quota par modele.**
+             Trois emplois aux exigences differentes : `vision` pour la photo d'un repas,
+             SEUL a exiger un modele multimodal ; `repas` pour un repas saisi en texte ;
+             `analyse` pour le bilan du Suivi et le chat Conseil. Les deux derniers sont
+             du texte pur et gagnent a un modele plus fort.
+             IL N'Y A PAS D'ETAPE D'ANALYSE APRES LA VISION : `analysePhotos()` envoie la
+             photo et recoit directement la liste des aliments AVEC leurs grammages. Le
+             modele vision fait l'estimation nutritionnelle lui-meme. Confier la photo a
+             l'un puis les chiffres a un autre demanderait DEUX requetes par repas, donc le
+             double de quota et plusieurs secondes de plus.
+             Un emploi laisse vide retombe sur le modele de vision : une installation qui
+             ne touche a rien se comporte exactement comme avant, sans migration.
+             QUOTA PAR MODELE. Les limites de Groq sont par modele, et le compteur etait
+             commun : des que deux emplois visent des modeles differents, il ferait
+             attendre pour rien en croyant plein un budget qui appartient a un autre.
+             Chaque reservation porte desormais son modele. Verifie : deux analyses photo
+             saturent Qwen a 8200 jetons sans bloquer ni le 20B ni le 120B.
+             Aucune migration : la fenetre de quota ne fait que soixante secondes, les
+             entrees anciennes sans modele s'effacent d'elles-memes. Tant qu'elles sont la,
+             elles comptent pour tous les modeles, ce qui est le sens prudent.
+             Le cout prevu est desormais propre a chaque emploi : 2000 jetons pour un repas
+             en texte contre 4100 pour une photo. Les confondre reservait plus du double de
+             ce qu'une saisie texte consomme.
     v13.9 — Le renvoi vers `COACH-FOURCHETTES-SPEC-v2.md`, en bas de la documentation, est
             retire. Ce fichier vit dans le dossier de developpement et n'existe pas sur le
             telephone : pointer vers une ressource que le lecteur ne peut pas atteindre ne
@@ -1506,9 +1529,19 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
           <button class="btn sm" id="sKeyEye" style="flex:none">👁</button>
         </div>
       </label>
-      <label class="f"><span>Modèle vision</span>
+      <!-- TROIS EMPLOIS, TROIS MODELES. Seule la photo exige un modèle multimodal ;
+           les deux autres emplois sont du texte pur et gagnent à un modèle plus fort. -->
+      <label class="f"><span>Modèle pour les photos de repas</span>
         <select class="in" id="sModel"></select>
       </label>
+      <p class="tiny" style="margin:-6px 0 10px">Le seul qui doit savoir lire une image. Il identifie les aliments <b>et</b> estime les quantités en une seule fois.</p>
+      <label class="f"><span>Modèle pour les repas saisis en texte</span>
+        <select class="in" id="sModelRepas"></select>
+      </label>
+      <label class="f"><span>Modèle pour l'analyse et le conseil</span>
+        <select class="in" id="sModelAnalyse"></select>
+      </label>
+      <p class="tiny" style="margin:-6px 0 10px">Ces deux-là n'ont jamais besoin de voir d'image. « Même que les photos » les fait suivre le premier réglage.</p>
       <label class="f"><span>Définition des photos envoyées</span>
         <select class="in" id="sImgPx">
           <option value="512">Minimale : 512 px, deux fois moins qu'en 768</option>
@@ -1594,7 +1627,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.9 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.10 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -1652,7 +1685,14 @@ const DEFAULTS = {
   version: 1,
   settings: {
     apiKey: '',
+    /* TROIS EMPLOIS, TROIS MODELES. `model` reste celui de la VISION — le nom est
+       conserve pour que les installations existantes continuent de marcher sans
+       migration. Les deux autres valent '' par defaut, ce qui signifie « le meme que
+       la vision » : une installation qui ne les touche pas se comporte exactement
+       comme avant. Voir `modeleDe()`. */
     model: 'qwen/qwen3.6-27b',
+    modelRepas: '',
+    modelAnalyse: '',
     models: [],
     lastExport: 0,
     remindAfter: 0,
@@ -2921,7 +2961,7 @@ async function groq(body) {
      le quota a tout de même été consommé côté Groq et doit rester compté. */
   const estim = (body.max_tokens || 0) + ((body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0)
     ? ((S().dernierCout && S().dernierCout.photo && S().dernierCout.p) || 3000) : 800);
-  noterReservation(estim);
+  noterReservation(estim, body.model);
   DERNIERE_RESERVATION = (S().journalQuota || [])[(S().journalQuota || []).length - 1] || null;
 
   let res;
@@ -3103,31 +3143,71 @@ function corrigerReservation(reel) {
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 }
 
+/* QUEL MODELE POUR QUEL TRAVAIL.
+
+   Trois emplois, aux exigences differentes :
+
+     `vision`  la photo d'un repas. SEUL emploi qui exige un modele multimodal, et
+               il fait tout en UNE requete : il identifie les aliments ET estime les
+               grammages. Il n'y a pas d'etape d'analyse a lui succeder.
+     `repas`   un repas saisi en TEXTE, sans photo. Aucune vision requise : un bon
+               modele de langage y sera meilleur qu'un modele multimodal.
+     `analyse` l'analyse hebdomadaire du Suivi et le chat Conseil. Beaucoup de
+               contexte, du raisonnement, aucune image. C'est ici qu'un modele plus
+               grand se justifie le mieux.
+
+   Un emploi laisse vide retombe sur le modele de vision, qui reste le reglage
+   principal. Une installation qui ne touche a rien se comporte donc exactement comme
+   avant, sans migration. */
+function modeleDe(emploi) {
+  const s = S();
+  if (emploi === 'repas') return (s.modelRepas || '').trim() || s.model;
+  if (emploi === 'analyse') return (s.modelAnalyse || '').trim() || s.model;
+  return s.model;
+}
+
 const TPM_LIMITE = 8000;
 const TPM_FENETRE = 60000;
 
-/* Purge les réservations sorties de la fenêtre et renvoie le total encore imputé. */
-function quotaUtilise() {
+/* QUOTA PAR MODELE, et non par compte.
+
+   Groq applique ses limites de jetons par minute MODELE PAR MODELE. Tant qu'un seul
+   modele servait a tout, un compteur unique disait la verite. Depuis que la vision,
+   la saisie texte et les analyses peuvent viser trois modeles differents, un compteur
+   commun ferait attendre pour rien : il croirait plein un budget qui appartient a un
+   autre modele.
+
+   Chaque reservation porte donc `m`, l'identifiant du modele. Aucune migration n'est
+   necessaire : la fenetre ne fait que soixante secondes, les anciennes entrees sans
+   `m` disparaissent d'elles-memes en une minute. */
+function memeModele(x, modele) {
+  return !modele || !x.m || x.m === modele;
+}
+
+/* Purge les réservations sorties de la fenêtre et renvoie le total encore imputé.
+   Sans argument, le total TOUS MODELES CONFONDUS — ce que l'écran des Réglages
+   affiche comme vue d'ensemble. */
+function quotaUtilise(modele) {
   const t = Date.now();
   const j = (S().journalQuota || []).filter(x => x && t - x.t < TPM_FENETRE);
   S().journalQuota = j;
-  return j.reduce((a, x) => a + (x.n || 0), 0);
+  return j.filter(x => memeModele(x, modele)).reduce((a, x) => a + (x.n || 0), 0);
 }
 
-function noterReservation(tokens) {
+function noterReservation(tokens, modele) {
   if (!(tokens > 0)) return;
   const j = S().journalQuota || (S().journalQuota = []);
-  j.push({ t: Date.now(), n: r0(tokens) });
+  j.push({ t: Date.now(), n: r0(tokens), m: modele || S().model });
   quotaUtilise();
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 }
 
-/* Secondes à attendre pour qu'une requête de `cout` jetons passe, 0 si la voie est
-   libre. On cherche le moment où assez de réservations anciennes seront sorties de la
-   fenêtre — calcul exact, puisqu'on connaît l'instant de chacune. */
-function attenteNecessaire(cout) {
+/* Secondes à attendre pour qu'une requête de `cout` jetons passe SUR CE MODELE, 0 si
+   la voie est libre. On cherche le moment où assez de réservations anciennes seront
+   sorties de la fenêtre — calcul exact, puisqu'on connaît l'instant de chacune. */
+function attenteNecessaire(cout, modele) {
   const t = Date.now();
-  const j = (S().journalQuota || []).filter(x => x && t - x.t < TPM_FENETRE)
+  const j = (S().journalQuota || []).filter(x => x && t - x.t < TPM_FENETRE && memeModele(x, modele))
                                     .sort((a, b) => a.t - b.t);
   let total = j.reduce((a, x) => a + x.n, 0);
   if (total + cout <= TPM_LIMITE) return 0;
@@ -3143,7 +3223,14 @@ function attenteNecessaire(cout) {
 
 /* Coût prévisionnel d'une analyse photo : dernier prompt mesuré, à défaut une valeur
    de départ prudente, plus la marge de réponse. */
-function coutPrevu() {
+function coutPrevu(emploi) {
+  /* Chaque emploi a son ordre de grandeur, et les confondre fait attendre pour rien.
+     Une saisie en texte ne coute pas ce que coute une photo : lui appliquer le cout
+     d'une image reserverait plus du double de ce qu'elle consomme.
+     Valeurs mesurees sur des appels reels ; le poste photo, lui, se recalibre seul
+     sur la derniere mesure. */
+  if (emploi === 'repas')   return 500 + 1500;    // prompt court, max_tokens 1500
+  if (emploi === 'analyse') return 2800 + 1400;   // charge ~1500 jetons + consigne
   const dc = S().dernierCout;
   const prompt = (dc && dc.photo && dc.p > 0) ? dc.p : 3000;
   return prompt + budgetReponse();
@@ -3301,7 +3388,7 @@ async function analysePhotos(dataUrls, hint) {
 
 async function analyseText(desc) {
   return analyseAvecRepli({
-    model: S().model, temperature: 0.2, max_tokens: 1500,
+    model: modeleDe('repas'), temperature: 0.2, max_tokens: 1500,
     messages: [{ role: 'user', content: promptTexte(desc) }]
   });
 }
@@ -5231,13 +5318,13 @@ async function addPhoto(input) {
    l'utilisateur à revenir plus tard et à tout relancer lui-même — c'était le point de
    friction principal. Seule une limite journalière rend la main, l'attente n'y pouvant
    rien avant la réinitialisation. */
-async function verrouLibre() {
+async function verrouLibre(emploi) {
   /* Deux sources d'attente, on retient la plus longue :
        — le verrou posé par un refus 429 déjà essuyé (réactif) ;
        — la comptabilité LOCALE, qui prédit le refus avant de l'essuyer (préventif).
      C'est ce second mécanisme qui remplace le garde-fou de la v4.2, inopérant faute
      d'en-têtes exposés par Groq. */
-  const r = Math.max(verrouRestant(), attenteNecessaire(coutPrevu()));
+  const r = Math.max(verrouRestant(), attenteNecessaire(coutPrevu(emploi), modeleDe(emploi)));
   if (!r) return true;
   if (!S().quotaJour && r <= ATTENTE_MAX) {
     ANNULER_REPRISE = false;
@@ -5280,7 +5367,7 @@ async function runAnalysis() {
   /* Le verrou est consulté AVANT de fermer la feuille : les photos préparées restent
      ainsi en place, et il n'y a rien à refaire une fois l'attente écoulée. */
   ANNULER_REPRISE = false;
-  if (!(await verrouLibre())) return;
+  if (!(await verrouLibre('vision'))) return;
   const shots = pending.slice();
   closeSheet();
   loader(true, shots.length > 1
@@ -5615,7 +5702,7 @@ async function poserQuestion(question) {
     role: m.r === 'u' ? 'user' : 'assistant', content: m.t
   }));
   const corps = {
-    model: S().model, temperature: 0.4, max_tokens: 900,
+    model: modeleDe('analyse'), temperature: 0.4, max_tokens: 900,
     messages: [{ role: 'user', content: PROMPT_CONSEIL + '\n\nSes données :\n' + JSON.stringify(d) }]
       .concat(hist)
       .concat([{ role: 'user', content: question }])
@@ -5711,7 +5798,7 @@ async function lancerAnalyse(nbJours) {
                               'terminée, et une journée partielle fausserait la tendance.' : ''));
   }
   const corps = {
-    model: S().model, temperature: 0.3, max_tokens: 1400,
+    model: modeleDe('analyse'), temperature: 0.3, max_tokens: 1400,
     messages: [{ role: 'user', content: PROMPT_ANALYSE + '\n\nDonnées :\n' + JSON.stringify(d) }]
   };
   return extractJsonAnalyse(await groqTry(corps, JSON_SANS_REFLEXION));
@@ -5787,7 +5874,7 @@ function ajoutParAnalyse(surAjout) {
         const d = desc.value.trim();
         if (!pending.length && !d) { toast('Ajoute une photo ou une description'); return; }
         ANNULER_REPRISE = false;
-        if (!(await verrouLibre())) return;
+        if (!(await verrouLibre(pending.length ? 'vision' : 'repas'))) return;
         const shots = pending.slice();
         APRES_PHOTO = null;
         closeSheet();                       // ferme CETTE feuille, l'éditeur reste dessous
@@ -5838,7 +5925,7 @@ $('#btnManual').onclick = () => {
         if (!d) { toast('Décris d\'abord ton repas'); return; }
         if (!S().apiKey.trim()) { closeSheet(); toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
         ANNULER_REPRISE = false;
-        if (!(await verrouLibre())) return;
+        if (!(await verrouLibre('repas'))) return;
         closeSheet(); loader(true, 'Estimation en cours…');
         try {
           const res = normalise(await analyseText(d));
@@ -6279,7 +6366,7 @@ $('#analyse').onclick = async e => {
   if (!e.target.closest('#anGo')) return;
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
   ANNULER_REPRISE = false;
-  if (!(await verrouLibre())) return;
+  if (!(await verrouLibre('analyse'))) return;
   loader(true, 'Analyse de tes données…\nCela prend quelques secondes.');
   try {
     const r = await lancerAnalyse(JOURS_ANALYSE);
@@ -6348,7 +6435,7 @@ async function envoyerQuestion(q) {
   if (!question) return;
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
   ANNULER_REPRISE = false;
-  if (!(await verrouLibre())) return;
+  if (!(await verrouLibre('analyse'))) return;
 
   const l = S().chat || (S().chat = []);
   l.push({ r: 'u', t: question.slice(0, 500) });
@@ -6505,9 +6592,18 @@ $('#btnWeight').onclick = () => {
 const FALLBACK_MODELS = ['qwen/qwen3.6-27b'];
 
 function fillModels() {
-  const sel = $('#sModel');
-  const list = Array.from(new Set(FALLBACK_MODELS.concat(S().models || [], [S().model])));
-  sel.innerHTML = list.map(m => '<option value="' + esc(m) + '"' + (m === S().model ? ' selected' : '') + '>' + esc(m) + '</option>').join('');
+  const s = S();
+  const list = Array.from(new Set(FALLBACK_MODELS.concat(s.models || [],
+    [s.model, s.modelRepas, s.modelAnalyse].filter(Boolean))));
+  const options = (choisi, vide) =>
+    (vide ? '<option value=""' + (choisi ? '' : ' selected') + '>' + vide + '</option>' : '') +
+    list.map(m => '<option value="' + esc(m) + '"' + (m === choisi ? ' selected' : '') +
+                  '>' + esc(m) + '</option>').join('');
+  poserHtml($('#sModel'), options(s.model, ''));
+  /* L'option vide vaut « le même que les photos » : c'est le défaut, et elle évite
+     d'avoir à reproduire le choix du modèle vision à trois endroits. */
+  poserHtml($('#sModelRepas'), options((s.modelRepas || '').trim(), 'Même que les photos'));
+  poserHtml($('#sModelAnalyse'), options((s.modelAnalyse || '').trim(), 'Même que les photos'));
 }
 
 function renderSettings() {
@@ -6523,13 +6619,25 @@ function renderSettings() {
           ' · marge de réponse actuelle ' + budgetReponse() + '.<br>' : '') +
     '';
   /* Comptabilité LOCALE : Groq n'expose pas ses en-têtes de quota au navigateur,
-     l'application tient donc son propre compte. */
-  const util = quotaUtilise(), prevu = coutPrevu(), att = attenteNecessaire(prevu);
-  $('#quotaInfo').innerHTML +=
-    'Sur la dernière minute : <b>' + util + ' / ' + TPM_LIMITE + '</b> jetons engagés · ' +
-    'prochaine analyse estimée à <b>' + prevu + '</b>.<br>' +
-    (att ? '<span style="color:var(--warn)">Attente nécessaire : ' + att + ' s.</span>'
-         : '<span style="color:var(--acc-l)">Voie libre.</span>');
+     l'application tient donc son propre compte. UNE LIGNE PAR MODELE : les limites
+     de Groq sont par modèle, et un total commun ne dirait plus rien d'utile dès que
+     deux emplois visent des modèles différents. Les emplois qui partagent un modèle
+     sont regroupés, sinon la même ligne s'afficherait deux ou trois fois. */
+  const emplois = [['vision', 'photos'], ['repas', 'repas en texte'], ['analyse', 'analyse et conseil']];
+  const parModele = {};
+  emplois.forEach(([e, lib]) => {
+    const m = modeleDe(e);
+    (parModele[m] || (parModele[m] = { libelles: [], cout: 0 })).libelles.push(lib);
+    parModele[m].cout = Math.max(parModele[m].cout, coutPrevu(e));
+  });
+  $('#quotaInfo').innerHTML += Object.keys(parModele).map(m => {
+    const util = quotaUtilise(m), att = attenteNecessaire(parModele[m].cout, m);
+    return '<b>' + esc(m) + '</b> <em>(' + parModele[m].libelles.join(', ') + ')</em><br>' +
+      'Sur la dernière minute : <b>' + util + ' / ' + TPM_LIMITE + '</b> jetons · ' +
+      'prochain appel estimé à <b>' + parModele[m].cout + '</b>. ' +
+      (att ? '<span style="color:var(--warn)">Attente ' + att + ' s.</span>'
+           : '<span style="color:var(--acc-l)">Voie libre.</span>');
+  }).join('<br><br>');
   const g = S().goals, gx = S().goalsMax || {};
   $('#gKcal').value = g.kcal; $('#gProt').value = g.prot; $('#gCarb').value = g.carb; $('#gFat').value = g.fat;
   $('#gFiber').value = g.fiber; $('#gWater').value = g.water;
@@ -6554,7 +6662,15 @@ function renderSettings() {
 
 $('#sKey').oninput = e => { S().apiKey = e.target.value.trim(); save(); };
 $('#sKeyEye').onclick = () => { const i = $('#sKey'); i.type = i.type === 'password' ? 'text' : 'password'; };
-$('#sModel').onchange = e => { S().model = e.target.value; save(); toast('Modèle : ' + e.target.value); };
+$('#sModel').onchange = e => { S().model = e.target.value; save(); fillModels(); toast('Photos : ' + e.target.value); };
+$('#sModelRepas').onchange = e => {
+  S().modelRepas = e.target.value; save();
+  toast('Repas en texte : ' + (e.target.value || 'même que les photos'));
+};
+$('#sModelAnalyse').onchange = e => {
+  S().modelAnalyse = e.target.value; save();
+  toast('Analyse et conseil : ' + (e.target.value || 'même que les photos'));
+};
 $('#sImgPx').onchange = e => {
   S().imgPx = +e.target.value; save();
   toast('Photos en ' + S().imgPx + ' px' +
@@ -7348,6 +7464,11 @@ function sanitizeBackup(inc) {
     settings: {
       apiKey: /^[A-Za-z0-9_-]{0,200}$/.test(s.apiKey || '') ? (s.apiKey || '') : '',
       model: txt(s.model, 120) || DEFAULTS.settings.model,
+      /* Pas de repli sur le defaut ici : la chaine VIDE est une valeur qui veut dire
+         « le meme que les photos ». La remplacer par le modele de vision figerait un
+         choix que l'utilisateur avait laisse suivre. */
+      modelRepas: txt(s.modelRepas, 120),
+      modelAnalyse: txt(s.modelAnalyse, 120),
       models: (Array.isArray(s.models) ? s.models : []).slice(0, 200).map(m => txt(m, 120)),
       foods: (Array.isArray(s.foods) ? s.foods : []).slice(0, 300)
         .filter(x => x && typeof x === 'object').map(x => ({
@@ -7730,7 +7851,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.9' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.10' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
