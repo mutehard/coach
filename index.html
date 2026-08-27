@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.11</title>
+<title>Coach v13.12</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,16 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.12 — **L'option « le meme que pour les photos » disparait des selecteurs.** Avec
+             trois cases explicites, une valeur qui renvoie a une autre est une indirection
+             inutile : il fallait lire DEUX menus pour savoir quel modele tourne vraiment.
+             Chaque emploi affiche desormais le modele qu'il utilise.
+             Migration de revision 3 : les emplois restes vides recoivent le modele de
+             vision, celui qu'ils utilisaient deja. Aucun comportement ne change, seul
+             l'affichage devient franc.
+             `modeleDe()` garde son repli sur le modele de vision, mais uniquement comme
+             filet pour une valeur vide venue d'un import ancien : l'interface ne peut
+             plus en produire.
     v13.11 — **Qwen 3.8 devient le modele de vision par defaut**, `qwen/qwen3.8-27b`.
              Migration de revision 2, meme regle prudente qu'en v13.2 : elle ne remonte QUE
              les installations restees sur l'ANCIEN DEFAUT, `qwen/qwen3.6-27b`. Un choix
@@ -1551,7 +1561,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
       <label class="f"><span>Modèle pour l'analyse et le conseil</span>
         <select class="in" id="sModelAnalyse"></select>
       </label>
-      <p class="tiny" style="margin:-6px 0 10px">Ces deux-là ne reçoivent jamais d'image : un bon modèle de texte y suffit, et fera souvent mieux qu'un modèle multimodal. Laisse « Le même que pour les photos » si tu ne veux pas t'en occuper : ils utiliseront alors le modèle choisi juste au-dessus.</p>
+      <p class="tiny" style="margin:-6px 0 10px">Ces deux-là ne reçoivent jamais d'image : un bon modèle de texte y suffit, et fera souvent mieux qu'un modèle multimodal.</p>
       <label class="f"><span>Définition des photos envoyées</span>
         <select class="in" id="sImgPx">
           <option value="512">Minimale : 512 px, deux fois moins qu'en 768</option>
@@ -1637,7 +1647,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.11 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -1701,8 +1711,8 @@ const DEFAULTS = {
        la vision » : une installation qui ne les touche pas se comporte exactement
        comme avant. Voir `modeleDe()`. */
     model: 'qwen/qwen3.8-27b',
-    modelRepas: '',
-    modelAnalyse: '',
+    modelRepas: 'qwen/qwen3.8-27b',
+    modelAnalyse: 'qwen/qwen3.8-27b',
     models: [],
     lastExport: 0,
     remindAfter: 0,
@@ -1731,7 +1741,7 @@ const DEFAULTS = {
     /* Revision des PREFERENCES, distincte de `modele` qui ne porte que les seuils
        nutritionnels : declencher `normaliserModele` pour un reglage de photo
        remettrait `goalsWeight` a zero et reecrirait la cible d'hydratation. */
-    revReglages: 2,
+    revReglages: 3,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -2604,8 +2614,18 @@ function normaliserModele(st, versionSource) {
      pas touche, et le 3.6 reste dans le selecteur pour y revenir. */
   if (rev < 2 && (s.model || '') === 'qwen/qwen3.6-27b') S().model = 'qwen/qwen3.8-27b';
 
-  if (rev >= 2) return;                            // rien de nouveau a appliquer
-  S().revReglages = 2;
+  /* Revision 3 — les deux emplois texte deviennent EXPLICITES.
+     L'option « le meme que pour les photos » a ete retiree du selecteur : une valeur
+     qui renvoie a une autre obligeait a lire deux menus pour savoir ce qui tourne.
+     On inscrit donc le modele reellement utilise, qui est celui de la vision tant que
+     rien n'a ete choisi. Aucun comportement ne change, seul l'affichage devient franc. */
+  if (rev < 3) {
+    if (!(s.modelRepas || '').trim())   S().modelRepas = S().model;
+    if (!(s.modelAnalyse || '').trim()) S().modelAnalyse = S().model;
+  }
+
+  if (rev >= 3) return;                            // rien de nouveau a appliquer
+  S().revReglages = 3;
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 })();
 
@@ -6622,11 +6642,14 @@ function fillModels() {
     (vide ? '<option value=""' + (choisi ? '' : ' selected') + '>' + vide + '</option>' : '') +
     list.map(m => '<option value="' + esc(m) + '"' + (m === choisi ? ' selected' : '') +
                   '>' + esc(m) + '</option>').join('');
+  /* AUCUNE OPTION « suivre un autre reglage ». Avec trois cases explicites, une valeur
+     qui renvoie a une autre est une indirection inutile : il faut lire deux menus pour
+     savoir ce qui tourne. Chaque emploi affiche donc le modele qu'il utilise vraiment.
+     `modeleDe()` garde son repli sur le modele de vision, mais uniquement comme filet
+     pour une valeur vide venue d'un import ancien. */
   poserHtml($('#sModel'), options(s.model, ''));
-  /* L'option vide vaut « Le même que pour les photos » : c'est le défaut, et elle évite
-     d'avoir à reproduire le choix du modèle vision à trois endroits. */
-  poserHtml($('#sModelRepas'), options((s.modelRepas || '').trim(), 'Le même que pour les photos'));
-  poserHtml($('#sModelAnalyse'), options((s.modelAnalyse || '').trim(), 'Le même que pour les photos'));
+  poserHtml($('#sModelRepas'), options(modeleDe('repas'), ''));
+  poserHtml($('#sModelAnalyse'), options(modeleDe('analyse'), ''));
 }
 
 function renderSettings() {
@@ -6688,11 +6711,11 @@ $('#sKeyEye').onclick = () => { const i = $('#sKey'); i.type = i.type === 'passw
 $('#sModel').onchange = e => { S().model = e.target.value; save(); fillModels(); toast('Photos : ' + e.target.value); };
 $('#sModelRepas').onchange = e => {
   S().modelRepas = e.target.value; save();
-  toast('Repas en texte : ' + (e.target.value || 'le même que pour les photos'));
+  toast('Repas en texte : ' + e.target.value);
 };
 $('#sModelAnalyse').onchange = e => {
   S().modelAnalyse = e.target.value; save();
-  toast('Analyse et conseil : ' + (e.target.value || 'le même que pour les photos'));
+  toast('Analyse et conseil : ' + e.target.value);
 };
 $('#sImgPx').onchange = e => {
   S().imgPx = +e.target.value; save();
@@ -7874,7 +7897,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.11' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.12' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
