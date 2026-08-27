@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.12</title>
+<title>Coach v13.13</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,17 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.13 — **Le decoupage en trois modeles devient le defaut.** `openai/gpt-oss-20b` pour
+             les repas saisis en texte, `openai/gpt-oss-120b` pour l'analyse du Suivi et le
+             conseil. La vision reste sur `qwen/qwen3.8-27b`, seul emploi qui exige un
+             modele multimodal.
+             Migration de revision 4, meme regle prudente que depuis la v13.2 : on ne
+             remonte QUE ce qui est reste sur l'ancien defaut. Ici l'ancien defaut est le
+             modele de vision, que la revision 3 venait d'inscrire dans les deux emplois
+             texte. Un choix personnel est preserve, y compris quand un seul des deux
+             emplois a ete personnalise.
+             Les quatre modeles figurent dans `FALLBACK_MODELS` : le selecteur les propose
+             donc sans qu'il faille d'abord charger la liste du compte.
     v13.12 — **L'option « le meme que pour les photos » disparait des selecteurs.** Avec
              trois cases explicites, une valeur qui renvoie a une autre est une indirection
              inutile : il fallait lire DEUX menus pour savoir quel modele tourne vraiment.
@@ -1647,7 +1658,7 @@ input[type=date].in{font-variant-numeric:tabular-nums;min-height:44px}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.12 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.13 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -1711,8 +1722,8 @@ const DEFAULTS = {
        la vision » : une installation qui ne les touche pas se comporte exactement
        comme avant. Voir `modeleDe()`. */
     model: 'qwen/qwen3.8-27b',
-    modelRepas: 'qwen/qwen3.8-27b',
-    modelAnalyse: 'qwen/qwen3.8-27b',
+    modelRepas: 'openai/gpt-oss-20b',
+    modelAnalyse: 'openai/gpt-oss-120b',
     models: [],
     lastExport: 0,
     remindAfter: 0,
@@ -1741,7 +1752,7 @@ const DEFAULTS = {
     /* Revision des PREFERENCES, distincte de `modele` qui ne porte que les seuils
        nutritionnels : declencher `normaliserModele` pour un reglage de photo
        remettrait `goalsWeight` a zero et reecrirait la cible d'hydratation. */
-    revReglages: 3,
+    revReglages: 4,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -2624,8 +2635,19 @@ function normaliserModele(st, versionSource) {
     if (!(s.modelAnalyse || '').trim()) S().modelAnalyse = S().model;
   }
 
-  if (rev >= 3) return;                            // rien de nouveau a appliquer
-  S().revReglages = 3;
+  /* Revision 4 — les deux emplois texte prennent leurs propres modeles.
+     MEME REGLE QUE DEPUIS LA v13.2 : on ne remonte que ce qui est reste sur l'ancien
+     defaut. Ici, l'ancien defaut est « le modele de vision », puisque la revision 3
+     venait de l'y inscrire. Quelqu'un qui aurait deja choisi autre chose garde son
+     choix. */
+  if (rev < 4) {
+    const vision = S().model;
+    if ((S().modelRepas || '') === vision)   S().modelRepas = 'openai/gpt-oss-20b';
+    if ((S().modelAnalyse || '') === vision) S().modelAnalyse = 'openai/gpt-oss-120b';
+  }
+
+  if (rev >= 4) return;                            // rien de nouveau a appliquer
+  S().revReglages = 4;
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 })();
 
@@ -6632,7 +6654,8 @@ $('#btnWeight').onclick = () => {
 /* Le repli sert quand la liste du compte n'a jamais ete chargee. On garde
    l'ancien a cote du nouveau : une installation qui tournait en 3.6 doit pouvoir
    y revenir depuis le selecteur si la 3.8 se revelait indisponible sur son compte. */
-const FALLBACK_MODELS = ['qwen/qwen3.8-27b', 'qwen/qwen3.6-27b'];
+const FALLBACK_MODELS = ['qwen/qwen3.8-27b', 'qwen/qwen3.6-27b',
+                         'openai/gpt-oss-20b', 'openai/gpt-oss-120b'];
 
 function fillModels() {
   const s = S();
@@ -7897,7 +7920,7 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.12' : '';
+  $('#topRight').textContent = t === 'settings' ? 'v13.13' : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
