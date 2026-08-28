@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.16</title>
+<title>Coach v13.17</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,24 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.17 — **Le badge de version de l'en-tete annoncait v13.14 depuis deux versions.**
+             Ecrit en dur dans `showTab()`, il n'avait ete hisse ni en v13.15 ni en v13.16 :
+             l'utilisateur lisait une version fausse en haut de ses reglages pendant que la
+             carte « A propos », quelques centimetres plus bas, en annoncait une autre. Un
+             numero qui ne se met a jour que si quelqu'un y pense n'est pas un numero de
+             version, c'est un commentaire perime qui se fait passer pour une donnee.
+             Le badge se DEDUIT desormais du titre — `VERSION_APP` — et ne peut plus deriver.
+             La bonne correction n'etait pas de surveiller un cinquieme numero, mais d'en
+             supprimer un.
+             Deux controles ajoutes a `audit-securite.py`, qui refuse maintenant la
+             publication si le titre, la carte « A propos », le nom du fichier et l'entete du
+             changelog ne disent pas tous la meme chose, ou si un numero de version est
+             recopie en dur dans le code. Contre-epreuve : six defauts plantes, six detectes.
+             Le controle a d'ailleurs ete ecrit FAUX une premiere fois — a partir d'un
+             inventaire des numeros tronque par un `head -20`, qui masquait justement le
+             badge. Un inventaire coupe donne un controle incomplet, et un controle incomplet
+             rassure a tort.
+
     v13.16 — **« Objectif tenu » cede la place au deficit tenu, mesure ET objectif cote a
              cote.** L'ancienne tuile comptait les journees passees a moins de 10 % de leur
              cible : elle mesurait la regularite de la saisie plus que le resultat, et deux
@@ -1808,7 +1826,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.16 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.17 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -5678,6 +5696,10 @@ async function runAnalysis() {
    poids et des habitudes alimentaires bien plus lisibles que deux semaines, pour un coût
    mesuré de 3230 jetons réservés sur 8000 (40 %) contre 2688 — soit toujours moins qu'une
    analyse photo. */
+/* Version affichee, LUE DANS LE TITRE et jamais recopiee. Un numero present a cinq
+   endroits est un numero faux a quatre d'entre eux le jour ou l'on oublie une ligne. */
+const VERSION_APP = (document.title.match(/v[\d.]+/) || ['']) [0];
+
 const JOURS_ANALYSE = 60;
 /* LA CARTE ET L'ANALYSE LISENT LA MEME PERIODE : celle que l'utilisateur a choisie.
 
@@ -8411,7 +8433,19 @@ function showTab(t) {
   $$('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   /* Plus de libellé sur l'onglet Suivi depuis la v6.3 : la barre d'onglets le nomme
      déjà, l'afficher une seconde fois en haut à droite était redondant. */
-  $('#topRight').textContent = t === 'settings' ? 'v13.14' : '';
+  /* LE BADGE SE DEDUIT DU TITRE, il n'est plus ecrit a la main.
+
+     Il l'etait, et il est reste bloque sur « v13.14 » pendant les v13.15 et v13.16 :
+     l'utilisateur lisait une version fausse en haut de ses reglages pendant que la carte
+     « A propos », trois centimetres plus bas, en annoncait une autre. Pire, la version
+     affichee etait celle de la derniere fois que QUELQU'UN Y AVAIT PENSE — un numero qui
+     ne se met a jour que si on s'en souvient n'est pas un numero de version, c'est un
+     commentaire perime qui se fait passer pour une donnee.
+
+     Le titre est la source unique. Il ne peut pas deriver : l'audit refuse la publication
+     si le titre, la carte « A propos », le nom du fichier et l'entete du changelog ne
+     disent pas tous la meme chose. */
+  $('#topRight').textContent = t === 'settings' ? VERSION_APP : '';
   window.scrollTo(0, 0);
   if (t === 'today') renderToday();
   if (t === 'history') renderHistory();
