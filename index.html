@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.15</title>
+<title>Coach v13.16</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,48 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.16 — **« Objectif tenu » cede la place au deficit tenu, mesure ET objectif cote a
+             cote.** L'ancienne tuile comptait les journees passees a moins de 10 % de leur
+             cible : elle mesurait la regularite de la saisie plus que le resultat, et deux
+             journees symetriques a 300 kcal de part et d'autre y comptaient toutes deux
+             comme manquees alors qu'ensemble elles tiennent exactement la cible.
+             La tuile affiche desormais la mesure en grand, l'objectif et son unite en petit
+             dessous — « −219 » puis « /−255 kcal/jour » — et un libelle qui tranche — « deficit tenu », « deficit manque »,
+             « deficit creuse ». Tenu veut dire ATTEINT OU DEPASSE : −263 pour −255 vises est
+             tenu, −219 ne l'est pas.
+             Premiere version abandonnee : le signe suivait la visee, positif valant
+             « dans le bon sens » quelle que soit la visee. Elegant sur le papier, illisible
+             en pratique — il fallait se souvenir de la convention pour lire sa propre tuile,
+             et un deficit regle a −250 s'affichait +205. On garde le signe physique, le meme
+             que celui du reglage.
+             Couleurs calees sur une MESURE, pas sur une intuition : profil 82 kg a 20 % de
+             masse grasse, la disponibilite energetique franchit son seuil d'alerte a 450 kcal
+             de deficit et reste bonne a 400. Le vert s'arrete a 383, l'orange couvre 383 a
+             510, le rouge au-dela : l'alerte de l'analyse tombe en plein orange, la tuile
+             previent AVANT elle et ne la contredit jamais. Contrastes mesures sur le DOM
+             rendu, 4,85 / 4,80 / 5,24 pour un seuil AA de 4,5. Le libelle porte le verdict
+             en toutes lettres : la couleur n'est jamais le seul signal.
+             L'objectif est moyenne sur LES MEMES journees que la mesure, cyclage compris, et
+             non pris sur `profile.aim` — `aim` est ce qui a ete demande, la cible est ce qui
+             est applique, et les deux divergent des qu'un profil bouge sans reappliquer les
+             objectifs. Une SEULE definition partagee — `depenseMaintien`,
+             `apportMoyenHorsPause`, `ecartAuMaintien` — sert la tuile ET la charge : verifie,
+             les deux ecrans sortent −219/−255 et 219/255.
+             Les journees de pause en sont ecartees, ce que le prompt exigeait deja en toutes
+             lettres sans que le calcul le fasse.
+
+             **La case Date debordait sa colonne et n'etait pas alignee sur « Moment ».**
+             Trois causes empilees, toutes mesurees. Un element de grille refuse de
+             descendre sous la largeur min-content de son contenu : le champ date de Safari
+             iOS porte une largeur intrinseque batie sur « 28 aout 2026 » en toutes lettres,
+             et etirait sa piste `1fr` hors de l'ecran — `width:100%` n'y pouvait rien.
+             Meme contenue, la case gardait l'habillage natif d'iOS quand le `<select>`
+             d'a cote portait le notre. Restaient deux pixels de hauteur, loges dans
+             l'enveloppe interne du champ date et non dans sa police, son `padding` ou sa
+             bordure. `min-width:0`, `appearance:none` et la remise a zero de ce `padding`
+             interne donnent deux cases strictement identiques, 166 x 49,2 px. Correctif
+             porte par la regle commune : il vaut pour les quatre champs date.
+
     v13.15 — **L'analyse du Suivi se contredisait d'un jour a l'autre.** Une cause unique
              derriere trois symptomes : l'application laissait le modele RECALCULER ce
              qu'elle savait deja calculer, et il choisissait une fenetre differente a
@@ -1430,9 +1472,28 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .chart .gl{stroke:var(--line);stroke-width:1}
 .chart .gt{fill:var(--dim2);font-size:10px}
 .kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:13px}
-.kpi div{background:var(--card2);border:1px solid var(--line);border-radius:0;padding:11px 6px;text-align:center}
+/* Centrage vertical : la tuile du deficit porte une ligne de plus que ses deux voisines,
+   et la grille etire les trois a la meme hauteur. Sans ce centrage, les deux autres
+   restaient collees en haut avec du vide dessous, et la rangee paraissait mal reglee
+   plutot que deliberee. */
+.kpi div{background:var(--card2);border:1px solid var(--line);border-radius:0;padding:11px 6px;
+  text-align:center;display:flex;flex-direction:column;justify-content:center}
 .kpi b{display:block;font-size:19px;font-weight:700;letter-spacing:-.5px}
 .kpi span{font-size:9.5px;color:var(--dim2);text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+/* L'OBJECTIF SE LIT A COTE DE LA MESURE, en plus petit et sans couleur : c'est un repere,
+   pas un resultat. Le colorer aussi ferait deux signaux pour une seule information et
+   diluerait celui qui compte. `<i>` plutot qu'un `<span>` parce que `.kpi span` porte deja
+   le style du libelle en bas de tuile. */
+/* L'objectif passe A LA LIGNE pour porter son unite. « −219/−255 kcal/jour » sur une
+   seule ligne mesure 107 px pour 94 disponibles a 375 pt : ca ne tient pas, et la tuile
+   est en `nowrap`. Sur deux lignes, chaque morceau tient largement. */
+.kpi b i{display:block;font-style:normal;font-size:11px;font-weight:600;color:var(--dim2);
+  letter-spacing:0;margin-top:1px}
+/* Les trois etats du deficit. Tokens deja verifies en contraste ailleurs dans
+   l'application : la couleur porte le verdict, mais le LIBELLE le porte aussi — un
+   utilisateur qui distingue mal le rouge du vert lit « deficit tenu » ou « deficit
+   manque » et n'a besoin d'aucune couleur. */
+.kpi b.vert{color:var(--acc-l)} .kpi b.orange{color:var(--warn)} .kpi b.rouge{color:var(--bad)}
 
 .rate{display:block;font-size:11px;font-weight:600;text-transform:none;letter-spacing:0;margin-top:3px}
 .rate b{font-weight:800;font-size:12.5px}
@@ -1747,7 +1808,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.15 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.16 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -5678,20 +5739,82 @@ function apportMoyenHorsPause(jours) {
   return { moyenne: n ? Math.round(somme / n) : null, jours: n, pause: pause };
 }
 
-/* LE SIGNE SUIT LA VISÉE, pour qu'il se lise sans mode d'emploi.
+/* SIGNE NATUREL, ET L'OBJECTIF A CÔTÉ DE LA MESURE.
 
-   En PERTE, positif = déficit, donc « dans le bon sens ». En PRISE, on inverse : c'est un
-   surplus qui va dans le bon sens. En MAINTIEN il n'y a pas de bon sens à suivre, l'idéal
-   étant zéro des deux côtés ; on garde alors la convention de la PRISE, positif = au-dessus
-   du maintien, parce que c'est ainsi qu'on lit spontanément un « écart au maintien ».
-   Écrit dans l'autre sens, un +295 réel s'affichait −295 et se lisait « 295 en dessous ». */
+   Première version : le signe suivait la visée, positif valant « dans le bon sens » quelle
+   que soit la visée. Sur le papier c'était élégant ; à l'usage il fallait se souvenir de la
+   convention pour lire sa propre tuile, et un déficit réglé à −250 s'affichait +205. On
+   revient au signe physique — négatif = sous le maintien — le même que celui du réglage
+   `aim`. Plus rien à traduire : on règle −250, on lit −205 en face de −250.
+
+   L'OBJECTIF EST MOYENNÉ SUR LES MÊMES JOURNÉES que la mesure, et non pris sur `profile.aim`.
+   Deux raisons. Le cyclage donne aux journées de séance et de repos des cibles différentes :
+   comparer un apport moyen à un objectif unique compterait pour un écart ce qui n'est que la
+   composition de la semaine. Et `aim` est ce qui a été DEMANDÉ, quand `goals.kcal` est ce qui
+   est APPLIQUÉ — les deux divergent dès qu'un profil bouge sans que les objectifs soient
+   réappliqués, ou quand la cible bute sur son plancher de sécurité. Afficher un objectif que
+   l'application ne poursuit pas rendrait le verdict incompréhensible. */
 function ecartAuMaintien(jours, profil) {
   const p = profil || S().profile || {};
-  const a = apportMoyenHorsPause(jours);
-  if (a.moyenne === null) return { valeur: null, jours: 0, pause: a.pause, apport: null };
-  const brut = depenseMaintien(p) - a.moyenne;
-  return { valeur: viseeDe(p) === 'perte' ? brut : -brut,
-           apport: a.moyenne, jours: a.jours, pause: a.pause };
+  const maintien = depenseMaintien(p);
+  let sApport = 0, sCible = 0, n = 0, pause = 0;
+  jours.forEach(d => {
+    if (d === TODAY()) return;          // journée en cours : partielle, jamais moyennée
+    if (enPause(d)) { pause++; return; }
+    const k = sumEntries(entriesOf(d)).kcal;
+    if (!(k > 0)) return;
+    sApport += k; sCible += objectifsDuJour(d).kcal; n++;
+  });
+  if (!n) return { mesure: null, objectif: null, apport: null, jours: 0, pause: pause };
+  const apport = Math.round(sApport / n), cible = Math.round(sCible / n);
+  return { mesure: apport - maintien, objectif: cible - maintien,
+           apport: apport, cible: cible, maintien: maintien, jours: n, pause: pause };
+}
+
+/* VERDICT ET COULEUR. « Tenu » veut dire ATTEINT OU DÉPASSÉ dans le sens voulu : un déficit
+   de 263 pour 250 visés est tenu, un déficit de 219 ne l'est pas. C'est asymétrique à dessein
+   — rester en deçà de son déficit et le creuser trop ne sont pas la même erreur.
+
+   Un déficit très au-delà de la cible redevient pourtant un défaut, et la tuile doit le dire :
+   la laisser verte à −700 contredirait l'alerte de disponibilité énergétique que l'analyse
+   lève au même moment, et deux écrans qui se contredisent sont exactement ce qu'on passe la
+   journée à supprimer.
+
+   Les seuils, en kcal par jour sur une moyenne d'au moins une dizaine de journées : 100 pour
+   le manque, l'ordre de grandeur du bruit résiduel d'estimation sur une telle moyenne ; 300
+   pour l'excès, seuil à partir duquel la disponibilité énergétique commence à se dégrader. */
+function verdictEcart(e, visee) {
+  if (e.mesure === null) return { etat: '', libelle: visee === 'prise' ? 'surplus visé'
+                                          : visee === 'maintien' ? 'écart maintien' : 'déficit visé' };
+  if (visee === 'maintien') {
+    const d = Math.abs(e.mesure - e.objectif);
+    return { etat: d <= 100 ? 'vert' : d <= 300 ? 'orange' : 'rouge', libelle: 'écart maintien' };
+  }
+  const perte = visee !== 'prise';
+  /* Positif = on est allé AU-DELÀ de l'objectif, négatif = on est resté en deçà. */
+  const au_dela = (perte ? -1 : 1) * (e.mesure - e.objectif);
+  if (au_dela >= 0) {
+    /* La tolérance à l'excès est RELATIVE, celle au manque ne l'est pas.
+       Le manque se juge contre le bruit d'estimation, qui est une quantité absolue de
+       kcal et ne dépend pas de l'ambition affichée. L'excès se juge contre la santé de
+       la démarche : dépasser de 200 kcal un objectif de 500 n'a pas la portée du même
+       dépassement sur un objectif de 100. D'où une demi-largeur d'objectif, avec un
+       plancher de 100 pour que de tout petits objectifs ne virent pas au moindre écart.
+
+       CALÉ SUR UNE MESURE, pas sur une intuition. Profil de référence, 82 kg à 20 % de
+       masse grasse, maintien 2405 : la disponibilité énergétique franchit son seuil
+       d'alerte de 30 kcal/kg de masse maigre à 450 kcal de déficit, et reste à 31 à 400.
+       Avec un objectif de 255, la tolérance vaut 128 : le vert s'arrête à 383 de déficit,
+       l'orange couvre 383 à 510, le rouge au-delà. L'alerte de disponibilité tombe donc
+       en plein orange — la tuile prévient AVANT l'analyse et ne la contredit jamais, ce
+       qui est la seule disposition acceptable entre deux écrans voisins. */
+    const tol = Math.max(100, Math.abs(e.objectif) * 0.5);
+    if (au_dela <= tol) return { etat: 'vert', libelle: perte ? 'déficit tenu' : 'surplus tenu' };
+    return { etat: au_dela <= 2 * tol ? 'orange' : 'rouge',
+             libelle: perte ? 'déficit creusé' : 'surplus élevé' };
+  }
+  return { etat: -au_dela <= 100 ? 'orange' : 'rouge',
+           libelle: perte ? 'déficit manqué' : 'surplus manqué' };
 }
 
 function donneesCoach(nbJours, exclureJourCourant) {
@@ -5903,11 +6026,20 @@ function donneesCoach(nbJours, exclureJourCourant) {
          chiffres pour une meme chose. Sans pause declaree, ils sont identiques. */
       const em = ecartAuMaintien(jours, p);
       const apport = em.apport;
+      /* LE DEFICIT VOULU SE PREND SUR LA CIBLE MOYENNE DE LA PERIODE, pas sur la cible
+         de base. Avec le cyclage, une journee de seance et une journee de repos n'ont pas
+         le meme objectif : sur une periode ou les seances dominent, la moyenne des cibles
+         quotidiennes s'ecarte de `goals.kcal`. Comparer un apport moyen a la cible de base
+         compterait alors pour un ecart ce qui n'est que la composition de la semaine.
+         C'est aussi l'objectif qu'affiche la tuile du Suivi : les deux ecrans annoncent le
+         meme chiffre parce qu'ils appellent la meme fonction. */
       return {
         metabolisme_de_base_kcal: Math.round(ce.bmr),
         depense_de_maintien_kcal: maintien,
-        cible_kcal: cible,
-        deficit_voulu_kcal: maintien - cible,
+        cible_de_base_kcal: cible,
+        cible_moyenne_sur_la_periode_kcal: em.cible === undefined ? null : em.cible,
+        deficit_voulu_kcal: em.cible === undefined || em.cible === null
+          ? maintien - cible : maintien - em.cible,
         apport_moyen_reel_kcal: apport,
         apport_calcule_hors_journees_de_pause: em.pause,
         deficit_reel_kcal: apport === null ? null : maintien - apport,
@@ -6076,7 +6208,8 @@ tels quels. Ne resomme pas les lignes journalières pour en produire d'autres : 
 fenêtre différente à chaque analyse, et tu contredirais demain ce que tu affirmes aujourd'hui sur \
 des données pourtant inchangées. Cite le chiffre du bloc, jamais le tien ;
 - LE DÉFICIT SE MESURE CONTRE LA DÉPENSE DE MAINTIEN, jamais contre la cible. Lis le bloc \
-"energie" : "cible_kcal" vaut DÉJÀ "depense_de_maintien_kcal" moins "deficit_voulu_kcal". \
+"energie" : "cible_moyenne_sur_la_periode_kcal" vaut DÉJÀ "depense_de_maintien_kcal" \
+moins "deficit_voulu_kcal". \
 Atteindre la cible, c'est réaliser exactement le déficit prévu — dis-le, ne le reproche pas. \
 Manger SOUS la cible creuse un déficit PLUS GRAND que prévu, pas plus petit : si tu dois alerter, \
 c'est dans ce sens. La différence entre l'apport et la cible n'est PAS un déficit et ne doit \
@@ -6899,19 +7032,20 @@ function renderHistory() {
      v13.15. Le signe suit la visée : positif veut toujours dire « dans le bon sens ». */
   const prof = S().profile || {};
   const em = ecartAuMaintien(days, prof);
-  const vis = viseeDe(prof);
-  /* « écart maintien » et non « écart au maintien » : le libellé est en `nowrap` dans une
-     tuile d'un tiers de largeur, et les deux mots de trop débordaient sur un iPhone SE
-     (98 px mesurés pour 94 disponibles à 375 pt, le plus étroit qu'iOS supporte encore). */
-  const libEcart = vis === 'prise' ? 'surplus tenu'
-                 : vis === 'maintien' ? 'écart maintien' : 'déficit tenu';
-  const valEcart = em.valeur === null ? '—'
-    : (em.valeur < 0 ? '−' : '') + r0(Math.abs(em.valeur));
+  const vd = verdictEcart(em, viseeDe(prof));
+  /* Le signe est TOUJOURS écrit, y compris le plus : « 205 » face à « −250 » se lirait
+     comme un déficit alors que c'est un excédent. Le moins est le signe typographique
+     U+2212, pas le trait d'union : à cette taille, le tiret ressort trop court et se
+     confond avec la barre de séparation qui suit. */
+  const signe = v => (v > 0 ? '+' : v < 0 ? '−' : '') + r0(Math.abs(v));
 
   $('#hKpi').innerHTML =
     '<div><b>' + r0(avg) + '</b><span>kcal / jour</span></div>' +
     '<div><b>' + active.length + '</b><span>jours suivis</span></div>' +
-    '<div><b>' + valEcart + '</b><span>' + libEcart + '</span></div>';
+    '<div><b' + (vd.etat ? ' class="' + vd.etat + '"' : '') + '>' +
+      (em.mesure === null ? '—' : signe(em.mesure)) +
+      (em.objectif === null ? '' : '<i>/' + signe(em.objectif) + ' kcal/jour</i>') +
+    '</b><span>' + vd.libelle + '</span></div>';
 
   const cycleOn = energieHebdo().E > 0;
   $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal,
