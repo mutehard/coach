@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.17</title>
+<title>Coach v13.18</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,32 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.18 — **Le Conseil ne suivait aucune des regles ajoutees a l'analyse.** Question de
+             l'utilisateur, et la reponse etait a moitie bonne : les DONNEES suivaient — les
+             blocs `energie`, `bilan_energetique_hebdo` et `alcool_hebdo` vivent dans
+             `donneesCoach()`, partage par les deux — mais aucune des CONSIGNES. Le conseil
+             pouvait donc reprocher un deficit insuffisant a quelqu'un qui tenait ses quotas,
+             dans l'onglet d'a cote et sur les memes donnees. Quatre regles portees au prompt
+             du conseil, dont une nouvelle : nommer la periode quand on cite une moyenne.
+             Un controle d'audit verifie desormais que les deux prompts portent les memes
+             six invariants d'interpretation.
+
+             **Deux fenetres qui ne couvraient pas les memes dates.** `daysBack(n)` rend n
+             jours SE TERMINANT AUJOURD'HUI, dont le dernier est partiel : il ne restait que
+             n−1 journees closes dans la carte, quand la charge en prenait n finissant hier.
+             Mesure sur un jeu de test sans la moindre pause : 2250 kcal sur 13 jours dans la
+             carte, 2304 sur 14 dans l'analyse juste dessous. Le defaut etait ne de la v13.15
+             — tant que l'analyse avait sa fenetre fixe, personne n'attendait qu'elle coincide.
+             `joursClos()` est desormais la seule definition, appelee par les deux.
+
+             **Deux moyennes sur la meme carte.** La tuile « kcal / jour » comptait les
+             journees de pause declaree, la tuile de deficit les ecartait : 2450 annonces a
+             gauche, deficit calcule sur 2200 a droite. Regle unique desormais, sans
+             exception — toute moyenne ecarte les pauses declarees ET la journee en cours.
+             Les lignes journalieres restent toutes transmises avec leur drapeau : rien n'est
+             cache, seul l'agregat change. Les trois tuiles sortent de la meme fonction que
+             la charge, verifie avec et sans pause.
+
     v13.17 — **Le badge de version de l'en-tete annoncait v13.14 depuis deux versions.**
              Ecrit en dur dans `showTab()`, il n'avait ete hisse ni en v13.15 ni en v13.16 :
              l'utilisateur lisait une version fausse en haut de ses reglages pendant que la
@@ -1826,7 +1852,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.17 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.18 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -5839,12 +5865,28 @@ function verdictEcart(e, visee) {
            libelle: perte ? 'déficit manqué' : 'surplus manqué' };
 }
 
+/* LES n JOURNEES CLOSES d'une periode, celle du jour exclue. Une seule definition,
+   partagee par la carte du Suivi et par la charge envoyee au modele.
+
+   Elle n'existait pas : chacun construisait sa fenetre, et les deux ne couvraient pas
+   les memes dates. `daysBack(n)` rend n jours SE TERMINANT AUJOURD'HUI, dont le dernier
+   est partiel — il ne reste donc que n−1 journees closes. La charge, elle, prenait deja
+   n journees closes finissant hier. Un jour d'ecart au fond de la fenetre, invisible
+   dans le code et parfaitement visible a l'ecran : mesure sur un jeu de test sans la
+   moindre pause declaree, la carte annoncait 2250 kcal sur 13 jours quand l'analyse,
+   juste dessous, en donnait 2304 sur 14.
+
+   Le defaut est ne de la v13.15 : tant que l'analyse avait sa fenetre fixe de soixante
+   jours, personne n'attendait qu'elle coincide avec la carte. En les alignant sur le
+   meme selecteur, on a promis une egalite que le calcul ne tenait pas. */
+function joursClos(n) { return daysBack(n + 1).slice(0, n); }
+
 function donneesCoach(nbJours, exclureJourCourant) {
   const n = nbJours || JOURS_ANALYSE;
   const p = S().profile || {}, g = S().goals, gx = S().goalsMax || {};
   const jusqu = exclureJourCourant ? shiftD(TODAY(), -1) : TODAY();
   /* La fenêtre garde sa LARGEUR : n jours se terminant hier, pas n − 1 jours. */
-  const jours = exclureJourCourant ? daysBack(n + 1).slice(0, n) : daysBack(n);
+  const jours = exclureJourCourant ? joursClos(n) : daysBack(n);
   const depuis = shiftD(jusqu, -n);
 
   /* ENCODAGE : en-tête de colonnes + lignes de valeurs, plutôt qu'un objet nommé par
@@ -5914,7 +5956,26 @@ function donneesCoach(nbJours, exclureJourCourant) {
               a ? coutSeance(Object.assign({}, a, { volume: x.v }), p.weight) : 0];
     });
 
-  const jSuivis = journees.filter(j => j[1] > 0);
+  /* TOUTE MOYENNE ECARTE LES JOURNEES DE PAUSE. Une regle, aucune exception, rien a
+     retenir. La colonne 11 porte `en_pause`.
+
+     Elles etaient comptees ici et exclues dans `energie`, si bien que la charge portait
+     deux « apports moyens » differents. Mesure : cinq journees de vacances a 3200 kcal
+     dans une periode a 2200 donnaient 2450 en moyenne brute et 2200 hors pause. Le modele
+     citait l'une comme apport moyen et calculait le deficit sur l'autre — deux nombres
+     qui ne pouvaient pas coexister, et une phrase fausse par construction.
+
+     Une pause declaree veut dire « ne me juge pas sur ces jours-la ». Une moyenne sert a
+     juger. Les lignes journalieres, elles, restent toutes transmises avec leur drapeau :
+     rien n'est cache, seul l'agregat change. */
+  /* La journee EN COURS est ecartee des moyennes meme quand la fenetre la contient.
+     Le conseil demande `exclureJourCourant = false` — il a besoin de voir la journee du
+     jour dans les lignes pour repondre a « qu'est-ce que je mange ce soir ? » — mais une
+     journee partielle n'a rien a faire dans une moyenne. Sans ce filtre, la charge du
+     conseil portait un apport moyen dilue par un petit-dejeuner, quand celle de l'analyse
+     n'en souffrait pas : le meme grief, deplace d'un onglet. */
+  const jSuivis = journees.filter(j => j[1] > 0 && !j[11] && j[0] !== TODAY());
+  const jPause = journees.filter(j => j[1] > 0 && j[11]).length;
   const moy = i => jSuivis.length ? Math.round(jSuivis.reduce((a, j) => a + j[i], 0) / jSuivis.length) : 0;
 
   return {
@@ -6118,6 +6179,9 @@ function donneesCoach(nbJours, exclureJourCourant) {
     seances_realisees: { colonnes: colSeances, lignes: seances },
     journees: { colonnes: colJours, lignes: journees },
     moyennes_sur_jours_suivis: { jours_suivis: jSuivis.length,
+      journees_en_pause_ecartees: jPause,
+      note: jPause ? 'les journees de pause declaree sont ecartees de TOUTES ces moyennes'
+                   : 'aucune pause declaree sur la periode',
       kcal: moy(1), proteines_g: moy(3), glucides_g: moy(4), lipides_g: moy(5),
       fibres_g: moy(6), alcool_g: moy(7), eau_ml: moy(8) },
     aliments_consommes: { colonnes: colAliments,
@@ -6175,6 +6239,26 @@ en prise, DEUX zones selon l'anciennete : 0,25 à 0,5 % chez qui débute en musc
 ne présente donc jamais 0,1 à 0,25 % comme trop lent, ni 0,25 à 0,5 % comme la seule norme ;
 - les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
+- LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
+"bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
+"coherence_des_planchers" et "moyennes_sur_jours_suivis" portent des résultats DÉJÀ calculés \
+par l'application, sur des fenêtres précises et constantes. Reprends-les tels quels. Ne \
+resomme pas les lignes journalières pour en produire d'autres : tu choisirais une fenêtre \
+différente à chaque question, et tu contredirais dans un échange ce que tu as affirmé dans le \
+précédent sur des données pourtant inchangées ;
+- LE DÉFICIT SE MESURE CONTRE LA DÉPENSE DE MAINTIEN, jamais contre la cible. Dans le bloc \
+"energie", "cible_moyenne_sur_la_periode_kcal" vaut DÉJÀ "depense_de_maintien_kcal" moins \
+"deficit_voulu_kcal". Atteindre la cible, c'est réaliser exactement le déficit prévu : dis-le, \
+ne le reproche pas. Manger SOUS la cible creuse un déficit PLUS GRAND que prévu, pas plus \
+petit. La différence entre l'apport et la cible n'est PAS un déficit et ne doit jamais être \
+nommée ainsi ; le seul déficit réel est "deficit_reel_kcal" ;
+- pour l'alcool, le bloc "alcool_hebdo" porte le total des sept derniers jours glissants et son \
+verdict : utilise CE chiffre, ne recompte pas les lignes journalières. Si "verdict_applicable" \
+vaut faux, une pause déclarée touche la semaine : donne le total sans le juger ;
+- quand tu cites une moyenne ou un total, DIS SUR QUELLE PÉRIODE — « sur tes soixante derniers \
+jours » — d'après "fenetre_jours". L'onglet Suivi affiche la période que la personne y a \
+choisie, souvent plus courte : un chiffre annoncé sans sa période semble contredire l'autre \
+écran alors que les deux sont justes ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne \
 en ordres de grandeur, jamais au gramme près ;
 - une journée dont "en_pause" vaut 1 est une coupure VOLONTAIRE (vacances, pause planifiée) : \
@@ -7022,7 +7106,12 @@ $('#askIn').oninput = e => {
 
 function renderHistory() {
   renderAnalyse();
-  const days = daysBack(range);
+  /* LES n JOURNEES CLOSES, PUIS CELLE EN COURS. Dans cet ordre et pas autrement :
+     les indicateurs se lisent sur les journees closes — exactement celles que lit
+     l'analyse, via `joursClos()` — et les graphiques tracent en plus la barre du jour,
+     qui est un fait meme partielle. `daysBack(range)` melangeait les deux : il rendait
+     range jours dont un partiel, soit une journee close de moins que l'analyse. */
+  const days = joursClos(range).concat([TODAY()]);
   const g = S().goals;
   const per = days.map(d => sumEntries(entriesOf(d)));
 
@@ -7037,9 +7126,18 @@ function renderHistory() {
 
      Les GRAPHIQUES gardent `days` entier : une barre partielle est un fait du jour,
      elle a sa place. C'est la MOYENNE qui ne supporte pas d'etre diluee. */
-  const clos = days.map((d, i) => d === TODAY() ? null : per[i]).filter(Boolean);
-  const active = clos.filter(p => p.kcal > 0);
-  const avg = active.length ? active.reduce((a, p) => a + p.kcal, 0) / active.length : 0;
+  /* LES TROIS TUILES SORTENT DE LA MEME FONCTION, celle qui alimente aussi la charge.
+
+     Elles avaient chacune leur calcul : la moyenne comptait les journees de pause, le
+     deficit les ecartait. La carte se contredisait donc elle-meme des qu'une pause etait
+     declaree — 2450 kcal annonces en tuile 1, deficit calcule sur 2200 en tuile 3. Deux
+     moyennes cote a cote dans le meme encart.
+
+     `apportMoyenHorsPause` ecarte la journee en cours et les pauses declarees ; c'est
+     exactement ce que fait `moyennes_sur_jours_suivis` dans la charge. Les deux ecrans
+     ne peuvent plus diverger : ils appellent le meme code sur la meme fenetre. */
+  const am = apportMoyenHorsPause(days);
+  const avg = am.moyenne || 0;
   /* LE DÉFICIT TENU REMPLACE « OBJECTIF TENU » (v13.16).
 
      L'ancienne tuile comptait les journées passées à moins de 10 % de leur cible. Elle
@@ -7063,7 +7161,7 @@ function renderHistory() {
 
   $('#hKpi').innerHTML =
     '<div><b>' + r0(avg) + '</b><span>kcal / jour</span></div>' +
-    '<div><b>' + active.length + '</b><span>jours suivis</span></div>' +
+    '<div><b>' + am.jours + '</b><span>jours suivis</span></div>' +
     '<div><b' + (vd.etat ? ' class="' + vd.etat + '"' : '') + '>' +
       (em.mesure === null ? '—' : signe(em.mesure)) +
       (em.objectif === null ? '' : '<i>/' + signe(em.objectif) + ' kcal/jour</i>') +
