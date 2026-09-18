@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.18</title>
+<title>Coach v13.19</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,34 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v13.19 — **Groq a pose une limite d'un type que l'application ignorait, et tout s'est
+             arrete.** Le 18 septembre, sans qu'aucun reglage ni aucun usage n'ait change,
+             chaque photo et chaque analyse echouaient. Seul le Conseil repondait encore.
+             La cause : OTPM, les jetons de SORTIE par minute, plafonnes a 1000 sur le
+             compte. Elle n'apparait sur AUCUNE colonne de la page des limites, qui ne
+             montre que RPM, RPD, TPM et TPD — appliquee sans etre affichee.
+             Le refus porte sur ce qui est RESERVE, pas sur ce qui est consomme : une
+             requete demandant 1213 jetons de sortie est refusee d'avance, quel que soit le
+             quota restant. D'ou le caractere total et soudain, et l'inutilite de reessayer.
+             Le Conseil passait parce qu'il demande 900. C'est ce contraste qui a permis de
+             trancher le diagnostic avant d'ecrire une ligne : tous les chemins au-dessus de
+             1000 echouaient, les deux en dessous fonctionnaient.
+             Le retournement a comprendre : `budgetReponse()` doublait la plus longue
+             reponse observee pour se garder une marge. C'etait rationnel tant que la seule
+             limite etait globale — sur-reserver coutait du quota sans jamais empecher un
+             appel. Sous une limite de sortie, sur-reserver fait REFUSER. Le cout de la
+             prudence a change de signe, et la marge est devenue le defaut. Facteur ramene
+             de 2 a 1,4, ce qui laisse encore 40 % au-dessus des 607 jetons reellement
+             mesures.
+             Le plafond n'est PAS ecrit en dur : il est APPRIS quand Groq le nomme, applique
+             a tous les chemins en un seul endroit, et oublie au bout d'une semaine pour
+             qu'une limite levee ne bride pas l'application indefiniment. Un refus est
+             desormais absorbe — mesure : 2200 refuse, plafond appris, rejoue a 900, reussi,
+             l'utilisateur ne voit rien.
+             Le repli de l'analyse ne rejoue plus a 3200 sous plafond : il serait bride a la
+             meme valeur et ferait patienter pour rien. Et le message de troncature nomme la
+             vraie cause au lieu de promettre un budget qu'on ne peut plus augmenter.
+
     v13.18 — **Le Conseil ne suivait aucune des regles ajoutees a l'analyse.** Question de
              l'utilisateur, et la reponse etait a moitie bonne : les DONNEES suivaient — les
              blocs `energie`, `bilan_energetique_hebdo` et `alcool_hebdo` vivent dans
@@ -1852,7 +1880,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.18 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v13.19 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -1946,6 +1974,9 @@ const DEFAULTS = {
     /* Revision des PREFERENCES, distincte de `modele` qui ne porte que les seuils
        nutritionnels : declencher `normaliserModele` pour un reglage de photo
        remettrait `goalsWeight` a zero et reecrirait la cible d'hydratation. */
+    /* Plafond de sortie appris de Groq, avec la date a laquelle il a ete vu.
+       Vide tant que Groq n'en a jamais impose. */
+    otpm: null,
     revReglages: 4,
     supps: [],
     waterPresets: [],
@@ -3210,9 +3241,58 @@ function extractJson(txt) {
   throw err;
 }
 
+/* PLAFOND DE SORTIE APPRIS DE GROQ, jamais ecrit en dur.
+
+   Le 18 septembre 2026, sans qu'aucun reglage ni aucun usage n'ait change, tous les
+   appels se sont mis a echouer sauf ceux du Conseil. Groq avait pose sur le compte une
+   limite d'un type que l'application ignorait : OTPM, les jetons de SORTIE par minute,
+   a 1000. Elle n'apparait sur AUCUNE colonne de la page des limites du compte, qui ne
+   montre que RPM, RPD, TPM et TPD — elle est donc appliquee sans etre affichee, et rien
+   ne dit si elle est permanente ou s'il s'agit d'un delestage temporaire.
+
+   Le refus ne porte pas sur ce qui est consomme mais sur ce qui est RESERVE :
+   « The request's expected output tokens exceed the enforced limit ». Une requete
+   demandant 1213 jetons de sortie est donc refusee d'avance, quel que soit le quota
+   restant. Seuls le Conseil (900) et le test de cle (200) passaient encore.
+
+   D'ou le retournement a comprendre : `budgetReponse()` doublait la plus longue reponse
+   observee pour se garder une marge. C'etait rationnel tant que la seule limite etait
+   globale — sur-reserver coutait du quota sans jamais empecher un appel. Sous une limite
+   de sortie, sur-reserver fait REFUSER la requete. Le cout de la prudence a change de
+   signe, et la marge est devenue le defaut.
+
+   On n'ecrit donc aucune valeur en dur : on APPREND le plafond quand Groq le nomme, on
+   s'y tient, et on l'oublie au bout d'une semaine pour que la limite qui disparait ne
+   bride pas l'application indefiniment. */
+const OTPM_PEREMPTION = 7 * 864e5;   // une semaine
+const OTPM_MARGE = 100;              // on reste sous le plafond, jamais dessus
+
+function plafondSortie() {
+  const o = S().otpm;
+  if (!o || !(o.limite > 0)) return 0;
+  if (Date.now() - (o.vu || 0) > OTPM_PEREMPTION) return 0;   // on retente large
+  return Math.max(200, o.limite - OTPM_MARGE);
+}
+
+function apprendrePlafondSortie(message) {
+  /* Groq ecrit le plafond en clair : « on output tokens per minute (OTPM): Limit 1000,
+     Requested 1213 ». On ne retient que le nombre qu'il DONNE, jamais un nombre devine. */
+  if (!/OTPM|output tokens per minute/i.test(message)) return 0;
+  const m = message.match(/Limit\s+(\d+)/i);
+  const lim = m ? parseInt(m[1], 10) : 0;
+  if (!(lim > 0)) return 0;
+  S().otpm = { limite: lim, vu: Date.now() };
+  save();
+  return lim;
+}
+
 async function groq(body) {
   const key = S().apiKey.trim();
   if (!key) throw new Error('Aucune clé API. Renseigne-la dans Réglages.');
+  /* Le plafond s'applique a TOUS les chemins, ici et non dans chaque appelant : c'est
+     le seul endroit par ou ils passent tous, et un chemin oublie serait un chemin mort. */
+  const pl = plafondSortie();
+  if (pl && body.max_tokens > pl) body = Object.assign({}, body, { max_tokens: pl });
   /* Réservation posée AVANT l'envoi : si la réponse n'arrive jamais (réseau coupé),
      le quota a tout de même été consommé côté Groq et doit rester compté. */
   const estim = (body.max_tokens || 0) + ((body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0)
@@ -3269,6 +3349,23 @@ async function groq(body) {
       const e = new Error(m); e.unsupportedParam = true; throw e;
     }
     if (res.status === 401) throw new Error('Clé API refusée (401). Vérifie-la dans Réglages.');
+    /* AVANT le branchement 429, par lequel ce refus arrive. Sans cela il etait annonce
+       « Limite par minute atteinte », avec un delai a patienter — une cause fausse et un
+       conseil inutile : attendre ne change rien quand c'est la TAILLE demandee qui est
+       refusee. C'est exactement le message qu'a vu l'utilisateur le 18 septembre 2026. */
+    const limOtpm = apprendrePlafondSortie(m);
+    if (limOtpm) {
+      const e = new Error('Groq limite la longueur de réponse à ' + limOtpm
+        + ' jetons par minute sur ton compte. Nouvel essai, en plus court.');
+      e.otpm = limOtpm; e.raw = m;
+      /* Une requete REFUSEE n'a rien consomme : on retire la reservation posee avant
+         l'envoi, comme le fait deja le branchement 429 juste en dessous. */
+      if (DERNIERE_RESERVATION) {
+        S().journalQuota = (S().journalQuota || []).filter(x => x !== DERNIERE_RESERVATION);
+        DERNIERE_RESERVATION = null;
+      }
+      throw e;
+    }
     if (res.status === 429) {
       /* Le message de Groq nomme la limite atteinte et l'usage : on ne le jette plus.
          Une limite journalière ne se débloque pas en attendant quelques minutes — c'est
@@ -3364,6 +3461,11 @@ const JSON_SANS_REFLEXION = Object.assign({ response_format: { type: 'json_objec
 async function groqTry(body, opts) {
   try { return await groq(Object.assign({}, body, opts)); }
   catch (e) {
+    /* REFUS OTPM : on vient d'apprendre le plafond, et `groq()` bride desormais toute
+       requete qui le depasse. Rejouer une seule fois suffit donc a passer, sans que
+       l'utilisateur voie quoi que ce soit. Un seul essai, jamais une boucle : si le
+       second echoue, la cause est ailleurs et il faut que ca se voie. */
+    if (e && e.otpm) return await groq(Object.assign({}, body, opts));
     if (!e.unsupportedParam) throw e;
     /* On garde le mode JSON, qui est le plus precieux des deux : sans lui, rien ne
        signale une sortie incomplete. */
@@ -3540,8 +3642,16 @@ function budgetReponse() {
      1543 mesurés avec réflexion. Les anciennes bornes (défaut 1600, plafond 2000)
      encodaient l'hypothèse inverse et faisaient dépasser le budget dès la deuxième
      analyse. Le repli AVEC réflexion demande 2000 explicitement, il n'est pas concerné. */
-  if (!obs.length) return 1100;
-  return clamp(Math.round(Math.max.apply(null, obs) * 2), 900, 1600);
+  /* 1,4 et non 2. Le facteur 2 etait une marge de securite raisonnable tant que la seule
+     limite etait globale : sur-reserver coutait du quota, sans jamais empecher un appel.
+     Depuis qu'un plafond porte sur la SORTIE, sur-reserver fait refuser la requete
+     d'avance — mesure le 18 septembre 2026, 1213 demandes pour 1000 autorises, sur des
+     reponses qui n'ont jamais depasse 607 jetons. 1,4 laisse encore 40 % de marge sur le
+     pire cas observe, ce qui reste au-dessus du risque de troncature traite en v13.14.
+     Le plafond appris borne ensuite le resultat, quand il y en a un. */
+  const brut = obs.length ? clamp(Math.round(Math.max.apply(null, obs) * 1.4), 800, 1400) : 900;
+  const pl = plafondSortie();
+  return pl ? Math.min(brut, pl) : brut;
 }
 
 /* Douze dernières tailles de réponse : assez pour absorber un repas exceptionnellement
@@ -6415,6 +6525,10 @@ async function lancerAnalyse(nbJours) {
        reponse mal formee ne s'ameliorant pas d'elle-meme. */
     if (!(e && (e.tronque || e.jsonFail))) throw e;
     if (e.genRatee) { try { return extractJsonAnalyse(e.genRatee); } catch (_) {} }
+    /* Le repli consiste a redemander AVEC PLUS DE MARGE. Sous un plafond de sortie, la
+       seconde requete serait bridee a la meme valeur que la premiere : on rejouerait a
+       l'identique pour obtenir le meme resultat, en faisant patienter pour rien. */
+    if (plafondSortie()) throw e;
     loader(true, 'Réponse trop longue, nouvel essai…');
     return extractJsonAnalyse(await groqTry(
       Object.assign({}, corps, { max_tokens: 3200 }), JSON_SANS_REFLEXION));
@@ -6441,8 +6555,17 @@ function extractJsonAnalyse(txt) {
 
      Un texte qui ouvre une accolade sans jamais la refermer est coupe, pas rate. */
   const tronque = t.indexOf('{') >= 0 && !zones.length;
+  /* Quand un plafond de sortie est actif, dire « le budget etait trop court » serait
+     exact et inutile : le budget ne PEUT plus etre augmente, Groq le refuse. Nommer la
+     vraie cause, et la seule chose qui debloquerait vraiment. */
+  const plaf = plafondSortie();
   const err = new Error(tronque
-    ? 'La réponse du modèle a été coupée avant la fin : le budget de réponse était trop court.'
+    ? (plaf
+        ? 'La réponse a été coupée : Groq plafonne la longueur de réponse à '
+          + (S().otpm || {}).limite + ' jetons par minute sur ton compte, et l\'analyse '
+          + 'complète ne tient pas dedans. Il faut soit raccourcir le format de l\'analyse, '
+          + 'soit passer au palier Dev de Groq.'
+        : 'La réponse du modèle a été coupée avant la fin : le budget de réponse était trop court.')
     : "Le modèle n'a pas renvoyé d'analyse exploitable.");
   err.raw = t.trim(); err.extraction = true; err.tronque = tronque;
   throw err;
