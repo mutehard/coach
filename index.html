@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v14.0</title>
+<title>Coach v14.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,34 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v14.1 — **La tuile de deficit decrit le REGIME EN COURS, et s'abstient tant qu'il est
+             trop jeune.** Constat de l'utilisateur apres un changement d'objectif : « le
+             suivi du deficit n'est plus pertinent ». Exact, mais la remise a zero seche
+             qu'il proposait aurait eu son propre defaut.
+             Le probleme : depuis l'historisation, la tuile moyennait les objectifs de toute
+             la periode. Au lendemain d'un changement elle affichait « −374 / −389 » alors
+             que l'objectif venait de passer a −500 — ce −389 etait une ponderation entre
+             l'ancien et le nouveau, et ne correspondait a AUCUNE decision prise. Un repere
+             que personne n'a choisi ne sert a rien, et le verdict qui en decoule encore
+             moins.
+             Pourquoi pas une remise a zero : un verdict sur deux journees est du bruit. La
+             moyenne de calories demande une dizaine de jours pour sortir de l'erreur
+             d'estimation — c'est pour cette raison que la tendance de poids refuse deja de
+             se prononcer sous dix jours. Trancher le lendemain d'un changement reviendrait
+             a qualifier un seul repas de travers.
+             La tuile suit donc les journees depuis le dernier changement reel, affiche
+             l'objectif VERITABLE, et tant que dix journees closes ne sont pas accumulees
+             elle montre la mesure sans couleur ni jugement, en annoncant le delai :
+             « verdict dans 7 j ». Meme seuil que `TENDANCE_JOURS`, et pour la meme raison.
+             Un enregistrement de profil qui ne deplace ni la cible ni `act` n'ouvre pas de
+             regime : un reglage sans consequence ne remet pas le compteur a zero.
+             Les deux autres tuiles ne bougent pas — « kcal / jour » et « jours suivis » sont
+             des FAITS sur la periode choisie, pas des verdicts — et les graphiques gardent
+             tout l'historique avec son escalier.
+             La charge porte `regime_en_cours_depuis` et `ecart_vise_actuel_kcal`, et les
+             deux prompts apprennent que les CONSEILS visent l'objectif actuel : conseiller
+             sur un objectif abandonne ne sert a rien.
+
     v14.0 — **FONCTION DIMENSIONNANTE : les objectifs deviennent une serie temporelle.**
              Une journee se juge desormais contre l'objectif qu'elle AVAIT, et non contre
              celui d'aujourd'hui.
@@ -1931,7 +1959,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v14.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v14.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -2788,6 +2816,35 @@ function objectifsAu(date) {
 
 /* Les changements d'objectif TOMBANT DANS une fenetre, pour les annoncer a l'ecran et au
    modele. Une cible qui change en marche d'escalier ressemble sinon a une incoherence. */
+/* LE DEBUT DU REGIME EN COURS — la date du dernier changement REEL d'objectif.
+
+   Depuis l'historisation, la tuile moyennait les objectifs de toute la periode. Au
+   lendemain d'un changement elle affichait donc un objectif ponderé entre l'ancien et le
+   nouveau — mesure sur un cas reel : « −374 / −389 » alors que l'objectif venait de passer
+   a −500. Ce −389 ne correspondait a AUCUNE decision prise. Un repere que personne n'a
+   choisi ne sert a rien, et le verdict qui en decoulait encore moins.
+
+   Un enregistrement de profil qui ne deplace ni la cible ni `act` n'ouvre pas un regime :
+   meme critere que `changementsObjectifs`, pour qu'un reglage sans consequence ne remette
+   pas le compteur a zero. */
+function debutRegime() {
+  const h = goalsHisto();
+  for (let i = h.length - 1; i >= 1; i--) {
+    if (h[i].goals.kcal !== h[i - 1].goals.kcal || (h[i].act || 0) !== (h[i - 1].act || 0))
+      return h[i].date;
+  }
+  return null;                      // aucun changement : le regime court depuis le debut
+}
+
+/* Journees closes qu'il faut avoir accumulees sous un objectif avant de le juger.
+
+   DIX, comme `TENDANCE_JOURS` pour le poids, et ce n'est pas une coincidence : c'est la
+   meme raison. Sous cette duree, l'erreur d'estimation des repas domine la moyenne et un
+   verdict ne dirait rien d'autre que le bruit. L'application refuse deja de juger une
+   tendance de poids trop courte ; elle refuse desormais de juger un deficit trop jeune,
+   et annonce quand elle pourra — plutot que de trancher sur deux journees. */
+const REGIME_RECUL = 10;
+
 function changementsObjectifs(jours) {
   if (!jours.length) return [];
   const a = jours[0], b = jours[jours.length - 1];
@@ -6141,6 +6198,13 @@ function ecartAuMaintien(jours, profil) {
 function verdictEcart(e, visee) {
   if (e.mesure === null) return { etat: '', libelle: visee === 'prise' ? 'surplus visé'
                                           : visee === 'maintien' ? 'écart maintien' : 'déficit visé' };
+  /* PAS DE VERDICT SUR UN OBJECTIF TROP JEUNE. La mesure reste affichee — c'est un fait —
+     mais sans couleur ni jugement, et la tuile dit combien de journees manquent. Trancher
+     des le lendemain d'un changement reviendrait a qualifier un seul repas de travers. */
+  if (e.jeune) {
+    const reste = Math.max(1, REGIME_RECUL - (e.jours || 0));
+    return { etat: '', libelle: 'verdict dans ' + reste + ' j' };
+  }
   if (visee === 'maintien') {
     const d = Math.abs(e.mesure - e.objectif);
     return { etat: d <= 100 ? 'vert' : d <= 300 ? 'orange' : 'rouge', libelle: 'écart maintien' };
@@ -6441,6 +6505,10 @@ function donneesCoach(nbJours, exclureJourCourant) {
            bouge en marche d'escalier dans `journees` se lit comme une incoherence des
            donnees, alors que c'est une decision datee de l'utilisateur. */
         changements_d_objectif: em.changements || [],
+        /* LE REGIME EN COURS, pour que les conseils visent l'objectif d'aujourd'hui et non
+           une moyenne de la periode que la personne n'a jamais choisie. */
+        regime_en_cours_depuis: debutRegime(),
+        ecart_vise_actuel_kcal: g.kcal - maintien,
         note: 'LE DEFICIT SE MESURE CONTRE LA DEPENSE DE MAINTIEN, jamais contre la '
             + 'cible. La cible est deja la depense moins le deficit voulu. Quelqu un qui '
             + 'atteint sa cible realise exactement le deficit prevu : ne le lui reproche '
@@ -6552,6 +6620,12 @@ d'escalier : ce n'est PAS une incohérence des données, c'est une décision dat
 personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \
 d'objectif et ne compare jamais une journée à une cible qui n'existait pas encore. Si la \
 période en contient un, dis-le en une phrase et juge chaque segment pour ce qu'il est ;
+- LES CONSEILS VISENT L'OBJECTIF ACTUEL, jamais une moyenne de la période. \
+"energie.ecart_vise_actuel_kcal" donne l'écart visé aujourd'hui et \
+"energie.regime_en_cours_depuis" la date depuis laquelle il s'applique. Les constats \
+peuvent décrire toute la période, mais ce qu'il faut CHANGER se juge contre la consigne en \
+vigueur : conseiller sur un objectif abandonné ne sert à rien. Si le régime actuel a moins \
+de dix journées, dis que le recul manque encore pour le juger ;
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé ;
 - le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
 (jusqu'a 1,2 % au-dela d'un IMC de 30, la masse grasse mobilisable etant plus abondante), \
@@ -6647,6 +6721,12 @@ d'escalier : ce n'est PAS une incohérence des données, c'est une décision dat
 personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \
 d'objectif et ne compare jamais une journée à une cible qui n'existait pas encore. Si la \
 période en contient un, dis-le en une phrase et juge chaque segment pour ce qu'il est ;
+- LES CONSEILS VISENT L'OBJECTIF ACTUEL, jamais une moyenne de la période. \
+"energie.ecart_vise_actuel_kcal" donne l'écart visé aujourd'hui et \
+"energie.regime_en_cours_depuis" la date depuis laquelle il s'applique. Les constats \
+peuvent décrire toute la période, mais ce qu'il faut CHANGER se juge contre la consigne en \
+vigueur : conseiller sur un objectif abandonné ne sert à rien. Si le régime actuel a moins \
+de dix journées, dis que le recul manque encore pour le juger ;
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé. \
 Si l'écart énergétique est important, il passe avant tout le reste ;
 - juge le rythme de variation du poids en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
@@ -7558,7 +7638,14 @@ function renderHistory() {
      la tuile et l'analyse affichent le même nombre, ce qui était tout l'objet de la
      v13.15. Le signe suit la visée : positif veut toujours dire « dans le bon sens ». */
   const prof = S().profile || {};
-  const em = ecartAuMaintien(days, prof);
+  /* LA TUILE DECRIT LE REGIME EN COURS, pas la periode entiere. Les deux autres tuiles ne
+     bougent pas : « kcal / jour » et « jours suivis » sont des FAITS sur la periode
+     choisie, pas des verdicts. Et les graphiques gardent tout l'historique avec son
+     escalier — c'est la qu'on voit le passe, pas dans un chiffre moyenne. */
+  const debut = debutRegime();
+  const joursRegime = debut ? days.filter(d => d >= debut) : days;
+  const em = ecartAuMaintien(joursRegime, prof);
+  if (debut && em.jours > 0 && em.jours < REGIME_RECUL) em.jeune = true;
   const vd = verdictEcart(em, viseeDe(prof));
   /* Le signe est TOUJOURS écrit, y compris le plus : « 205 » face à « −250 » se lirait
      comme un déficit alors que c'est un excédent. Le moins est le signe typographique
