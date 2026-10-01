@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v13.19</title>
+<title>Coach v14.0</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,57 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v14.0 — **FONCTION DIMENSIONNANTE : les objectifs deviennent une serie temporelle.**
+             Une journee se juge desormais contre l'objectif qu'elle AVAIT, et non contre
+             celui d'aujourd'hui.
+             Le defaut : `objectifsDuJour(date)` lisait `S().goals`, les objectifs courants,
+             pour n'importe quelle date passee. Changer sa cible reecrivait donc le passe.
+             Mesure : passer `aim` de −250 a −500 faisait basculer une periode entiere de
+             « deficit tenu » a « deficit manque » sans qu'un seul repas ait change, et
+             donnait retroactivement 2160 kcal de cible a une journee vecue avec 2410.
+             C'est une faute de categorie : les faits passes ont ete produits sous un
+             contrat passe, les comparer a un contrat signe plus tard ne mesure rien.
+             LA MESURE SOUFFRAIT DU MEME DEFAUT, en pire : `depenseMaintien()` lisait le
+             poids et `act` au present, si bien que perdre trois kilos abaissait
+             retroactivement la depense de toutes les journees passees. Ce n'etait plus un
+             objectif qui bougeait, c'etait un fait. Chaque journee est maintenant
+             reconstruite avec le poids qu'elle avait et le `act` en vigueur ce jour-la.
+             Nouveau `settings.goalsHisto` : les EVENEMENTS de changement, dates, pas un
+             instantane par jour. Quelques entrees par an suffisent. Un socle est seme a la
+             plus ancienne journee connue — tant que rien n'a change, l'objectif courant est
+             bien celui qui etait en vigueur ; le dater d'aujourd'hui priverait de verdict
+             tout l'historique pour corriger une erreur inexistante.
+             Les quatre graphiques tracent desormais un ESCALIER : on voit le jour du
+             changement. `barChart` accepte une serie de reperes en plus d'un nombre.
+             La charge porte `energie.changements_d_objectif`, et les deux prompts
+             apprennent qu'une cible en marche d'escalier est une decision datee, jamais une
+             incoherence des donnees.
+             BENEFICE INATTENDU, et c'est le signe qu'on touche le bon modele : une analyse
+             figee devient TOUJOURS VRAIE au lieu de devenir fausse. Elle a juge des journees
+             contre les objectifs que ces journees avaient reellement ; il n'y a plus rien a
+             invalider quand les objectifs changent.
+             Deux defauts attrapes par les tests avant livraison. La reprise etait ecrite
+             APRES un `return` reste a la revision 4 : jamais atteinte, l'historique restait
+             vide et le premier changement reecrivait le passe comme avant. Et le socle,
+             place trop haut dans le fichier, levait une zone morte temporelle sur `TODAY`
+             qui interrompait TOUT le script : sur une installation vierge, l'application ne
+             demarrait plus.
+
+             **L'ANALYSE DU SUIVI ECHOUAIT SYSTEMATIQUEMENT** depuis le plafond OTPM de la
+             v13.19. Le format complet — un bilan, trois constats, trois conseils, une
+             priorite — pese environ 3250 caracteres, soit plus de mille jetons, pour 900
+             disponibles. La sortie etait coupee en plein JSON, le validateur de Groq la
+             rejetait en entier, et rien n'etait recuperable : un objet JSON tronque n'est
+             pas un objet. Message vu par l'utilisateur : « Reponse du modele incomplete ».
+             Une consigne de longueur est desormais ajoutee au prompt, mais SEULEMENT tant
+             que le plafond existe : elle se construit a l'appel et disparait d'elle-meme si
+             la limite est levee. Elle demande deux constats et deux conseils, avec un
+             budget de caracteres par champ — environ 1120 caracteres au total, de l'ordre
+             de 380 jetons, soit une marge large sous les 900. La marge est volontairement
+             genereuse : une reponse trop courte reste exploitable, une reponse coupee ne
+             l'est pas. Le modele est prevenu explicitement que deux constats complets
+             valent mieux que trois coupes, sinon il remplit l'espace qu'il croit avoir.
+
     v13.19 — **Groq a pose une limite d'un type que l'application ignorait, et tout s'est
              arrete.** Le 18 septembre, sans qu'aucun reglage ni aucun usage n'ait change,
              chaque photo et chaque analyse echouaient. Seul le Conseil repondait encore.
@@ -1880,7 +1931,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v13.19 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v14.0 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -1976,8 +2027,11 @@ const DEFAULTS = {
        remettrait `goalsWeight` a zero et reecrirait la cible d'hydratation. */
     /* Plafond de sortie appris de Groq, avec la date a laquelle il a ete vu.
        Vide tant que Groq n'en a jamais impose. */
+    /* Objectifs historises : les changements successifs, dates. Vide sur une
+       installation neuve, la premiere entree est posee au premier enregistrement. */
+    goalsHisto: [],
     otpm: null,
-    revReglages: 4,
+    revReglages: 5,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -2666,8 +2720,112 @@ function deltaJour(date) {
    Toute vue qui compare un apport à un objectif doit passer par ici, jamais
    directement par `S().goals`, sans quoi le journal et l'historique ne diraient
    pas la même chose. */
+/* =========================================================================
+   OBJECTIFS HISTORISES — une journee se juge contre l'objectif qu'elle AVAIT.
+   =========================================================================
+
+   Jusqu'en v13.19, `objectifsDuJour(date)` lisait `S().goals`, les objectifs COURANTS,
+   pour n'importe quelle date passee. Changer sa cible aujourd'hui reecrivait donc la
+   cible de toutes les journees deja vecues. Mesure : passer `aim` de −250 a −500 faisait
+   basculer une periode de « deficit tenu » a « deficit manque » sans qu'un seul repas ait
+   change, et donnait retroactivement une cible de 2160 a une journee du 11 septembre qui
+   avait ete vecue avec 2410.
+
+   C'est une faute de categorie : les faits passes ont ete produits sous un contrat passe.
+   Les comparer a un contrat signe plus tard ne mesure rien.
+
+   L'historisation repare un second defaut, et c'est le signe qu'on touche le bon modele :
+   une analyse figee devient TOUJOURS VRAIE au lieu de devenir fausse. Elle a juge des
+   journees contre les objectifs que ces journees avaient reellement ; ce jugement reste
+   valide indefiniment, et il n'y a plus rien a invalider quand les objectifs changent.
+
+   FORME : on enregistre les EVENEMENTS de changement, pas un instantane par jour. Les
+   objectifs changent quelques fois par an ; une poignee d'entrees suffit a dater chaque
+   journee. `act` voyage avec, parce que la depense de maintien en depend et qu'il subit
+   exactement le meme defaut que les cibles.
+
+   AVANT LE PREMIER CHANGEMENT ENREGISTRE, la plus ancienne entree fait reference. Ecarter
+   ces journees serait plus pur mais priverait l'utilisateur de ses verdicts pendant des
+   semaines, pour corriger une erreur qui n'existe pas : tant qu'il n'a rien change, son
+   objectif actuel est bien celui qui etait en vigueur. La precision commence au premier
+   changement reel. */
+
+function goalsHisto() {
+  const h = (S().goalsHisto || []).filter(e => e && dateValide(e.date) && e.goals
+                                               && e.goals.kcal > 0);
+  return h.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/* Enregistre les objectifs EN VIGUEUR a partir d'aujourd'hui. Appele depuis les deux
+   seuls endroits qui reecrivent `goals` : la validation du profil et le bouton
+   « Recalculer » du bandeau. Deux changements le meme jour ecrasent l'entree du jour
+   plutot que d'en empiler deux — c'est le dernier etat de la journee qui fait foi. */
+function noterObjectifs() {
+  const h = (S().goalsHisto || []).filter(e => e && e.date !== TODAY());
+  h.push({ date: TODAY(),
+           goals: Object.assign({}, S().goals),
+           goalsMax: Object.assign({}, S().goalsMax || {}),
+           act: (S().profile || {}).act || 1.55 });
+  /* On garde tout : quelques entrees par an ne pesent rien, et une entree supprimee est
+     une journee passee qu'on ne saura plus juger. */
+  S().goalsHisto = h.sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/* Les objectifs applicables A UNE DATE. Repli sur les objectifs courants tant qu'aucun
+   historique n'existe — une installation qui n'a jamais enregistre de changement doit
+   se comporter exactement comme avant. */
+function objectifsAu(date) {
+  const h = goalsHisto();
+  if (!h.length) return { goals: S().goals, goalsMax: S().goalsMax || {},
+                          act: (S().profile || {}).act || 1.55, origine: 'courant' };
+  let e = h[0];                       // avant le premier changement : la plus ancienne entree
+  for (let i = 0; i < h.length; i++) if (h[i].date <= date) e = h[i]; else break;
+  return { goals: e.goals, goalsMax: e.goalsMax || {},
+           act: e.act || (S().profile || {}).act || 1.55,
+           origine: e.date <= date ? 'historique' : 'reference la plus ancienne',
+           depuis: e.date };
+}
+
+/* Les changements d'objectif TOMBANT DANS une fenetre, pour les annoncer a l'ecran et au
+   modele. Une cible qui change en marche d'escalier ressemble sinon a une incoherence. */
+function changementsObjectifs(jours) {
+  if (!jours.length) return [];
+  const a = jours[0], b = jours[jours.length - 1];
+  const h = goalsHisto();
+  const out = [];
+  h.forEach((e, i) => {
+    if (!(e.date >= a && e.date <= b)) return;
+    const prec = h[i - 1];
+    /* UN CHANGEMENT SUPPOSE UN AVANT. L'entree socle n'en a pas : elle enregistre ce qui
+       etait deja en vigueur, pas une decision. La lister ferait annoncer au modele un
+       changement d'objectif qui n'a jamais eu lieu. On ne retient que les entrees qui
+       different reellement de celle qui precede — un enregistrement du profil sans
+       modification des cibles n'est pas un changement non plus. */
+    if (!prec) return;
+    if (prec.goals.kcal === e.goals.kcal && (prec.act || 0) === (e.act || 0)) return;
+    out.push({ date: e.date, cible_kcal: e.goals.kcal, cible_precedente_kcal: prec.goals.kcal,
+               act: e.act });
+  });
+  return out;
+}
+
+/* POIDS A UNE DATE : la derniere pesee a cette date ou avant.
+
+   Le bruit quotidien de 1 a 2 kg deplace le metabolisme de base d'une dizaine de kcal —
+   negligeable devant les centaines de kcal que l'historisation corrige. Lisser par
+   regression a chaque date couterait un calcul quadratique pour un gain inferieur a
+   l'erreur d'estimation des repas. */
+function poidsAu(date) {
+  const w = (DB.weights || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  let kg = 0;
+  for (let i = 0; i < w.length; i++) { if (w[i].date <= date) kg = w[i].kg; else break; }
+  if (!kg && w.length) kg = w[0].kg;          // aucune pesee avant : la premiere connue
+  return kg || (S().profile || {}).weight || 75;
+}
+
 function objectifsDuJour(date) {
-  const g = S().goals, gx = S().goalsMax || {};
+  const o = objectifsAu(date);
+  const g = o.goals, gx = o.goalsMax || {};
   const d = Math.round(deltaJour(date));
   const dg = Math.round(d / 4);   // l'énergie du cyclage est portée par les glucides
   const min = { prot: g.prot, carb: Math.max(0, g.carb + dg), fat: g.fat, fiber: g.fiber };
@@ -2773,6 +2931,8 @@ function normaliserFourchettes() {
    `goalsWeight` est effacé pour que ce bandeau se déclenche : sans cela, un
    utilisateur dont le poids n'a pas bougé garderait indéfiniment des planchers
    calculés sous l'ancien modèle, sans jamais se voir proposer la mise à jour. */
+
+
 /* VERSION DU MODÈLE DE SEUILS, portée par les données elles-mêmes.
 
    La v12.0 déduisait l'ancienneté d'une installation de l'ABSENCE de `goalsMax.alc`.
@@ -2871,8 +3031,13 @@ function normaliserModele(st, versionSource) {
     if ((S().modelAnalyse || '') === vision) S().modelAnalyse = 'openai/gpt-oss-120b';
   }
 
-  if (rev >= 4) return;                            // rien de nouveau a appliquer
-  S().revReglages = 4;
+  /* LE NUMERO DE CETTE GARDE SE HISSE AVEC CHAQUE REVISION. Oubli commis en v14.0 :
+     la reprise des objectifs historises etait ecrite APRES un `return` reste a 4, donc
+     jamais atteinte sur une installation deja a la revision 4 — c'est-a-dire toutes. Le
+     symptome etait silencieux : l'historique restait vide, et le premier changement
+     d'objectif reecrivait le passe comme avant la correction. */
+  if (rev >= 5) return;                            // rien de nouveau a appliquer
+  S().revReglages = 5;
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 })();
 
@@ -3339,7 +3504,13 @@ async function groq(body) {
        la sortie brute dans `failed_generation`. On la transmet : elle est souvent
        récupérable telle quelle, et sinon elle permet un nouvel essai ciblé. */
     if (res.status === 400 && (j && j.error && j.error.code === 'json_validate_failed' || /failed to validate json/i.test(m))) {
-      const e = new Error('Réponse du modèle incomplète.');
+      /* Sous plafond de sortie, « incomplete » est exact et inutile : l'utilisateur ne
+         peut rien en faire. Nommer la contrainte et la seule issue reelle. */
+      const e = new Error(plafondSortie()
+        ? 'Réponse coupée par la limite de ' + (S().otpm || {}).limite + ' jetons que Groq '
+          + 'applique à ton compte. L\'analyse a été demandée plus courte ; si cela se '
+          + 'reproduit, il faut réduire encore le format ou passer au palier Dev de Groq.'
+        : 'Réponse du modèle incomplète.');
       e.jsonFail = true;
       e.genRatee = (j && j.error && j.error.failed_generation) || '';
       e.raw = e.genRatee;
@@ -4100,6 +4271,7 @@ $('#goalsNag').onclick = e => {
                   fiber: f.min.fiber, water: eauObjectif() };
     S().goalsMax = f.max;
     S().goalsWeight = pc.kg;
+    noterObjectifs();          // la date d'entree en vigueur, pour juger le passe
     save(); renderToday(); renderHistory(); renderSettings();
     toast('Objectifs recalculés : ' + kcal + ' kcal, ' + f.min.prot + ' g de protéines minimum');
   } else if (e.target.closest('#gnKeep')) {
@@ -5886,6 +6058,23 @@ function depenseMaintien(profil) {
   return Math.round(cibleEnergetique(p).bmr * (p.act || 1.55));
 }
 
+/* DEPENSE DE MAINTIEN A UNE DATE — le meme raisonnement que pour les objectifs, applique
+   a la MESURE.
+
+   Le defaut etait plus grave de ce cote : ce n'est pas un objectif qui bougeait, c'est un
+   fait. `depenseMaintien()` lit le poids et `act` au present ; perdre trois kilos abaissait
+   donc retroactivement la depense de toutes les journees passees, et changeait leur deficit
+   mesure. Une journee du mois dernier n'a pas ete vecue avec le corps d'aujourd'hui.
+
+   On reconstruit donc chaque journee avec le poids qu'elle avait et le `act` en vigueur ce
+   jour-la. L'age, la taille et le sexe sont lus au present : ils ne bougent pas a l'echelle
+   d'un suivi, et les historiser compliquerait sans rien corriger. */
+function depenseMaintienAu(date) {
+  const p = S().profile || {};
+  const o = objectifsAu(date);
+  return Math.round(metabolismeBase(p, poidsAu(date)) * (o.act || p.act || 1.55));
+}
+
 function apportMoyenHorsPause(jours) {
   let somme = 0, n = 0, pause = 0;
   jours.forEach(d => {
@@ -5914,19 +6103,27 @@ function apportMoyenHorsPause(jours) {
    l'application ne poursuit pas rendrait le verdict incompréhensible. */
 function ecartAuMaintien(jours, profil) {
   const p = profil || S().profile || {};
-  const maintien = depenseMaintien(p);
-  let sApport = 0, sCible = 0, n = 0, pause = 0;
+  /* CHAQUE JOURNEE EST JUGEE CONTRE SA PROPRE DEPENSE ET SA PROPRE CIBLE, puis on moyenne
+     les ecarts. Moyenner les apports d'un cote et les cibles de l'autre pour les soustraire
+     ensuite donnerait le meme nombre tant que rien ne change — et un nombre faux des qu'un
+     objectif ou un poids bouge au milieu de la fenetre, puisque la soustraction se ferait
+     entre deux moyennes qui ne decrivent pas les memes journees. */
+  let sMesure = 0, sObjectif = 0, sApport = 0, sCible = 0, sMaintien = 0, n = 0, pause = 0;
   jours.forEach(d => {
     if (d === TODAY()) return;          // journée en cours : partielle, jamais moyennée
     if (enPause(d)) { pause++; return; }
     const k = sumEntries(entriesOf(d)).kcal;
     if (!(k > 0)) return;
-    sApport += k; sCible += objectifsDuJour(d).kcal; n++;
+    const m = depenseMaintienAu(d), c = objectifsDuJour(d).kcal;
+    sMesure += k - m; sObjectif += c - m;
+    sApport += k; sCible += c; sMaintien += m; n++;
   });
-  if (!n) return { mesure: null, objectif: null, apport: null, jours: 0, pause: pause };
-  const apport = Math.round(sApport / n), cible = Math.round(sCible / n);
-  return { mesure: apport - maintien, objectif: cible - maintien,
-           apport: apport, cible: cible, maintien: maintien, jours: n, pause: pause };
+  if (!n) return { mesure: null, objectif: null, apport: null, jours: 0, pause: pause,
+                   changements: changementsObjectifs(jours) };
+  return { mesure: Math.round(sMesure / n), objectif: Math.round(sObjectif / n),
+           apport: Math.round(sApport / n), cible: Math.round(sCible / n),
+           maintien: Math.round(sMaintien / n), jours: n, pause: pause,
+           changements: changementsObjectifs(jours) };
 }
 
 /* VERDICT ET COULEUR. « Tenu » veut dire ATTEINT OU DÉPASSÉ dans le sens voulu : un déficit
@@ -6228,14 +6425,22 @@ function donneesCoach(nbJours, exclureJourCourant) {
          meme chiffre parce qu'ils appellent la meme fonction. */
       return {
         metabolisme_de_base_kcal: Math.round(ce.bmr),
-        depense_de_maintien_kcal: maintien,
+        /* MOYENNE SUR LA PERIODE, et non valeur du jour : depuis la v14.0 chaque journee
+           porte la depense calculee avec SON poids et le `act` en vigueur ce jour-la. Sur
+           une periode ou le poids a baisse, la depense moyenne est superieure a celle
+           d'aujourd'hui, et c'est elle qui a produit les ecarts constates. */
+        depense_de_maintien_kcal: em.maintien === undefined ? maintien : em.maintien,
         cible_de_base_kcal: cible,
         cible_moyenne_sur_la_periode_kcal: em.cible === undefined ? null : em.cible,
-        deficit_voulu_kcal: em.cible === undefined || em.cible === null
-          ? maintien - cible : maintien - em.cible,
+        deficit_voulu_kcal: em.objectif === undefined || em.objectif === null
+          ? maintien - cible : -em.objectif,
         apport_moyen_reel_kcal: apport,
         apport_calcule_hors_journees_de_pause: em.pause,
-        deficit_reel_kcal: apport === null ? null : maintien - apport,
+        deficit_reel_kcal: em.mesure === undefined || em.mesure === null ? null : -em.mesure,
+        /* LES OBJECTIFS ONT PU CHANGER PENDANT LA PERIODE. Sans cette liste, une cible qui
+           bouge en marche d'escalier dans `journees` se lit comme une incoherence des
+           donnees, alors que c'est une decision datee de l'utilisateur. */
+        changements_d_objectif: em.changements || [],
         note: 'LE DEFICIT SE MESURE CONTRE LA DEPENSE DE MAINTIEN, jamais contre la '
             + 'cible. La cible est deja la depense moins le deficit voulu. Quelqu un qui '
             + 'atteint sa cible realise exactement le deficit prevu : ne le lui reproche '
@@ -6341,6 +6546,12 @@ personne dont tu as le suivi sous les yeux.
 Règles :
 - réponds à LA question posée, sans dérouler un bilan général ;
 - appuie-toi sur SES données chiffrées, cite-les quand elles éclairent la réponse ;
+- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre \
+l'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche \
+d'escalier : ce n'est PAS une incohérence des données, c'est une décision datée de la \
+personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \
+d'objectif et ne compare jamais une journée à une cible qui n'existait pas encore. Si la \
+période en contient un, dis-le en une phrase et juge chaque segment pour ce qu'il est ;
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé ;
 - le rythme de poids se juge en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
 (jusqu'a 1,2 % au-dela d'un IMC de 30, la masse grasse mobilisable etant plus abondante), \
@@ -6430,6 +6641,12 @@ Atteindre la cible, c'est réaliser exactement le déficit prévu — dis-le, ne
 Manger SOUS la cible creuse un déficit PLUS GRAND que prévu, pas plus petit : si tu dois alerter, \
 c'est dans ce sens. La différence entre l'apport et la cible n'est PAS un déficit et ne doit \
 jamais être nommée ainsi ; le seul déficit réel est "deficit_reel_kcal" ;
+- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre \
+l'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche \
+d'escalier : ce n'est PAS une incohérence des données, c'est une décision datée de la \
+personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \
+d'objectif et ne compare jamais une journée à une cible qui n'existait pas encore. Si la \
+période en contient un, dis-le en une phrase et juge chaque segment pour ce qu'il est ;
 - l'ÉNERGIE commande la masse corporelle, les macronutriments la composition et la santé. \
 Si l'écart énergétique est important, il passe avant tout le reste ;
 - juge le rythme de variation du poids en POURCENTAGE du poids par semaine : 0,5 à 1 % en perte \
@@ -6486,6 +6703,35 @@ Encourager n'est pas flatter : au démarrage, rappeler ce qu'une période courte
 est un constat, pas une consolation. \
 Si les données sont trop maigres pour conclure, dis-le franchement dans "bilan".`;
 
+/* CONSIGNE DE LONGUEUR, posee seulement quand un plafond de sortie l'impose.
+
+   Le format complet — un bilan, trois constats, trois conseils et une priorite — pese
+   environ 3250 caracteres, soit plus de mille jetons. Sous le plafond OTPM de 1000 impose
+   par Groq le 18 septembre 2026, la sortie etait coupee en plein JSON : le validateur la
+   rejetait entierement et l'analyse echouait SYSTEMATIQUEMENT, avec « Reponse du modele
+   incomplete ». Rien n'etait recuperable, puisqu'un objet JSON tronque n'est pas un objet.
+
+   On demande donc moins, mais seulement tant que la contrainte existe : la consigne se
+   construit a l'appel et disparait d'elle-meme si le plafond est leve. Deux constats
+   complets valent mieux que trois coupes au milieu — et le modele doit l'entendre
+   explicitement, sinon il remplit l'espace qu'il croit avoir.
+
+   Budget vise : environ 1120 caracteres, de l'ordre de 380 jetons, soit une marge large
+   sous les 900 reellement disponibles. La marge est volontairement genereuse : une
+   reponse trop courte reste exploitable, une reponse coupee ne l'est pas. */
+function consigneLongueur() {
+  const b = plafondSortie();
+  if (!b || b >= 1200) return '';
+  return '\n\nCONTRAINTE DE LONGUEUR, STRICTE. Ton fournisseur plafonne cette réponse à '
+    + b + ' jetons, et TOUTE SORTIE COUPÉE EST PERDUE EN ENTIER. Respecte donc exactement :'
+    + '\n- "bilan" : 2 phrases, 220 caractères au maximum ;'
+    + '\n- "constats" : 2 au maximum — "titre" 40 caractères, "detail" 140 caractères ;'
+    + '\n- "conseils" : 2 au maximum — "action" 90 caractères, "pourquoi" 120 caractères ;'
+    + '\n- "priorite" : 1 phrase, 120 caractères.'
+    + '\nDeux constats justes et complets valent mieux que trois coupés en plein milieu. '
+    + 'Choisis ce qui compte le plus et laisse le reste.';
+}
+
 async function lancerAnalyse(nbJours) {
   const d = donneesAnalyse(nbJours || JOURS_ANALYSE);
   /* Le seuil porte sur les journées NUTRITIONNELLES, pas sur le nombre de lignes de la
@@ -6514,7 +6760,8 @@ async function lancerAnalyse(nbJours) {
      ce meme budget. 1400 suffisait a Qwen, pas a gpt-oss-120b. */
   const corps = {
     model: modeleDe('analyse'), temperature: 0.3, max_tokens: 2200,
-    messages: [{ role: 'user', content: PROMPT_ANALYSE + '\n\nDonnées :\n' + JSON.stringify(d) }]
+    messages: [{ role: 'user', content: PROMPT_ANALYSE + consigneLongueur()
+                 + '\n\nDonnées :\n' + JSON.stringify(d) }]
   };
   try {
     return extractJsonAnalyse(await groqTry(corps, JSON_SANS_REFLEXION));
@@ -6719,19 +6966,31 @@ function daysBack(n) {
    sans cela (preserveAspectRatio="none") les textes des axes seraient étirés. */
 const CW = 360, CTOP = 8, CBASE = 118, CLAB = 134;
 
+/* `goal` accepte un NOMBRE ou une SERIE d'un repere par journee.
+
+   La serie sert les objectifs historises : quand la cible a change au milieu de la
+   periode, la ligne pointillee dessine une marche d'escalier a la date du changement au
+   lieu d'une horizontale qui ne correspondrait a aucune des deux consignes. On VOIT le
+   jour ou l'on a change d'objectif, ce qu'aucun chiffre ne raconte aussi bien.
+
+   Le nombre reste accepte : les reperes qui ne varient pas s'en contentent. */
 function barChart(days, vals, goal, unite, c1, c2, libelle) {
+  const serie = Array.isArray(goal) ? goal : null;
+  const gref = serie ? (serie.filter(v => v > 0).slice(-1)[0] || 0) : (goal || 0);
   const n = vals.length, plotH = CBASE - CTOP;
   /* UN IDENTIFIANT PAR COULEUR, et non deux en tout. Les `id` SVG sont globaux au
      document : avec `bg2` et `bg2b` pour seules valeurs, quatre graphiques colorés
      partageaient le même dégradé et prenaient tous la couleur du premier rendu. */
   const gid = 'bg' + String(c1 || 'defaut').replace(/[^a-z0-9]/gi, '');
-  const max = Math.max(goal || 0, ...vals, 1) * 1.12;
+  const max = Math.max(gref, ...(serie || []), ...vals, 1) * 1.12;
   const bw = CW / n, pad = Math.min(bw * 0.22, 2.4);
   let bars = '', labs = '';
   vals.forEach((v, i) => {
     const h = (v / max) * plotH;
     const x = i * bw + pad, w = Math.max(bw - pad * 2, 1);
-    const col = (goal && v > goal && !c1) ? '#c2660a' : (v > 0 ? 'url(#' + gid + ')' : '#e8e8e6');
+    /* Chaque barre se compare au repere de SA journee, plus a un repere unique. */
+    const gj = serie ? (serie[i] || 0) : gref;
+    const col = (gj && v > gj && !c1) ? '#c2660a' : (v > 0 ? 'url(#' + gid + ')' : '#e8e8e6');
     bars += '<rect x="' + x.toFixed(2) + '" y="' + (CBASE - Math.max(h, v > 0 ? 2 : 1)).toFixed(2) +
       '" width="' + w.toFixed(2) + '" height="' + Math.max(h, v > 0 ? 2 : 1).toFixed(2) +
       '" rx="' + Math.min(w / 2, 2.5).toFixed(2) + '" fill="' + col + '"/>';
@@ -6745,19 +7004,44 @@ function barChart(days, vals, goal, unite, c1, c2, libelle) {
         dd.getDate() + '/' + (dd.getMonth() + 1) + '</text>';
     }
   });
-  const gy = goal ? CBASE - (goal / max) * plotH : null;
+  /* Une horizontale quand le repere ne bouge pas, un escalier sinon. Le trace suit les
+     memes abscisses que les barres, de sorte que la marche tombe exactement sur la
+     journee ou le changement a pris effet. Toutes les valeurs interpolees ici sont
+     NUMERIQUES — coordonnees calculees — ou des libelles litteraux des appelants. */
+  const yy = v => CBASE - (v / max) * plotH;
+  let ligne = '';
+  if (serie) {
+    const pas = CW / Math.max(1, serie.length);
+    let d = '', ouvert = false;
+    serie.forEach((v, i) => {
+      if (!(v > 0)) { ouvert = false; return; }
+      const x1 = i * pas, x2 = (i + 1) * pas, yv = yy(v).toFixed(2);
+      d += (ouvert ? 'L' : 'M') + x1.toFixed(2) + ' ' + yv + 'L' + x2.toFixed(2) + ' ' + yv;
+      ouvert = true;
+    });
+    if (d) ligne = '<path d="' + d + '" fill="none" stroke="#84878c" stroke-width="1" '
+                 + 'stroke-dasharray="5 4"/>';
+  } else if (gref) {
+    ligne = '<line x1="0" y1="' + yy(gref).toFixed(2) + '" x2="' + CW + '" y2="'
+          + yy(gref).toFixed(2) + '" stroke="#84878c" stroke-width="1" stroke-dasharray="5 4"/>';
+  }
   return '<svg class="chart" viewBox="0 0 ' + CW + ' 150">' +
     '<defs><linearGradient id="' + gid + '" x1="0" y1="0" x2="0" y2="1">' +
     '<stop offset="0" stop-color="' + (c1 || '#2e2e2e') + '"/><stop offset="1" stop-color="' + (c2 || '#101010') + '"/></linearGradient></defs>' +
     '<line class="gl" x1="0" y1="' + CBASE + '" x2="' + CW + '" y2="' + CBASE + '"/>' + bars +
-    (gy !== null ? '<line x1="0" y1="' + gy.toFixed(2) + '" x2="' + CW + '" y2="' + gy.toFixed(2) +
-      '" stroke="#84878c" stroke-width="1" stroke-dasharray="5 4"/>' : '') +
+    ligne +
     labs + '</svg>' +
     /* « objectif » pour une cible qu'on vise, « plancher » pour un seuil qu'on dépasse :
        les macronutriments n'ont pas de plafond, et les appeler « objectif » laissait
        croire qu'il ne fallait pas aller au-delà. */
-    (goal ? '<div class="tiny" style="text-align:right;margin-top:2px">- - ' + (libelle || 'objectif') +
-      ' ' + r0(goal) + ' ' + (unite || 'kcal') + '</div>' : '');
+    /* La legende annonce le repere COURANT, celui de la derniere journee tracee, et
+       signale qu'il a change dans la periode plutot que de laisser croire a une valeur
+       unique sur toute la largeur. */
+    (gref ? '<div class="tiny" style="text-align:right;margin-top:2px">- - ' + (libelle || 'objectif') +
+      ' ' + r0(gref) + ' ' + (unite || 'kcal')
+      + (serie && serie.filter(v => v > 0).some(v => Math.abs(v - gref) > 0.5)
+          ? ' <span style="color:var(--dim2)">· modifié sur la période</span>' : '')
+      + '</div>' : '');
 }
 
 /* ENTRAÎNEMENT ET REPOS — une bande d'une case par jour, plus un ruban de pause.
@@ -7291,11 +7575,12 @@ function renderHistory() {
     '</b><span>' + vd.libelle + '</span></div>';
 
   const cycleOn = energieHebdo().E > 0;
-  $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), g.kcal,
+  $('#chartKcal').innerHTML = barChart(days, per.map(p => p.kcal), days.map(d => objectifsDuJour(d).kcal),
     cycleOn ? 'kcal en moyenne' : null) +
     (cycleOn ? '<p class="tiny" style="margin-top:6px">Avec le cyclage, chaque journée a sa propre cible : ' +
       'les barres alternent normalement autour de cette moyenne.</p>' : '');
-  $('#chartWater').innerHTML = barChart(days, per.map(p => p.water), g.water, 'ml', '#2ea8e0', '#1a7fb0');
+  $('#chartWater').innerHTML = barChart(days, per.map(p => p.water),
+    days.map(d => objectifsDuJour(d).water), 'ml', '#2ea8e0', '#1a7fb0');
 
   const wpts = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date)).filter(w => w.date >= days[0]);
   $('#chartWeight').innerHTML = lineChart(wpts, days[0]);
@@ -7320,16 +7605,16 @@ function renderHistory() {
     $('#wJuge').innerHTML = '<div class="prio ' + j.cls + '"><b>' + esc(j.titre) + '</b> ' + esc(j.texte) + '</div>';
   }
 
-  /* MACRONUTRIMENTS. Le plancher de référence est la MOYENNE des planchers du jour et
-     non `S().goals` : avec le cyclage, celui des glucides se déplace d'un jour à
-     l'autre, et une ligne fixe placerait la moitié des barres du mauvais côté. Même
-     traitement que la cible énergétique juste au-dessus. */
-  const planchers = days.map(d => objectifsDuJour(d).min);
-  const moyPlancher = k => planchers.reduce((a, m) => a + (m[k] || 0), 0) / (planchers.length || 1);
+  /* MACRONUTRIMENTS. Le plancher de chaque barre est celui de SA journée, transmis en
+     série : le cyclage déplace celui des glucides d'un jour à l'autre, et l'historisation
+     des objectifs peut en plus le faire changer de palier au milieu de la période. On en
+     moyennait une valeur unique jusqu'en v13.19 — ce qui plaçait la moitié des barres du
+     mauvais côté dès qu'un objectif changeait. Même traitement que la cible énergétique. */
   poserHtml($('#chartMacros'), MACROS.map(m => {
     const sol = COULEURS_MACRO[m.k];
     return '<h3 class="sub" style="margin-top:2px">' + m.nom + '</h3>' +
-      barChart(days, per.map(p => p[m.k] || 0), Math.round(moyPlancher(m.k)), 'g', sol[0], sol[1], 'plancher');
+      barChart(days, per.map(p => p[m.k] || 0), days.map(d => objectifsDuJour(d).min[m.k] || 0),
+               'g', sol[0], sol[1], 'plancher');
   }).join('') +
     (cycleOn ? '<p class="tiny" style="margin-top:8px">Le plancher des glucides suit le cyclage : ' +
       'il monte les jours de séance et redescend les jours de repos. La ligne montre sa moyenne.</p>' : ''));
@@ -8177,6 +8462,7 @@ $('#btnCalc').onclick = () => {
                               fat: cur.f.min.fat, fiber: cur.f.min.fiber, water: cur.water };
         DB.settings.goalsMax = cur.f.max;
         DB.settings.goalsWeight = cur.v.weight;
+        noterObjectifs();      // la date d'entree en vigueur, pour juger le passe
         save(); closeSheet(); renderSettings(); renderToday(); renderHistory();
         toast('Objectifs mis à jour');
       };
@@ -8356,6 +8642,22 @@ function sanitizeBackup(inc) {
                      l'ancienneté de la sauvegarde. C'est `normaliserModele` qui
                      tranche, et lui seul. */
                   alc: pos(gx.alc, 1000) },
+      /* `goalsHisto` passe l'assainissement champ par champ, comme tout le reste : sans
+         cette ligne il disparaitrait a chaque restauration, et avec lui la capacite de
+         juger toute journee anterieure. C'est le piege (d) releve pour le calibrage. */
+      goalsHisto: (Array.isArray(s.goalsHisto) ? s.goalsHisto : [])
+        .filter(e => e && typeof e.date === 'string' && e.goals && pos(e.goals.kcal, 20000) > 0)
+        .map(e => ({ date: e.date,
+                     goals: { kcal: pos(e.goals.kcal, 20000), prot: pos(e.goals.prot, 1000),
+                              carb: pos(e.goals.carb, 2000), fat: pos(e.goals.fat, 1000),
+                              fiber: pos(e.goals.fiber, 500), water: pos(e.goals.water, 20000) },
+                     goalsMax: { prot: pos((e.goalsMax || {}).prot, 1000),
+                                 carb: pos((e.goalsMax || {}).carb, 2000),
+                                 fat: pos((e.goalsMax || {}).fat, 1000),
+                                 fiber: pos((e.goalsMax || {}).fiber, 500),
+                                 alc: pos((e.goalsMax || {}).alc, 1000) },
+                     act: clamp(Number(e.act) || 1.55, 1, 2.5) }))
+        .slice(0, 2000),
       profile: { sex: p.sex === 'f' ? 'f' : 'h',
                  age: clamp(pos(p.age, 120, 35), 10, 120),
                  height: clamp(pos(p.height, 250, 175), 100, 250),
@@ -8703,6 +9005,38 @@ document.addEventListener('visibilitychange', () => {
 
 // installations antérieures à la v2.6 : on ancre la référence sur le poids courant,
 // sinon le bandeau de réajustement se déclencherait sans raison au premier lancement
+/* PLACE ICI, ET PAS PLUS HAUT. Ce bloc appelle `TODAY()` et `dateValide()`, declares
+   plus bas dans le fichier que la zone des reprises de reglages. Ecrit la-bas, il levait
+   « Cannot access 'TODAY' before initialization » — une zone morte temporelle qui
+   interrompait TOUT le script restant : sur une installation vierge, l'application ne
+   demarrait plus du tout. Les invariants de demarrage vivent donc ici, en fin de
+   fichier, ou tout ce dont ils ont besoin existe. */
+/* SOCLE DE L'HISTORIQUE DES OBJECTIFS — un INVARIANT, pas une reprise ponctuelle.
+
+   `noterObjectifs()` enregistre les objectifs qui ENTRENT en vigueur. Si l'historique est
+   vide au moment du premier changement, les objectifs SORTANTS ne sont consignes nulle
+   part — ils viennent d'etre ecrases — et toutes les journees passees se retrouvent
+   jugees contre la nouvelle cible, exactement le defaut que la v14.0 corrige. Mesure sur
+   un jeu de test : les journees du mois precedent passaient de 2410 a 2160.
+
+   Le socle est donc verifie a CHAQUE demarrage et non une seule fois : un historique vide
+   peut aussi venir d'une sauvegarde restauree ou d'un effacement, pas seulement d'une
+   installation anterieure. Un invariant se maintient, il ne se migre pas.
+
+   Il est date de la PLUS ANCIENNE journee connue : tant que rien n'a change, l'objectif
+   courant est bien celui qui etait en vigueur sur tout l'historique. Le dater d'aujourd'hui
+   priverait de verdict toutes les journees passees pour corriger une erreur inexistante. */
+(function socleObjectifs() {
+  if ((S().goalsHisto || []).length) return;
+  if (!S().goals || !(S().goals.kcal > 0)) return;
+  const dates = (DB.entries || []).map(e => e.date).filter(dateValide).sort();
+  S().goalsHisto = [{ date: dates.length ? dates[0] : TODAY(),
+                      goals: Object.assign({}, S().goals),
+                      goalsMax: Object.assign({}, S().goalsMax || {}),
+                      act: (S().profile || {}).act || 1.55 }];
+  save();
+})();
+
 if (!S().goalsWeight && S().profile && S().profile.weight) { S().goalsWeight = S().profile.weight; save(); }
 
 /* la marque est posee dans le balisage, plus rien a injecter ici */
