@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.1</title>
+<title>Coach v15.2</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,32 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.2 — **L'analyse tenait 96 % du budget d'une minute. Elle en tient 84.**
+             Message de Groq releve chez l'utilisateur : « Limit 8000, Used 6035, Requested
+             6785 ». Un seul appel consommait presque toute l'allocation, et la moindre
+             activite dans la meme minute le faisait refuser. Trois corrections.
+             1. COMPACT PAR DEFAUT au-dela d'un mois, et non plus seulement apres un refus.
+                Attendre le refus pour resserrer depensait une requete entiere — comptee par
+                Groq meme refusee — pour apprendre ce qu'on savait deja.
+             2. CONSIGNES CONDITIONNELLES. Le prompt pesait 7631 caracteres, premier poste
+                de la charge devant les donnees. Quatre regles n'y servaient qu'en presence
+                du bloc qu'elles decrivent : la plus lourde, 1626 caracteres sur l'anciennete
+                du suivi, ne vaut que les quinze premiers jours et partait pourtant a chaque
+                analyse depuis des mois. Le prompt tombe a 4609 caracteres, 3022 de moins
+                quand aucune ne s'applique. Troisieme endroit ou cette regle s'applique,
+                apres `consigneLongueur()` et `consigneMailles()`.
+             3. LE COUT REEL REMPLACE L'ESTIMATION. `coutPrevu('analyse')` rendait une
+                constante, incapable de suivre une charge qui depend de la fenetre. On
+                retient desormais ce que Groq a REELLEMENT compte, separement pour la maille
+                courte et la maille longue. Verifie sur le scenario qui echouait : 6035
+                jetons deja consommes, 6731 demandes — l'application impose 41 secondes
+                d'attente au lieu d'essuyer un refus.
+             **Le palier progressif des fibres est retire**, a la demande de l'utilisateur :
+             il n'etait plus pertinent. La fonction, ses trois constantes, l'affichage du
+             journal, le bloc de la charge et la regle de prompt disparaissent ensemble —
+             le plancher proportionnel de 14 g/1000 kcal reste, c'est la PROGRESSION par
+             paliers qui s'en va.
+
     v15.1 — **Les quatre points de la revue du 19 octobre 2026.**
              1. CINQUIEME BARRIERE, `verifier-nutrition.py`. Les quatre precedentes
                 gardaient la securite et la documentation ; le coeur du produit — les
@@ -2115,7 +2141,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v15.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v15.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -2214,6 +2240,8 @@ const DEFAULTS = {
     /* Objectifs historises : les changements successifs, dates. Vide sur une
        installation neuve, la premiere entree est posee au premier enregistrement. */
     goalsHisto: [],
+    /* Cout reel du prompt d'analyse, mesure par Groq, separe par maille. */
+    coutAnalyse: null,
     otpm: null,
     revReglages: 5,
     supps: [],
@@ -2380,7 +2408,6 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
            application de journal alimentaire n'a pas à porter un dépistage médical.
 
    Les deux derniers points ouverts ont été traités en v13.5 :
-     · §7  montée progressive des fibres — voir `palierFibres()` ;
      · §11 distinction débutant / confirmé en prise de masse — aucun champ ne porte
            l'ancienneté, la borne la plus large reste appliquée, mais les deux paliers
            de `jugerRythme()` disent À QUI chaque rythme convient.
@@ -2842,40 +2869,6 @@ function bilanEnergieHebdo(date) {
 
    Quatorze jours renseignes ne sont pas exiges : cinq suffisent a poser une moyenne,
    et attendre deux semaines pleines rendrait le palier muet chez qui saute des jours. */
-const FIBRES_ECART = 10, FIBRES_PAS = 5, FIBRES_JOURS_MINI = 5;
-
-function palierFibres(date) {
-  const plancher = objectifsDuJour(date || TODAY()).min.fiber || 0;
-  if (!(plancher > 0)) return null;
-  let somme = 0, n = 0;
-  for (let i = 1; i <= 14; i++) {
-    const t = sumEntries(entriesOf(shiftD(date || TODAY(), -i)));
-    if (!(t.kcal > 0)) continue;      // journée non renseignée, pas un jeûne
-    somme += t.fiber || 0; n++;
-  }
-  if (n < FIBRES_JOURS_MINI) return null;
-  const moyenne = somme / n;
-  if (moyenne >= plancher - FIBRES_ECART) return null;   // l'écart est rattrapable
-
-  /* DEUX FENETRES, ET C'EST VOULU. Les quatorze jours disent s'il y a un ecart DURABLE
-     a combler — c'est le declencheur de la spec. Mais le palier se calcule sur les SEPT
-     derniers jours, c'est-a-dire sur ce que la personne mange EN CE MOMENT.
-
-     Fonder le palier sur la moyenne a quatorze jours donnait une progression mesuree a
-     +2 g par semaine au lieu des +5 voulus : la moyenne longue retarde sur l'apport
-     reel, et la rampe se freinait elle-meme. Le plancher n'etait atteint qu'au bout de
-     dix semaines au lieu de quatre. */
-  let s7 = 0, n7 = 0;
-  for (let i = 1; i <= 7; i++) {
-    const t = sumEntries(entriesOf(shiftD(date || TODAY(), -i)));
-    if (!(t.kcal > 0)) continue;
-    s7 += t.fiber || 0; n7++;
-  }
-  const recent = n7 ? s7 / n7 : moyenne;
-  /* Le palier ne dépasse jamais le plancher : sinon il demanderait plus que la cible. */
-  return { moyenne: Math.round(moyenne), plancher: plancher, jours: n,
-           palier: Math.min(plancher, Math.round(recent) + FIBRES_PAS) };
-}
 
 function alcoolHebdo(date) {
   let g = 0, jours = 0, pause = 0;
@@ -3821,6 +3814,11 @@ function apprendrePlafondSortie(message) {
   return lim;
 }
 
+/* Quel emploi et quelle fenetre sont en cours d'envoi. Deux variables de module plutot
+   qu'un parametre traversant six fonctions : `groq()` est appele depuis quatre chemins
+   et n'a pas besoin de connaitre l'appelant pour autre chose que cette mesure. */
+let EMPLOI_EN_COURS = '', FENETRE_EN_COURS = 0;
+
 async function groq(body) {
   const key = S().apiKey.trim();
   if (!key) throw new Error('Aucune clé API. Renseigne-la dans Réglages.');
@@ -3984,6 +3982,23 @@ async function groq(body) {
       /* Réservation réellement opposée par Groq : prompt mesuré + budget demandé.
          On corrige l'estimation posée avant l'envoi, désormais qu'on a le vrai prompt. */
       corrigerReservation(r0(u.prompt_tokens) + r0(body && body.max_tokens || 0));
+      /* COUT REEL DU PROMPT D'ANALYSE, memorise pour predire le suivant.
+
+         `coutPrevu('analyse')` rendait une constante — 2800 jusqu'en v14.2, puis 6000.
+         Une constante ne peut pas suivre une charge qui depend de la fenetre choisie et
+         du journal accumule. Resultat mesure chez l'utilisateur : « Limit 8000, Used
+         6035, Requested 6785 ». La comptabilite locale avait laisse partir une requete
+         qu'elle estimait a 6900 alors qu'il ne restait pas la place, et le refus est
+         arrive de Groq au lieu d'etre evite.
+
+         On retient donc ce que Groq a REELLEMENT compte, separement par maille — une
+         analyse 30 jours et une analyse 3 mois n'ont pas le meme poids. La mesure prime
+         sur l'estimation des le deuxieme appel. */
+      if (!estPhoto && EMPLOI_EN_COURS === 'analyse' && u.prompt_tokens > 0) {
+        const c = S().coutAnalyse || {};
+        c[FENETRE_EN_COURS > 30 ? 'long' : 'court'] = r0(u.prompt_tokens);
+        S().coutAnalyse = c;
+      }
       try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
     }
   } catch (e) {}
@@ -4164,6 +4179,12 @@ function coutPrevu(emploi) {
      sur la derniere mesure. */
   if (emploi === 'repas')   return 500 + 1500;    // prompt court, max_tokens 1500
   if (emploi === 'analyse') {
+    /* LA MESURE PRIME SUR L'ESTIMATION. Separee par maille : une analyse 3 mois pese
+       nettement plus qu'une analyse 30 jours, et les confondre ramenerait l'erreur que
+       cette memoire corrige. */
+    const c = S().coutAnalyse || {};
+    const vu = c[FENETRE_EN_COURS > 30 ? 'long' : 'court'];
+    if (vu > 0) return vu + budgetReponse();
     /* 2800 etait l'estimation d'une charge bien plus legere. Mesure sur un journal reel
        de 66 journees : le prompt complet pese entre 5000 et 6900 jetons selon le
        decoupage du texte. Sous-estimer n'economise rien — ca empeche seulement
@@ -4998,15 +5019,6 @@ function renderToday() {
             (al.depasse ? ', <b style="color:var(--warn)">au-delà du repère de ' + r0(al.plafond) + ' g</b>'
                         : ', repère : ' + r0(al.plafond) + ' g') +
             (al.frequent ? ' · ' + al.jours + ' jours sur 7' : '') + '</em>';
-  }
-  /* Le palier de fibres ne s'affiche QUE s'il y a un écart durable à combler : le
-     reste du temps, la jauge suffit et ce message serait du bruit. */
-  const pf = palierFibres(curDate);
-  if (pf) {
-    info += (info ? '<br>' : '') +
-      '<b style="color:var(--fib)">Fibres : vise ' + pf.palier + ' g cette semaine</b>' +
-      '<em> · moyenne ' + pf.moyenne + ' g sur ' + pf.jours + ' jours, plancher ' +
-      pf.plancher + ' g. Monter par paliers évite l\'inconfort digestif.</em>';
   }
   $('#protInfo').innerHTML = info;
   $('#macros').innerHTML = defs.map(a => jaugeMacro(a[0], a[1], a[2], a[3], a[4], a[5])).join('');
@@ -6339,6 +6351,7 @@ async function runAnalysis() {
   /* Le verrou est consulté AVANT de fermer la feuille : les photos préparées restent
      ainsi en place, et il n'y a rien à refaire une fois l'attente écoulée. */
   ANNULER_REPRISE = false;
+  EMPLOI_EN_COURS = 'vision'; FENETRE_EN_COURS = 0;
   if (!(await verrouLibre('vision'))) return;
   const shots = pending.slice();
   closeSheet();
@@ -6983,18 +6996,6 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
                    seuil_d_alerte: 30, sous_le_seuil: d.alerte }
                : null;   // masse grasse inconnue, ou moins de trois journées terminées
     })(),
-    /* Sans ce bloc, le modele signale le manque de fibres brut a chaque analyse, alors
-       que l'application propose deja un palier atteignable. Deux voix contradictoires
-       sur le meme sujet. */
-    palier_de_fibres: (function () {
-      const pf = palierFibres(jusqu);
-      return pf ? { moyenne_14j_g: pf.moyenne, plancher_g: pf.plancher,
-                    palier_propose_g: pf.palier, jours_pris_en_compte: pf.jours,
-                    note: 'progression de +5 g par semaine : une hausse brutale des fibres '
-                        + 'provoque un inconfort digestif et fait abandonner. Encourage le '
-                        + 'palier, ne reclame pas le plancher d un coup.' }
-                : null;   // ecart rattrapable, ou moins de cinq journees renseignees
-    })(),
     activites_declarees: activites().filter(a => clamp(r0(a.parSemaine), 0, 7) > 0)
       .map(a => ({ nom: a.nom, seances_par_semaine: r0(a.parSemaine),
                    volume_habituel: r0(a.volume) + (a.type === 'distance' ? ' km' : ' min'),
@@ -7093,12 +7094,6 @@ personne dont tu as le suivi sous les yeux.
 Règles :
 - réponds à LA question posée, sans dérouler un bilan général ;
 - appuie-toi sur SES données chiffrées, cite-les quand elles éclairent la réponse ;
-- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre \
-l'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche \
-d'escalier : ce n'est PAS une incohérence des données, c'est une décision datée de la \
-personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \
-d'objectif et ne compare jamais une journée à une cible qui n'existait pas encore. Si la \
-période en contient un, dis-le en une phrase et juge chaque segment pour ce qu'il est ;
 - LES CONSEILS VISENT L'OBJECTIF ACTUEL, jamais une moyenne de la période. \
 "energie.ecart_vise_actuel_kcal" donne l'écart visé aujourd'hui et \
 "energie.regime_en_cours_depuis" la date depuis laquelle il s'applique. Les constats \
@@ -7113,11 +7108,6 @@ en prise, DEUX zones selon l'anciennete : 0,25 à 0,5 % chez qui débute en musc
 ne présente donc jamais 0,1 à 0,25 % comme trop lent, ni 0,25 à 0,5 % comme la seule norme ;
 - les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
-- LE POIDS SAUTE D'UN JOUR A L'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est \
-présent, l'écart à la tendance est de l'eau et du contenu digestif : ne l'interprète jamais \
-comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux \
-que la balance — un tour de taille qui baisse pendant qu'une cuisse et un bras tiennent est \
-une perte de gras avec maintien de la masse maigre, et cela mérite d'être dit ;
 - LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
 "bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
 "coherence_des_planchers" et "moyennes_sur_jours_suivis" portent des résultats DÉJÀ calculés \
@@ -7166,7 +7156,7 @@ async function poserQuestion(question) {
   }));
   const corps = {
     model: modeleDe('analyse'), temperature: 0.4, max_tokens: 900,
-    messages: [{ role: 'user', content: PROMPT_CONSEIL + consigneMailles(d)
+    messages: [{ role: 'user', content: PROMPT_CONSEIL + consignesConditionnelles(d) + consigneMailles(d)
                  + '\n\nSes données :\n' + JSON.stringify(d) }]
       .concat(hist)
       .concat([{ role: 'user', content: question }])
@@ -7186,14 +7176,9 @@ Réponds UNIQUEMENT par un objet JSON valide, sans texte autour, exactement à c
 "priorite":"la seule chose à changer cette semaine, en une phrase"}
 
 Règles d'analyse :
-- LE POIDS SAUTE D'UN JOUR A L'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est \
-présent, l'écart à la tendance est de l'eau et du contenu digestif : ne l'interprète jamais \
-comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux \
-que la balance — un tour de taille qui baisse pendant qu'une cuisse et un bras tiennent est \
-une perte de gras avec maintien de la masse maigre, et cela mérite d'être dit ;
 - LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
 "bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
-"coherence_des_planchers", "palier_de_fibres" et "moyennes_sur_jours_suivis" portent des \
+"coherence_des_planchers" et "moyennes_sur_jours_suivis" portent des \
 résultats DÉJÀ calculés par l'application, sur des fenêtres précises et constantes. Reprends-les \
 tels quels. Ne resomme pas les lignes journalières pour en produire d'autres : tu choisirais une \
 fenêtre différente à chaque analyse, et tu contredirais demain ce que tu affirmes aujourd'hui sur \
@@ -7205,12 +7190,6 @@ Atteindre la cible, c'est réaliser exactement le déficit prévu — dis-le, ne
 Manger SOUS la cible creuse un déficit PLUS GRAND que prévu, pas plus petit : si tu dois alerter, \
 c'est dans ce sens. La différence entre l'apport et la cible n'est PAS un déficit et ne doit \
 jamais être nommée ainsi ; le seul déficit réel est "deficit_reel_kcal" ;
-- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre \
-l'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche \
-d'escalier : ce n'est PAS une incohérence des données, c'est une décision datée de la \
-personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \
-d'objectif et ne compare jamais une journée à une cible qui n'existait pas encore. Si la \
-période en contient un, dis-le en une phrase et juge chaque segment pour ce qu'il est ;
 - LES CONSEILS VISENT L'OBJECTIF ACTUEL, jamais une moyenne de la période. \
 "energie.ecart_vise_actuel_kcal" donne l'écart visé aujourd'hui et \
 "energie.regime_en_cours_depuis" la date depuis laquelle il s'applique. Les constats \
@@ -7236,37 +7215,11 @@ soirée isolée ;
 - les valeurs viennent d'estimations sur photo, avec 20 à 30 % d'erreur par repas : raisonne sur les \
 TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun chiffre au gramme près ;
 - une journée absente signifie « non renseignée », pas « jeûne » ;
-- si le bloc "palier_de_fibres" est présent, l'application propose DÉJÀ une progression par \
-paliers de +5 g. Encourage ce palier et ne réclame pas le plancher d'un coup : une hausse \
-brutale des fibres provoque un inconfort digestif et fait abandonner. Si le bloc est absent, \
-l'écart est rattrapable et la consigne habituelle s'applique ;
-- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans \
-"journees_en_pause" d'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : \
-vacances, semaine chargée, pause alimentaire planifiée. C'est un outil légitime en phase de perte \
-prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge \
-d'alcool, ne la présente jamais comme un manquement, et n'en tire aucune conclusion sur la \
-variation de poids — sodium, alcool et glycogène y retiennent de l'eau et masquent la masse grasse. \
-Si la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse \
-les autres normalement. Si la personne est encore en pause, ne propose aucun changement à \
-appliquer maintenant : formule ce qui sera à reprendre au retour ;
 - la période s'arrête HIER : la journée en cours est exclue parce qu'elle serait incomplète. \
 Ne réclame pas les données du jour et n'en déduis aucun manque ;
 - l'alcool apporte 7 kcal/g sans appartenir à aucun macronutriment : ses calories comptent dans "kcal" \
 mais ne remplissent aucune fourchette ;
 - appuie-toi sur les aliments réellement consommés pour donner des conseils CONCRETS, pas des généralités ;
-- ANCIENNETÉ DU SUIVI. Le bloc "suivi" dit depuis combien de jours cette personne enregistre. \
-Quand "phase" vaut "demarrage" — moins de quinze jours — plusieurs conclusions ne sont PAS SOUTENUES \
-par les données, et s'en abstenir est une question d'exactitude avant d'être une question de ton :
-  · un poids qui ne descend pas sur une ou deux semaines ne démontre RIEN. Les variations d'eau, de \
-glycogène et de contenu digestif dépassent largement la perte de gras attendue sur cette durée. \
-N'écris ni « stagnation », ni « le déficit n'est pas réel », ni « ton apport est proche du maintien » ;
-  · un plancher de fibres ou de protéines encore loin du compte est ATTENDU à ce stade : changer ses \
-habitudes et ses quantités demande des semaines, pas des jours. Ne le présente pas comme un manquement ;
-  · dis explicitement ce que la période ne permet pas encore de conclure, puis nomme ce qui est DÉJÀ \
-acquis — la régularité de l'enregistrement, un plancher tenu, une habitude installée ;
-  · un seul changement à installer, choisi pour être tenable, pas trois.
-  Au-delà de quinze jours, "phase" vaut "etabli" : reprends alors le ton habituel, direct et exigeant, \
-et juge la tendance de poids sans ménagement.
 
 Ton : direct, professionnel, tutoiement, français. Trois constats et trois conseils au maximum. \
 "niveau" vaut "ok", "attention" ou "alerte". Pas de flatterie, pas de préambule. \
@@ -7290,6 +7243,34 @@ Si les données sont trop maigres pour conclure, dis-le franchement dans "bilan"
    Budget vise : environ 1120 caracteres, de l'ordre de 380 jetons, soit une marge large
    sous les 900 reellement disponibles. La marge est volontairement genereuse : une
    reponse trop courte reste exploitable, une reponse coupee ne l'est pas. */
+/* CONSIGNES CONDITIONNELLES — envoyees seulement quand elles s'appliquent.
+
+   Le prompt d'analyse pesait 7995 caracteres, soit environ 3270 jetons des 8000 que Groq
+   accorde par minute : 41 % du budget, payes a CHAQUE appel. Mesure chez l'utilisateur,
+   message de Groq : « Limit 8000, Used 6035, Requested 6785 ».
+
+   Or ces regles ne servent qu'en presence du bloc qu'elles decrivent. La plus lourde —
+   1626 caracteres sur l'anciennete du suivi — ne vaut que pendant les quinze premiers
+   jours d'utilisation, et partait pourtant a chaque analyse depuis des mois. Expliquer au
+   modele comment lire une pause declaree quand la periode n'en contient aucune est du
+   texte paye pour rien, sur un budget qu'on vient de voir deborder.
+
+   REGLE A RETENIR : une consigne qui decrit un bloc ne part que si le bloc est la. C'est
+   le troisieme endroit ou elle s'applique, apres `consigneLongueur()` et
+   `consigneMailles()` — le prompt est devenu le premier poste de la charge, devant les
+   donnees, et chaque regle ajoutee se paie sur toutes les analyses. */
+function consignesConditionnelles(d) {
+  if (!d) return '';
+  const out = [];
+  const pauses = (d.moyennes_sur_jours_suivis || {}).journees_en_pause_ecartees > 0;
+  const chg = ((d.energie || {}).changements_d_objectif || []).length > 0;
+  if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est \\\nprésent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais \\\ncomme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux \\\nque la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est \\\nune perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
+  if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre \\\nl\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche \\\nd\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la \\\npersonne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \\\nd\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la \\\npériode en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
+  if (pauses) out.push('- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans \\\n"journees_en_pause" d\'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : \\\nvacances, semaine chargée, pause alimentaire planifiée. C\'est un outil légitime en phase de perte \\\nprolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge \\\nd\'alcool, ne la présente jamais comme un manquement, et n\'en tire aucune conclusion sur la \\\nvariation de poids — sodium, alcool et glycogène y retiennent de l\'eau et masquent la masse grasse. \\\nSi la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse \\\nles autres normalement. Si la personne est encore en pause, ne propose aucun changement à \\\nappliquer maintenant : formule ce qui sera à reprendre au retour ;\n');
+  if ((d.suivi || {}).phase === 'demarrage') out.push('- ANCIENNETÉ DU SUIVI. Le bloc "suivi" dit depuis combien de jours cette personne enregistre. \\\nQuand "phase" vaut "demarrage" — moins de quinze jours — plusieurs conclusions ne sont PAS SOUTENUES \\\npar les données, et s\'en abstenir est une question d\'exactitude avant d\'être une question de ton :\n  · un poids qui ne descend pas sur une ou deux semaines ne démontre RIEN. Les variations d\'eau, de \\\nglycogène et de contenu digestif dépassent largement la perte de gras attendue sur cette durée. \\\nN\'écris ni « stagnation », ni « le déficit n\'est pas réel », ni « ton apport est proche du maintien » ;\n  · un plancher de fibres ou de protéines encore loin du compte est ATTENDU à ce stade : changer ses \\\nhabitudes et ses quantités demande des semaines, pas des jours. Ne le présente pas comme un manquement ;\n  · dis explicitement ce que la période ne permet pas encore de conclure, puis nomme ce qui est DÉJÀ \\\nacquis — la régularité de l\'enregistrement, un plancher tenu, une habitude installée ;\n  · un seul changement à installer, choisi pour être tenable, pas trois.\n  Au-delà de quinze jours, "phase" vaut "etabli" : reprends alors le ton habituel, direct et exigeant, \\\net juge la tendance de poids sans ménagement.\n');
+  return out.length ? '\n' + out.join('') : '';
+}
+
 /* La consigne des deux mailles ne part QUE si la charge porte vraiment des semaines.
 
    Ecrite en dur dans les deux prompts, elle ajoutait 639 caracteres a CHAQUE appel — y
@@ -7321,7 +7302,20 @@ function consigneLongueur() {
 }
 
 async function lancerAnalyse(nbJours, compact) {
-  const d = donneesAnalyse(nbJours || JOURS_ANALYSE, compact);
+  const periodeDemandee = nbJours || JOURS_ANALYSE;
+  /* COMPACT PAR DEFAUT AU-DELA D'UN MOIS, et non plus seulement apres un refus.
+
+     Mesure chez l'utilisateur, message de Groq : « Limit 8000, Used 6035, Requested
+     6785 ». L'analyse 3 mois pesait a elle seule 85 % du budget d'une minute. Attendre
+     le refus pour resserrer revenait a depenser une requete entiere — comptee par Groq
+     meme refusee — pour apprendre ce qu'on savait deja : au-dela d'un mois, la maille
+     journaliere n'apporte rien qu'un resume hebdomadaire ne porte mieux.
+
+     Le rejeu sur refus reste en place, il n'a simplement plus de premiere marche a
+     descendre : il sert desormais aux cas ou meme le compact ne passe pas. */
+  if (compact === undefined) compact = periodeDemandee > SEMAINES_AU_DELA;
+  EMPLOI_EN_COURS = 'analyse'; FENETRE_EN_COURS = periodeDemandee;
+  const d = donneesAnalyse(periodeDemandee, compact);
   /* Le seuil porte sur les journées NUTRITIONNELLES, pas sur le nombre de lignes de la
      charge : une journée d'entraînement sans repas y figure légitimement, mais ne fonde
      aucune analyse. Sans cette distinction, trois séances sans le moindre repas
@@ -7348,7 +7342,7 @@ async function lancerAnalyse(nbJours, compact) {
      ce meme budget. 1400 suffisait a Qwen, pas a gpt-oss-120b. */
   const corps = {
     model: modeleDe('analyse'), temperature: 0.3, max_tokens: 2200,
-    messages: [{ role: 'user', content: PROMPT_ANALYSE + consigneMailles(d) + consigneLongueur()
+    messages: [{ role: 'user', content: PROMPT_ANALYSE + consignesConditionnelles(d) + consigneMailles(d) + consigneLongueur()
                  + '\n\nDonnées :\n' + JSON.stringify(d) }]
   };
   try {
@@ -7521,6 +7515,7 @@ $('#btnManual').onclick = () => {
         if (!d) { toast('Décris d\'abord ton repas'); return; }
         if (!S().apiKey.trim()) { closeSheet(); toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
         ANNULER_REPRISE = false;
+        EMPLOI_EN_COURS = 'repas'; FENETRE_EN_COURS = 0;
         if (!(await verrouLibre('repas'))) return;
         closeSheet(); loader(true, 'Estimation en cours…');
         try {
@@ -7999,6 +7994,10 @@ $('#analyse').onclick = async e => {
   if (!e.target.closest('#anGo')) return;
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
   ANNULER_REPRISE = false;
+  /* La fenetre est posee AVANT le controle de quota : `coutPrevu('analyse')` lit la
+     mesure memorisee pour CETTE maille, et une fenetre inconnue lui ferait reprendre
+     l'estimation generique. */
+  FENETRE_EN_COURS = range;
   if (!(await verrouLibre('analyse'))) return;
   loader(true, 'Analyse de tes données…\nCela prend quelques secondes.');
   try {
@@ -8068,6 +8067,10 @@ async function envoyerQuestion(q) {
   if (!question) return;
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
   ANNULER_REPRISE = false;
+  /* La fenetre est posee AVANT le controle de quota : `coutPrevu('analyse')` lit la
+     mesure memorisee pour CETTE maille, et une fenetre inconnue lui ferait reprendre
+     l'estimation generique. */
+  FENETRE_EN_COURS = range;
   if (!(await verrouLibre('analyse'))) return;
 
   const l = S().chat || (S().chat = []);
