@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v14.1</title>
+<title>Coach v15.1</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,135 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.1 — **Les quatre points de la revue du 19 octobre 2026.**
+             1. CINQUIEME BARRIERE, `verifier-nutrition.py`. Les quatre precedentes
+                gardaient la securite et la documentation ; le coeur du produit — les
+                seuils et les formules — n'etait eprouve qu'a la main, et c'etait la
+                seule partie du projet dont les regressions passaient. 24 controles qui
+                CROISENT le code et `COACH-SPEC-v3.md` : une valeur changee d'un seul
+                cote echoue, sans qu'on ait a savoir lequel des deux a raison — c'est la
+                divergence qui est le defaut. Cinq garde-fous de FORME s'y ajoutent, dont
+                le `(MET − 1)` qui evite de compter deux fois la depense de repos et le
+                `cout - h.moyenne` qui garde le cyclage neutre en energie.
+                Contre-epreuve : onze defauts plantes, onze detectes, temoin intact.
+             2. LA LIGNE SENIOR DEVIENT UN PLANCHER ET NON UN PLAFOND. Elle ecrasait le
+                profil d'effort depuis la v12.0 : a 66 ans, un pratiquant de force de
+                80 kg en deficit passait de 189 g de proteines a 126 g du jour au
+                lendemain, pour le meme entrainement. A l'envers de la physiologie — la
+                resistance anabolique AUGMENTE avec l'age, c'est le sens meme du
+                consensus PROT-AGE. Le maximum des deux lignes donne la bonne semantique
+                dans les deux sens, verifie : un senior sedentaire est remonte de 108 a
+                126 g, un senior qui s'entraine garde ses 189 g.
+             3. L'ECART AU PLAN DECLARE EST ENFIN SIGNALE. `profilEffort()` et
+                `energieHebdo()` lisent le plan declare, qui commande a la fois la colonne
+                du bareme proteique, le plancher glucidique et le cyclage energetique. Rien
+                ne le confrontait aux seances reellement enregistrees : un plan perime
+                gonflait donc les planchers en silence, et le controle de coherence
+                concluait a une incompatibilite sur un volume que la personne ne faisait
+                plus. Quatre semaines de recul, seuil d'une seance par semaine, journees de
+                pause ecartees.
+             4. Les sept commentaires citant `COACH-FOURCHETTES-SPEC-v2.md` pointent enfin
+                vers `COACH-SPEC-v3.md`, son nom depuis le 28 aout. Dette soldee.
+
+    v15.0 — **FONCTION DIMENSIONNANTE : les circonferences, et la retention d'eau deduite.**
+             Nouvel usage — un releve mensuel qui dit ce que la balance ne peut pas dire.
+             ORIGINE. La revue du 19 octobre a trouve que `disponibiliteEnergetique()` rend
+             `null` sans masse grasse renseignee : LE SEUL GARDE-FOU DE SECURITE DU MODELE,
+             le seuil RED-S a 30 kcal/kg de masse maigre, etait muet depuis des mois pendant
+             que l'utilisateur tenait un deficit de 500 kcal. La barriere etait pratique et
+             non theorique — il ne savait pas comment estimer la valeur. Un champ facultatif
+             qui desactive une alerte en silence est un defaut de conception.
+             CALCULATEUR par circonferences, methode dite « Navy », dans la fiche profil.
+             Deux formules, hommes et femmes : n'en implanter qu'une donnait un resultat faux
+             a la moitie des utilisateurs. Cinq cas degeneres rendent `null` et jamais NaN,
+             dont un tour de taille saisi plus petit que le tour de cou.
+             SUIVI MENSUEL de cinq circonferences — taille, cou, hanches, cuisse, bras. Le
+             tour de poitrine a ete ecarte : il varie de plusieurs centimetres selon la phase
+             respiratoire, melange gras, muscle et tissu mammaire, et n'apporte aucune
+             discrimination que la taille ou le bras ne donnent deja. De la friction sans
+             signal, sur un releve dont la compliance est le vrai facteur limitant.
+             Un tableau plutot qu'un graphique : a douze points par an, il se lit mieux et
+             montre l'ecart depuis le premier releve — la seule comparaison qui tienne quand
+             l'erreur de ruban vaut un centimetre. Mesure sur un jeu de test : taille −5,0 cm
+             pendant que la cuisse tient a −0,1 cm, exactement la discrimination recherchee.
+             LA BOUCLE SE FERME : enregistrer un releve reprend la masse grasse estimee dans
+             le profil, ce qui rallume la disponibilite energetique sans recopier un chiffre
+             d'un ecran a l'autre. Verifie de bout en bout.
+             RETENTION D'EAU, deduite et non mesuree. Aucun materiel grand public ne la
+             mesure : les balances a impedance appliquent une equation de population a une
+             impedance que l'hydratation fausse justement. Mais l'ecart a la tendance de
+             poids la donne, et l'argument est arithmetique — un kilo de gras demande environ
+             7700 kcal d'ecart, donc toute variation rapide est de l'eau et du contenu
+             digestif. La regression sur huit semaines existait depuis longtemps ; le residu
+             etait la, il n'etait pas montre.
+             Les causes sont cherchees dans les trois journees precedentes : glucides eleves,
+             alcool, seance recente. Trois des quatre causes principales etaient deja dans les
+             donnees. Le sodium reste absent — le faire estimer sur photo serait beaucoup de
+             bruit pour peu de signal.
+             Sous 500 g, l'application se tait : c'est la precision d'une balance domestique,
+             et presenter ce bruit comme un signal serait pire que le silence.
+             Les deux blocs partent dans la charge pour 558 caracteres, quatre releves au plus
+             et deux en compact. Leurs notes sont volontairement courtes, la regle de lecture
+             vivant dans le prompt : la repeter la ferait payer deux fois sur une charge qu'on
+             venait de degraisser. Mesure apres ajout, analyse 3 mois en compact : 16 847
+             caracteres, sous le niveau connu pour passer.
+
+             COMPATIBILITE DES SAUVEGARDES, verifiee sur question de l'utilisateur et
+             corrigee avant livraison. `mesures` et `goalsHisto` ne figuraient dans AUCUN
+             des trois chemins d'import. Consequences mesurees : « Remplacer » avec une
+             sauvegarde anterieure effacait definitivement tous les releves et tout
+             l'historique des objectifs, parce que `sanitizeBackup` cree systematiquement
+             les listes absentes et que la liste de preservation ne les citait pas ; et
+             « Fusionner » ignorait les mesures d'une sauvegarde recente, qui n'etaient donc
+             jamais restaurees. L'inventaire affiche avant import ne les nommait pas non
+             plus, si bien que rien ne prevenait.
+             C'est exactement le defaut que cet inventaire existe pour empecher, reapparu
+             faute d'y avoir ajoute les nouvelles series. Regle a retenir : TOUTE SERIE
+             AJOUTEE A `sanitizeBackup` DOIT ETRE AJOUTEE AUX TROIS ENDROITS — inventaire,
+             liste de preservation du remplacement, et reunion de la fusion. `mesures` vit a
+             la racine et non dans `settings` : la boucle de preservation ne pouvait pas
+             l'atteindre, il lui faut sa propre ligne.
+             Contre-epreuve sur le vrai chemin d'import, fichier injecte : une sauvegarde
+             anterieure remplace bien les repas et laisse intacts les deux releves et les
+             deux entrees d'historique ; une sauvegarde recente ajoute la mesure inconnue et
+             preserve la locale de meme date.
+
+    v14.2 — **L'analyse sur 3 mois etait refusee, et attendre n'y changeait rien.** Message
+             affiche : « Limite du palier gratuit atteinte pour cette minute, attends 60
+             secondes » — un conseil qui ne pouvait pas marcher, puisque c'est la requete
+             elle-meme qui depassait la limite, pas un quota consomme.
+             Mesure sur le journal reel de l'utilisateur, 66 journees : le prompt complet
+             pesait 20 392 caracteres a 3 mois contre 17 058 a 30 jours, pour 8000 jetons
+             par minute dont 900 reserves a la reponse. La repartition a surpris — le TEXTE
+             DE CONSIGNE pesait 36 % du total, plus que les lignes journalieres. Il avait
+             grossi a chaque regle ajoutee ces dernieres semaines.
+             Au-dela de trente jours, les lignes partent desormais a DEUX MAILLES : les
+             quatorze dernieres journees en detail, tout ce qui precede resume par semaine.
+             Les semaines se coupent aux changements d'objectif — sans quoi une semaine a
+             cheval afficherait une cible moyennee, l'artefact retire de la tuile en v14.1.
+             Une semaine sans journee suivie rend `null` et non 0 : une semaine entierement
+             en pause sortait « 0 kcal, cible 0 », lisible comme un jeune.
+             CHAMP SEPARE `semaines`, et non `journees` qui changerait de forme, parce que
+             `moyennes_sur_jours_suivis` DERIVE des lignes journalieres : agreger `journees`
+             aurait transforme ses moyennes en moyennes de moyennes hebdomadaires, fausses
+             des que deux semaines n'ont pas le meme nombre de journees. Verifie : les
+             chiffres calcules sont identiques en maille normale et compacte.
+             Le catalogue d'aliments se resserre de 45 a 20 entrees au-dela d'un mois, et la
+             consigne des deux mailles n'est ajoutee QUE si la charge porte des semaines —
+             alourdir le prompt pour resoudre un probleme de taille est un cercle qu'il faut
+             refuser de boucler. L'analyse 30 jours, la plus consultee, ne perd rien.
+             REJEU AUTOMATIQUE EN COMPACT. On ne peut pas savoir a l'avance combien de
+             jetons pese un texte : entre 17 058 caracteres qui passent et 20 392 qui sont
+             refuses, le seuil exact est indeterminable depuis l'application. Si Groq
+             repond que la demande depasse a elle seule la limite, la charge est rebatie en
+             compact — sept journees, dix aliments, pas de detail de seances — et renvoyee
+             une fois. Mesure : 16 584 caracteres, sous le niveau connu pour passer.
+             Le message distingue enfin les deux pannes : « Limit 8000, Requested 9500 » dit
+             que la requete est trop grosse et qu'il faut raccourcir la periode ; le meme
+             plafond avec moins demande est un vrai quota qui se libere en attendant.
+             `coutPrevu('analyse')` passe de 2800 a 6000 jetons de prompt, l'ancienne valeur
+             datant d'une charge bien plus legere.
+
     v14.1 — **La tuile de deficit decrit le REGIME EN COURS, et s'abstient tant qu'il est
              trop jeune.** Constat de l'utilisateur apres un changement d'objectif : « le
              suivi du deficit n'est plus pertinent ». Exact, mais la remise a zero seche
@@ -333,7 +462,7 @@
              Le cout prevu est desormais propre a chaque emploi : 2000 jetons pour un repas
              en texte contre 4100 pour une photo. Les confondre reservait plus du double de
              ce qu'une saisie texte consomme.
-    v13.9 — Le renvoi vers `COACH-FOURCHETTES-SPEC-v2.md`, en bas de la documentation, est
+    v13.9 — Le renvoi vers `COACH-SPEC-v3.md`, en bas de la documentation, est
             retire. Ce fichier vit dans le dossier de developpement et n'existe pas sur le
             telephone : pointer vers une ressource que le lecteur ne peut pas atteindre ne
             l'aide pas, cela le frustre. Les auteurs et les annees suffisent a retrouver
@@ -365,14 +494,14 @@
             plutot qu'une regle.
             La distinction compte : un point NON IMPLANTE se relit comme du travail en
             attente, un point ABANDONNE ne se rouvre pas. Le commentaire le dit desormais.
-            `COACH-FOURCHETTES-SPEC-v2.md` reste conserve pour deux raisons, et deux
+            `COACH-SPEC-v3.md` reste conserve pour deux raisons, et deux
             seulement : les 19 references bibliographiques, et le cas de reference du §14
             qui permet de verifier que le modele n'a pas derive.
     v13.6 — Le commentaire du modele annoncait encore QUATRE points de la spec non
             implantes, alors que la v13.5 venait d'en traiter deux. Le defaut meme que
             cette session traque : un changement qui ne se propage pas a ce qui le decrit.
             Trouve une heure apres la mise en ligne de la v13.5 — donc PAS avant.
-    v13.5 — **Deux points de `COACH-FOURCHETTES-SPEC-v2.md` remis en phase, dont un que la
+    v13.5 — **Deux points de `COACH-SPEC-v3.md` remis en phase, dont un que la
             v13.3 avait casse.**
             PRISE DE MASSE : la spec §11 distingue DEUX zones selon l'anciennete —
             0,25 a 0,5 %/semaine chez qui debute, 0,1 a 0,25 % chez un confirme, chez qui
@@ -724,7 +853,7 @@
             HEBDOMADAIRE, alerte de disponibilite energetique sous 30 kcal/kg de masse
             maigre, plancher energetique absolu (1,2 x metabolisme de base).
             L'eau suit enfin le cyclage des seances : 1500 ml + 600 ml par heure d'effort.
-            Source : COACH-FOURCHETTES-SPEC v2.0.
+            Source : COACH-SPEC-v3.md.
     v11.1 — Icone propre pour le scan, a la place de la loupe. La loupe evoque une RECHERCHE,
             et l'application en a justement une — la saisie des treize chiffres — que le meme
             symbole designerait aussi bien : deux fonctions voisines sous un seul signe.
@@ -1539,6 +1668,16 @@ label.f>span{display:block;font-size:12px;color:var(--dim);margin-bottom:5px;fon
 .in:focus{border-color:var(--acc);background:#fffbea}
 select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overflow:ellipsis;background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);background-position:calc(100% - 17px) 21px,calc(100% - 12px) 21px;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.calcmg{margin:-6px 0 12px;border:1px solid var(--line);padding:10px;background:var(--card2)}
+.calcmg summary{font-size:13px;cursor:pointer;color:var(--acc-l);font-weight:600}
+.calcmg .note{margin:8px 0}
+table.mes{width:100%;border-collapse:collapse;font-size:13.5px}
+table.mes th{font-size:10px;text-transform:uppercase;color:var(--dim2);text-align:right;
+  font-weight:600;letter-spacing:.3px;padding-bottom:4px}
+table.mes th:first-child{text-align:left}
+table.mes td{padding:5px 0;border-top:1px solid var(--line);text-align:right}
+table.mes td:first-child{text-align:left;color:var(--dim2)}
+table.mes td.bas{color:var(--acc-l)} table.mes td.haut{color:var(--warn)}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .grid5 .f span{font-size:10.5px}
@@ -1829,6 +1968,19 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
       </div>
       <div id="chartWeight"></div>
       <div id="wJuge"></div>
+      <!-- L'ECART A LA TENDANCE vit dans la carte du poids, pas ailleurs : c'est une
+           lecture de la pesee, pas une donnee de plus. Le separer en aurait fait un
+           indicateur autonome qu'il n'est pas. -->
+      <div id="wEau"></div>
+    </div>
+    <!-- MESURES. Apres le poids parce qu'elles l'expliquent : la balance donne un
+         nombre, les circonferences disent ce qu'il recouvre. -->
+    <div class="card">
+      <div class="row between" style="margin-bottom:12px">
+        <h2 style="margin:0">Mesures <span id="mRate" class="rate"></span></h2>
+        <button class="btn sm" id="btnMesure">+ Saisir</button>
+      </div>
+      <div id="mTable"></div>
     </div>
     <div class="card">
       <h2>Calories par jour</h2>
@@ -1848,6 +2000,10 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
     <div class="card">
       <h2>Entraînement et repos</h2>
       <div id="chartSeances"></div>
+      <!-- L'ECART AU PLAN DECLARE. Ce n'est pas une statistique de plus : le plan declare
+           commande les planchers proteiques et glucidiques ET le cyclage energetique. Un
+           plan perime fausse donc le modele entier, en silence. -->
+      <div id="sEcart"></div>
     </div>
   </section>
 
@@ -1959,7 +2115,7 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v14.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <p class="muted">Coach v15.1 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -2093,6 +2249,10 @@ const DEFAULTS = {
   },
   entries: [],
   weights: [],
+  /* Circonferences, une saisie par mois. La masse grasse n'y est pas stockee : elle se
+     recalcule de la mesure, de la taille et du sexe, qui ne bougent pas. Une valeur
+     derivee qu'on fige est une valeur qui finit par mentir. */
+  mesures: [],
   /* Séances réalisées : `{ d: date, a: id d'activité, v: volume du jour }`.
      Un tableau à part et non un drapeau par entrée : une journée est une journée
      d'entraînement en elle-même, y compris sans aucun repas enregistré. Le volume
@@ -2206,7 +2366,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
    système — elle dit qu'un déficit est incompatible avec un volume d'entraînement —
    et `coherencePlanchers()` la calcule.
 
-   Source : COACH-FOURCHETTES-SPEC-v2.md, conservé à la racine du projet — c'est lui qui
+   Source : COACH-SPEC-v3.md, conservé à la racine du projet — c'est lui qui
    porte les 19 références bibliographiques, et non CONTEXTE.md.
 
    LE DOCUMENT EST APPLIQUÉ, à deux points près ABANDONNÉS (décision du 26 août 2026).
@@ -2225,7 +2385,7 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
            l'ancienneté, la borne la plus large reste appliquée, mais les deux paliers
            de `jugerRythme()` disent À QUI chaque rythme convient.
 
-   `COACH-FOURCHETTES-SPEC-v2.md` reste conservé pour deux raisons, et deux seulement :
+   `COACH-SPEC-v3.md` reste conservé pour deux raisons, et deux seulement :
    il porte les 19 références bibliographiques, et son §14 fournit un cas de référence
    qui permet de vérifier que le modèle n'a pas dérivé. */
 
@@ -2237,6 +2397,109 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
    brute, sans quoi les besoins d'un sujet normalement constitué seraient
    sous-estimés. Le correctif ne s'applique qu'AU-DELÀ du seuil d'adiposité : en
    deçà, le poids total reste la meilleure base. */
+/* MASSE GRASSE ESTIMEE PAR CIRCONFERENCES — methode dite « Navy ».
+
+   Le champ `bodyFat` est facultatif, et il est reste vide chez l'utilisateur pendant des
+   mois. Consequence mesuree a la revue du 19 octobre 2026 : `disponibiliteEnergetique()`
+   rend `null` sans masse grasse, donc LE SEUL GARDE-FOU DE SECURITE DU MODELE — le seuil
+   RED-S a 30 kcal/kg de masse maigre — etait muet, pendant que la personne tenait un
+   deficit de 500 kcal. Un champ facultatif qui desactive une alerte en silence est un
+   defaut de conception, pas un choix de l'utilisateur.
+
+   La barriere etait pratique, pas theorique : il ne savait pas comment estimer la valeur.
+   D'ou ce calculateur, qui ne demande qu'un metre de couturiere.
+
+   Precision d'environ ±3 a 4 points contre une DEXA. C'est grossier pour juger une
+   composition corporelle, et largement suffisant pour ce dont l'application se sert :
+   rallumer une alerte eteinte. Une estimation imparfaite vaut infiniment mieux que le
+   silence actuel.
+
+   Les deux formules different selon le sexe — celle des femmes ajoute le tour de hanches.
+   N'en implanter qu'une donnerait un resultat faux a la moitie des utilisateurs. */
+function masseGrasseNavy(sexe, hauteurCm, tailleCm, couCm, hanchesCm) {
+  const h = +hauteurCm, t = +tailleCm, c = +couCm, ha = +hanchesCm;
+  if (!(h > 0) || !(t > 0) || !(c > 0)) return null;
+  /* Le logarithme d'un nombre nul ou negatif n'existe pas : un tour de taille saisi plus
+     petit que le tour de cou produirait NaN, affiche tel quel. On refuse avant. */
+  const d = sexe === 'f' ? (t + ha - c) : (t - c);
+  if (!(ha > 0) && sexe === 'f') return null;
+  if (!(d > 0)) return null;
+  const bf = sexe === 'f'
+    ? 495 / (1.29579 - 0.35004 * Math.log10(d) + 0.22100 * Math.log10(h)) - 450
+    : 495 / (1.0324  - 0.19077 * Math.log10(d) + 0.15456 * Math.log10(h)) - 450;
+  return bf > 2 && bf < 65 ? Math.round(bf * 10) / 10 : null;
+}
+
+/* Les circonferences enregistrees, triees de la plus ancienne a la plus recente. */
+function mesures() {
+  return (DB.mesures || []).filter(m => m && dateValide(m.date))
+    .slice().sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function derniereMesure() { const m = mesures(); return m.length ? m[m.length - 1] : null; }
+
+/* La masse grasse d'une mesure se RECALCULE, elle n'est pas stockee : taille et sexe ne
+   bougent pas, et une valeur derivee qu'on fige finit par mentir le jour ou la formule
+   change. La masse maigre, elle, demande le poids DE CETTE DATE — `poidsAu()` existe
+   depuis la v14.0, exactement pour ce genre de question. */
+function masseGrasseDe(m) {
+  const p = S().profile || {};
+  if (!m) return null;
+  const bf = masseGrasseNavy(p.sex, p.height, m.taille, m.cou, m.hanches);
+  if (bf === null) return null;
+  const kg = poidsAu(m.date);
+  return { bf: bf, maigre: kg > 0 ? Math.round(kg * (1 - bf / 100) * 10) / 10 : null, poids: kg };
+}
+
+/* RESIDU D'EAU — l'ecart entre la derniere pesee et la tendance a cette date.
+
+   On ne peut pas MESURER la retention d'eau avec du materiel grand public : les balances
+   a impedance appliquent une equation de population a une impedance que l'hydratation
+   fausse justement. Mais on peut la DEDUIRE, et l'argument est arithmetique.
+
+   Un kilo de tissu adipeux demande environ 7700 kcal d'excedent. Prendre 1,5 kg en deux
+   jours exigerait 11 500 kcal de surplus : impossible. Toute variation rapide est donc de
+   l'eau et du contenu digestif, jamais du tissu. L'ecart a la tendance EST la retention,
+   a la precision de la balance pres.
+
+   Coach calculait deja cette tendance par regression sur huit semaines. Le residu ne
+   coute donc rien : il etait la, il n'etait pas montre. */
+function residuEau() {
+  const w = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
+    .filter(x => x.date >= shiftD(TODAY(), -56));
+  const pts = peseesHorsPause(w);
+  const tr = tendancePoids(pts);
+  if (!tr || !pts.length) return null;
+  const d = pts[pts.length - 1];
+  const ecart = Math.round((d.kg - tr.fin) * 10) / 10;
+  /* Sous 500 g, on se tait : c'est la precision d'une balance domestique et la variation
+     d'un contenu digestif ordinaire. Annoncer une retention la-dedans serait du bruit
+     presente comme un signal. */
+  if (Math.abs(ecart) < 0.5) return { ecart: ecart, notable: false, date: d.date };
+  /* LES CAUSES, cherchees dans les trois journees qui precedent la pesee. Trois des
+     quatre causes principales sont deja dans les donnees : le glycogene fixe environ
+     trois grammes d'eau par gramme, l'alcool provoque un rebond apres sa phase
+     diuretique, et une seance inhabituelle retient par inflammation. Le sodium manque,
+     et restera absent : le faire estimer sur photo serait beaucoup de bruit pour peu de
+     signal. */
+  const causes = [];
+  let carb = 0, alc = 0, seance = false, n = 0;
+  for (let i = 1; i <= 3; i++) {
+    const j = shiftD(d.date, -i);
+    const t = sumEntries(entriesOf(j));
+    if (t.kcal > 0) { carb += t.carb; alc += t.alc; n++; }
+    if (seanceDuJour(j)) seance = true;
+  }
+  if (n) {
+    const g = S().goals || {};
+    if (g.carb > 0 && carb / n > g.carb * 1.25) causes.push('glucides élevés (' + r0(carb / n) + ' g/j)');
+    if (alc > 0) causes.push('alcool (' + r0(alc) + ' g)');
+  }
+  if (seance) causes.push('séance récente');
+  return { ecart: ecart, notable: true, date: d.date, causes: causes,
+           tendance: Math.round(tr.fin * 10) / 10, pesee: d.kg };
+}
+
 function poidsReference(p) {
   const kg = Math.max(20, (p && p.weight) || 75);
   const mg = (p && p.bodyFat) || 0;
@@ -2325,9 +2588,25 @@ function fourchettesProfil(profil, kcal) {
   /* PROTÉINES. Table profil × objectif, puis modulation par l'agressivité du
      déficit : c'est le déficit, et non l'entraînement seul, qui justifie de monter
      dans le haut des fourchettes publiées (+25 % à −500 kcal/j, +10 % à −200). */
-  const ligne = (p.age > 65 ? PROT_PLANCHER.senior : PROT_PLANCHER[eff]) || PROT_PLANCHER.modere;
+  /* LA LIGNE SENIOR EST UN PLANCHER, PAS UN PLAFOND.
+
+     Elle ECRASAIT le profil d'effort jusqu'en v15.1 : a 66 ans, un pratiquant de force de
+     80 kg en deficit passait de 189 g a 126 g de proteines du jour au lendemain, pour le
+     meme entrainement. Soixante-trois grammes de moins a la faveur d'un anniversaire.
+
+     C'etait a l'envers de la physiologie. La resistance anabolique AUGMENTE avec l'age :
+     a entrainement egal, un pratiquant age a besoin de PLUS de proteines, pas de moins.
+     C'est le sens meme du consensus PROT-AGE, qui releve les apports chez le sujet actif
+     au lieu de les abaisser.
+
+     Le maximum des deux lignes donne la bonne semantique dans les deux sens : un senior
+     sedentaire est remonte par la ligne d'age (1,2 -> 1,4 en perte), un senior qui
+     s'entraine garde l'exigence de son profil (2,1 conserve). */
+  const vis = viseeDe(p);
+  const base = (PROT_PLANCHER[eff] || PROT_PLANCHER.modere)[vis];
+  const gkg = p.age > 65 ? Math.max(base, PROT_PLANCHER.senior[vis]) : base;
   const modul = aim < 0 ? 1 + Math.abs(aim) / 2000 : 1;
-  const prot = Math.round(PR * ligne[viseeDe(p)] * modul);
+  const prot = Math.round(PR * gkg * modul);
 
   /* LIPIDES. Double critère indispensable : un pourcentage seul s'effondre quand
      l'énergie baisse — 20 % de 1600 kcal ne font que 36 g — et un g/kg seul ignore
@@ -2726,6 +3005,40 @@ function estJourEntrainement(date) { return !!seanceDuJour(date); }
    Conséquence voulue, à ne pas prendre pour une dérive : la moyenne hebdomadaire n'égale
    exactement la cible que si le volume réalisé correspond au plan. Une semaine plus légère
    la fait baisser — c'est correct, la dépense a baissé aussi. */
+/* ECART ENTRE LE PLAN DECLARE ET L'ENTRAINEMENT REEL.
+
+   `profilEffort()` et `energieHebdo()` lisent `activites().parSemaine` — le plan DECLARE.
+   Rien ne le confrontait jamais aux seances reellement enregistrees. Or ce plan commande
+   deux choses a la fois : la colonne du bareme proteique et le plancher glucidique d'un
+   cote, le cyclage energetique de l'autre. Un plan perime gonfle donc les planchers tout
+   en deplacant les cibles quotidiennes, et le controle de coherence conclut a une
+   incompatibilite sur un volume que la personne ne fait plus.
+
+   La charge portait deja `activites_declarees` ET `seances_realisees` depuis des
+   versions : le modele pouvait comparer, l'application jamais. Elle le fait desormais.
+
+   QUATRE SEMAINES de recul, et un ecart d'au moins une seance par semaine : en dessous,
+   c'est le rythme ordinaire d'une vie — une semaine chargee, une semaine de rattrapage —
+   et le signaler serait du bruit. */
+const ECART_PLAN_SEMAINES = 4, ECART_PLAN_SEUIL = 1;
+
+function ecartAuPlan() {
+  const decl = activites().reduce((a, x) => a + clamp(r0(x.parSemaine), 0, 7), 0);
+  if (!decl) return null;                       // aucun plan declare : rien a confronter
+  const depuis = shiftD(TODAY(), -(ECART_PLAN_SEMAINES * 7));
+  /* Les journees de pause sont ecartees : une coupure assumee n'est pas un plan non tenu,
+     et la compter ferait conclure a une derive la ou il y a un choix. */
+  const faites = (DB.trainings || []).filter(x => x && x.d > depuis && x.d <= TODAY()
+                                                  && !enPause(x.d)).length;
+  const semaines = ECART_PLAN_SEMAINES
+    - joursEnPause(shiftD(depuis, 1), TODAY()) / 7;
+  if (semaines < 2) return null;                // trop de pause pour conclure
+  const reel = faites / semaines;
+  const ecart = reel - decl;
+  return { declare: decl, reel: Math.round(reel * 10) / 10, ecart: Math.round(ecart * 10) / 10,
+           notable: Math.abs(ecart) >= ECART_PLAN_SEUIL, semaines: Math.round(semaines * 10) / 10 };
+}
+
 function energieHebdo() {
   const poids = (S().profile || {}).weight || 0;
   let E = 0, n = 0;
@@ -3624,8 +3937,24 @@ async function groq(body) {
       throw e;
     }
     if (/request too large|tokens per minute|TPM/i.test(m)) {
-      const e = new Error('Limite du palier gratuit Groq atteinte pour cette minute. Attends 60 secondes et relance.');
-      e.tooLarge = true; throw e;
+      /* DEUX PANNES SOUS UN MEME MESSAGE, et un seul conseil donne jusqu'ici.
+
+         « Limit 8000, Requested 9500 » veut dire que la requete depasse a elle seule le
+         plafond de la minute : elle sera refusee a l'identique dans une heure, et
+         conseiller d'attendre envoie l'utilisateur patienter pour rien. C'est ce qu'il a
+         vu en lancant une analyse sur trois mois — le message promettait un deblocage qui
+         ne pouvait pas venir.
+
+         « Limit 8000, Requested 3000 » apres d'autres appels, en revanche, est bien un
+         quota consomme : la minute qui passe le libere. */
+      const q = m.match(/Limit\s+(\d+),\s*Requested\s+(\d+)/i);
+      const trop = q && +q[2] > +q[1];
+      const e = new Error(trop
+        ? 'Cette demande dépasse à elle seule la limite de ' + q[1] + ' jetons par minute '
+          + 'de ton compte Groq (' + q[2] + ' demandés). Attendre n\'y changera rien : '
+          + 'choisis une période plus courte dans le sélecteur, ou passe au palier Dev de Groq.'
+        : 'Limite du palier gratuit Groq atteinte pour cette minute. Attends 60 secondes et relance.');
+      e.tooLarge = true; e.structurel = !!trop; e.raw = m; throw e;
     }
     if (/image/i.test(m) && /(too many|maximum|max |limit|number of|at most)/i.test(m)) {
       throw new Error('Trop de photos pour ce modèle. Retires-en une et relance. (' + m + ')');
@@ -3834,7 +4163,13 @@ function coutPrevu(emploi) {
      Valeurs mesurees sur des appels reels ; le poste photo, lui, se recalibre seul
      sur la derniere mesure. */
   if (emploi === 'repas')   return 500 + 1500;    // prompt court, max_tokens 1500
-  if (emploi === 'analyse') return 2800 + 2200;   // charge ~1500 jetons + consigne
+  if (emploi === 'analyse') {
+    /* 2800 etait l'estimation d'une charge bien plus legere. Mesure sur un journal reel
+       de 66 journees : le prompt complet pese entre 5000 et 6900 jetons selon le
+       decoupage du texte. Sous-estimer n'economise rien — ca empeche seulement
+       l'application de voir venir le depassement et de patienter avant d'envoyer. */
+    return 6000 + budgetReponse();
+  }   // charge ~1500 jetons + consigne
   const dc = S().dernierCout;
   const prompt = (dc && dc.photo && dc.p > 0) ? dc.p : 3000;
   return prompt + budgetReponse();
@@ -6252,8 +6587,88 @@ function verdictEcart(e, visee) {
    meme selecteur, on a promis une egalite que le calcul ne tenait pas. */
 function joursClos(n) { return daysBack(n + 1).slice(0, n); }
 
-function donneesCoach(nbJours, exclureJourCourant) {
+/* Au-dela de trente jours, les lignes journalieres cedent la place a des lignes
+   hebdomadaires. Trente, parce que c'est la periode la plus courte du selecteur et
+   celle que l'utilisateur consulte le plus : elle ne doit rien perdre. */
+const SEMAINES_AU_DELA = 30;
+
+/* Journees gardees EN DETAIL meme sur une longue periode.
+
+   Tout agreger aurait prive le conseil de ce dont il a le plus besoin : il repond a
+   « qu'est-ce que je mange ce soir ? » sur une fenetre de soixante jours, et une moyenne
+   hebdomadaire ne dit rien de ce qui a ete mange hier. Quatorze journees couvrent deux
+   semaines completes de contexte recent pour environ 800 caracteres — le prix est faible
+   et la perte aurait ete une vraie regression. */
+const JOURS_DETAIL = 14;
+
+/* Coupe les lignes en « recentes, gardees au jour » et « anciennes, a resumer ». Sur une
+   periode courte, tout est recent et rien n'est resume : l'analyse 30 jours, la plus
+   consultee, ne perd pas un caractere. */
+function decouperLignes(lignes, periode, compact) {
+  const seuil = compact ? 14 : SEMAINES_AU_DELA;
+  const detail = compact ? 7 : JOURS_DETAIL;
+  if (periode <= seuil || lignes.length <= detail)
+    return { recentes: lignes, anciennes: [] };
+  return { recentes: lignes.slice(-detail), anciennes: lignes.slice(0, -detail) };
+}
+
+const colSemaines = ['semaine_du', 'jours_suivis', 'journees_en_pause', 'kcal_moy_par_jour',
+                     'kcal_cible_moy', 'proteines_g_moy', 'glucides_g_moy', 'lipides_g_moy',
+                     'fibres_g_moy', 'alcool_g_total', 'jours_avec_alcool', 'eau_ml_moy',
+                     'seances'];
+
+/* Regroupe des lignes journalieres en lignes hebdomadaires.
+
+   LES SEMAINES SE COUPENT AUX CHANGEMENTS D'OBJECTIF. Sans cela, une semaine a cheval
+   sur un changement afficherait une cible moyennee entre l'ancienne et la nouvelle — le
+   chiffre que personne n'a choisi, exactement l'artefact retire de la tuile en v14.1. Une
+   semaine ne doit decrire qu'un seul contrat.
+
+   Les journees de PAUSE sont comptees a part et exclues des moyennes, comme partout
+   ailleurs : sans ce compte, une semaine de vacances ressemblerait a une semaine molle.
+   Et les jours AVEC alcool voyagent separement du total, parce que la frequence porte une
+   information que le volume ne porte pas — c'est le signal secondaire de la spec. */
+function parSemaine(lignes) {
+  if (!lignes.length) return [];
+  const coupures = goalsHisto().map(e => e.date);
+  const paquets = [];
+  let cour = null;
+  lignes.forEach(l => {
+    const neuf = !cour
+      || Math.floor((parseD(l[0]) - parseD(cour.debut)) / DAY) >= 7
+      || coupures.indexOf(l[0]) >= 0;          // un changement ouvre une semaine
+    if (neuf) { cour = { debut: l[0], l: [] }; paquets.push(cour); }
+    cour.l.push(l);
+  });
+  return paquets.map(pq => {
+    const actifs = pq.l.filter(l => l[1] > 0 && !l[11]);
+    const pause = pq.l.filter(l => l[11]).length;
+    /* `null` et non 0 quand aucune journee n'est suivie. Une semaine entierement en
+       pause sortait « 0 kcal/j, cible 0 » — lisible comme un jeune complet alors qu'il
+       n'y a simplement pas de donnee. `null` dit l'absence, `0` affirme une valeur. */
+    const moy = i => actifs.length
+      ? Math.round(actifs.reduce((a, l) => a + (l[i] || 0), 0) / actifs.length) : null;
+    const seances = pq.l.map(l => l[10]).filter(Boolean);
+    return [pq.debut, actifs.length, pause, moy(1), moy(2), moy(3), moy(4), moy(5), moy(6),
+            actifs.length ? Math.round(actifs.reduce((a, l) => a + (l[7] || 0), 0)) : null,
+            actifs.filter(l => l[7] > 0).length, moy(8), seances.join(' · ')];
+  });
+}
+
+/* MODE COMPACT — la charge resserree, utilisee en seconde tentative.
+
+   On ne peut pas savoir a l'avance combien de JETONS pese un texte : le decoupage depend
+   du tokeniseur de Groq, et la mesure sur un journal reel ne donne qu'une fourchette.
+   Entre une charge de 17 058 caracteres qui passe et une de 20 392 qui est refusee, le
+   seuil exact est indeterminable depuis l'application.
+
+   Plutot que de deviner et de se tromper du mauvais cote, on laisse le refus enseigner :
+   si Groq repond que la demande depasse a elle seule la limite, on rebatit la charge en
+   compact et on renvoie UNE fois. Meme mecanique que le plafond de sortie appris en
+   v13.19 — une limite qu'on ne peut pas calculer se constate. */
+function donneesCoach(nbJours, exclureJourCourant, compact) {
   const n = nbJours || JOURS_ANALYSE;
+  const periode = n;
   const p = S().profile || {}, g = S().goals, gx = S().goalsMax || {};
   const jusqu = exclureJourCourant ? shiftD(TODAY(), -1) : TODAY();
   /* La fenêtre garde sa LARGEUR : n jours se terminant hier, pas n − 1 jours. */
@@ -6303,7 +6718,11 @@ function donneesCoach(nbJours, exclureJourCourant) {
   const aliments = Object.keys(cat)
     .map(k => cat[k])
     .sort((x, y) => y.fois - x.fois || y.kcal - x.kcal)
-    .slice(0, 45)
+    /* QUARANTE-CINQ ALIMENTS SUR UN MOIS, VINGT AU-DELA. Ce bloc pesait 17 % de la
+       charge, deuxieme poste apres les lignes journalieres. Sur un trimestre, la queue
+       de la liste n'apporte plus rien — un aliment vu deux fois en trois mois ne fonde
+       aucun conseil — alors qu'elle coute autant qu'en tete. */
+    .slice(0, compact ? 10 : (periode > SEMAINES_AU_DELA ? 20 : 45))
     .map(c => [c.nom, c.fois, r0(c.qty / c.fois), r0(c.kcal / c.fois), r0(c.p / c.fois),
                r0(c.g / c.fois), r0(c.l / c.fois), r0(c.f / c.fois),
                r0(c.a / c.fois), r0(c.w / c.fois)]);
@@ -6345,6 +6764,7 @@ function donneesCoach(nbJours, exclureJourCourant) {
      journee partielle n'a rien a faire dans une moyenne. Sans ce filtre, la charge du
      conseil portait un apport moyen dilue par un petit-dejeuner, quand celle de l'analyse
      n'en souffrait pas : le meme grief, deplace d'un onglet. */
+  const decoupe = decouperLignes(journees, periode, compact);
   const jSuivis = journees.filter(j => j[1] > 0 && !j[11] && j[0] !== TODAY());
   const jPause = journees.filter(j => j[1] > 0 && j[11]).length;
   const moy = i => jSuivis.length ? Math.round(jSuivis.reduce((a, j) => a + j[i], 0) / jSuivis.length) : 0;
@@ -6532,6 +6952,31 @@ function donneesCoach(nbJours, exclureJourCourant) {
                    + 'en produire un autre : la fenetre serait differente et le verdict '
                    + 'changerait d une analyse a l autre sans qu aucune prise ait eu lieu.' };
     })(),
+    /* CIRCONFERENCES — quatre releves au plus, deux en compact. Une mesure par mois : la
+       serie entiere tiendrait, mais elle n'apporterait rien de plus qu'un depart et une
+       tendance, et on sort d'une correction sur la taille des charges. */
+    mesures: (function () {
+      const m = mesures().slice(-(compact ? 2 : 4));
+      if (!m.length) return null;
+      const der = derniereMesure(), mg = masseGrasseDe(der);
+      return {
+        /* Note courte : la regle de lecture complete est dans le prompt, la repeter ici
+           la ferait payer deux fois sur une charge qu'on vient de degraisser. */
+        note: 'cm, un releve par mois. Ruban a ±1 cm : juge sur trois releves.',
+        releves: m.map(x => ({ date: x.date, taille: x.taille, cou: x.cou,
+                               hanches: x.hanches, cuisse: x.cuisse, bras: x.bras })),
+        masse_grasse_estimee_pct: mg ? mg.bf : null,
+        masse_maigre_kg: mg ? mg.maigre : null
+      };
+    })(),
+    /* ECART A LA TENDANCE DE POIDS — la retention d'eau, deduite et non mesuree. */
+    retention_eau: (function () {
+      const e = residuEau();
+      if (!e || !e.notable) return null;
+      return { ecart_kg_vs_tendance: e.ecart, derniere_pesee_kg: e.pesee,
+               tendance_kg: e.tendance, causes_probables: e.causes,
+               note: 'eau et contenu digestif, jamais du tissu — voir la regle du prompt.' };
+    })(),
     disponibilite_energetique: (function () {
       const d = disponibiliteEnergetique(jusqu);
       return d ? { kcal_par_kg_de_masse_maigre: d.de, jours_pris_en_compte: d.jours,
@@ -6559,8 +7004,42 @@ function donneesCoach(nbJours, exclureJourCourant) {
              tendance_kg_par_semaine: tr ? Math.round(tr.rythme * 100) / 100 : null,
              tendance_pct_par_semaine: tr && tr.fin ? Math.round(tr.rythme / tr.fin * 10000) / 100 : null,
              poids_lisse_actuel: tr ? Math.round(tr.fin * 10) / 10 : null },
-    seances_realisees: { colonnes: colSeances, lignes: seances },
-    journees: { colonnes: colJours, lignes: journees },
+    /* EN COMPACT, le detail seance par seance tombe : la colonne `seances` des lignes
+       hebdomadaires porte deja ce qui a ete fait et quand, et `activites_declarees` le
+       volume prevu. Deuxieme poste de donnees a 1122 caracteres, pour une information
+       que le modele retrouve ailleurs sur une periode aussi longue. */
+    seances_realisees: compact ? undefined : { colonnes: colSeances, lignes: seances },
+    /* AU-DELA DE `SEMAINES_AU_DELA` JOURS, les lignes partent AGREGEES PAR SEMAINE.
+
+       Mesure sur un journal reel de 66 journees : le prompt complet pesait 20 392
+       caracteres a 3 mois contre 17 058 a 30 jours, pour une limite de 8000 jetons par
+       minute dont 900 reserves a la reponse. L'analyse 3 mois etait refusee — et aucune
+       attente n'y changeait rien, puisque c'est la requete elle-meme qui depassait la
+       limite, pas un quota consomme. Agregee, la meme periode retombe vers 16 000
+       caracteres, sous le niveau de l'analyse 30 jours qui, elle, fonctionne.
+
+       Ce n'est pas qu'une affaire de place. Sur un trimestre, la maille journaliere est
+       du bruit : un modele ne tire rien de quatre-vingt-dix lignes individuelles, et la
+       spec dit elle-meme de juger sur les tendances.
+
+       CHAMP SEPARE, et non `journees` qui changerait de forme. Deux raisons. Un lecteur
+       tiers n'a pas a deviner la maille d'apres la largeur de la fenetre. Et surtout
+       `moyennes_sur_jours_suivis` DERIVE des lignes journalieres : agreger `journees`
+       aurait transforme ses moyennes en moyennes de moyennes hebdomadaires, fausses des
+       que deux semaines n'ont pas le meme nombre de journees enregistrees. Le calcul
+       reste donc journalier en interne ; seule la TRANSMISSION change. */
+    journees: { colonnes: colJours, lignes: decoupe.recentes,
+                note: decoupe.anciennes.length
+                  ? 'les ' + decoupe.recentes.length + ' dernieres journees, en detail ; l avant est '
+                    + 'resume par semaine dans `semaines`' : undefined },
+    semaines: decoupe.anciennes.length
+      ? { colonnes: colSemaines, lignes: parSemaine(decoupe.anciennes), maille: 'une ligne par semaine',
+          note: 'CHAQUE LIGNE EST UNE SEMAINE, pas une journee. Les valeurs kcal et '
+              + 'macronutriments sont des MOYENNES PAR JOUR sur les journees enregistrees de '
+              + 'la semaine, jamais des totaux. Ne parle donc jamais d une journee precise a '
+              + 'partir de ces lignes. L alcool, lui, est le TOTAL de la semaine. Les '
+              + 'journees les plus recentes sont dans `journees`, en detail.' }
+      : undefined,
     moyennes_sur_jours_suivis: { jours_suivis: jSuivis.length,
       journees_en_pause_ecartees: jPause,
       note: jPause ? 'les journees de pause declaree sont ecartees de TOUTES ces moyennes'
@@ -6587,7 +7066,7 @@ function donneesCoach(nbJours, exclureJourCourant) {
 /* Les deux usages partagent la MÊME charge : une question de conseil mérite le même niveau
    de détail qu'un bilan. Ils divergent sur un seul point, et c'est délibéré — voir le
    commentaire de `donneesCoach`. */
-function donneesAnalyse(nbJours) { return donneesCoach(nbJours, true); }
+function donneesAnalyse(nbJours, compact) { return donneesCoach(nbJours, true, compact); }
 function donneesConseil() { return donneesCoach(JOURS_ANALYSE, false); }
 
 /* -------------------------------------------------------------------------
@@ -6634,6 +7113,11 @@ en prise, DEUX zones selon l'anciennete : 0,25 à 0,5 % chez qui débute en musc
 ne présente donc jamais 0,1 à 0,25 % comme trop lent, ni 0,25 à 0,5 % comme la seule norme ;
 - les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
+- LE POIDS SAUTE D'UN JOUR A L'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est \
+présent, l'écart à la tendance est de l'eau et du contenu digestif : ne l'interprète jamais \
+comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux \
+que la balance — un tour de taille qui baisse pendant qu'une cuisse et un bras tiennent est \
+une perte de gras avec maintien de la masse maigre, et cela mérite d'être dit ;
 - LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
 "bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
 "coherence_des_planchers" et "moyennes_sur_jours_suivis" portent des résultats DÉJÀ calculés \
@@ -6682,7 +7166,8 @@ async function poserQuestion(question) {
   }));
   const corps = {
     model: modeleDe('analyse'), temperature: 0.4, max_tokens: 900,
-    messages: [{ role: 'user', content: PROMPT_CONSEIL + '\n\nSes données :\n' + JSON.stringify(d) }]
+    messages: [{ role: 'user', content: PROMPT_CONSEIL + consigneMailles(d)
+                 + '\n\nSes données :\n' + JSON.stringify(d) }]
       .concat(hist)
       .concat([{ role: 'user', content: question }])
   };
@@ -6701,6 +7186,11 @@ Réponds UNIQUEMENT par un objet JSON valide, sans texte autour, exactement à c
 "priorite":"la seule chose à changer cette semaine, en une phrase"}
 
 Règles d'analyse :
+- LE POIDS SAUTE D'UN JOUR A L'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est \
+présent, l'écart à la tendance est de l'eau et du contenu digestif : ne l'interprète jamais \
+comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux \
+que la balance — un tour de taille qui baisse pendant qu'une cuisse et un bras tiennent est \
+une perte de gras avec maintien de la masse maigre, et cela mérite d'être dit ;
 - LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
 "bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
 "coherence_des_planchers", "palier_de_fibres" et "moyennes_sur_jours_suivis" portent des \
@@ -6750,7 +7240,8 @@ TENDANCES de plusieurs jours, jamais sur une journée isolée, et ne donne aucun
 paliers de +5 g. Encourage ce palier et ne réclame pas le plancher d'un coup : une hausse \
 brutale des fibres provoque un inconfort digestif et fait abandonner. Si le bloc est absent, \
 l'écart est rattrapable et la consigne habituelle s'applique ;
-- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 est une coupure VOLONTAIRE et assumée : \
+- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans \
+"journees_en_pause" d'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : \
 vacances, semaine chargée, pause alimentaire planifiée. C'est un outil légitime en phase de perte \
 prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge \
 d'alcool, ne la présente jamais comme un manquement, et n'en tire aucune conclusion sur la \
@@ -6799,6 +7290,23 @@ Si les données sont trop maigres pour conclure, dis-le franchement dans "bilan"
    Budget vise : environ 1120 caracteres, de l'ordre de 380 jetons, soit une marge large
    sous les 900 reellement disponibles. La marge est volontairement genereuse : une
    reponse trop courte reste exploitable, une reponse coupee ne l'est pas. */
+/* La consigne des deux mailles ne part QUE si la charge porte vraiment des semaines.
+
+   Ecrite en dur dans les deux prompts, elle ajoutait 639 caracteres a CHAQUE appel — y
+   compris a l'analyse 30 jours, qui n'a pas de lignes hebdomadaires et dont la taille
+   est precisement ce qu'on cherche a menager. Alourdir le prompt pour resoudre un
+   probleme de taille est un cercle qu'il faut refuser de boucler. */
+function consigneMailles(d) {
+  if (!d || !d.semaines) return '';
+  return '\n\nDEUX MAILLES DE TEMPS dans ces données. "journees" porte les '
+    + JOURS_DETAIL + ' dernières journées, une ligne par jour. "semaines" porte tout ce qui '
+    + 'précède, une ligne par SEMAINE : ses colonnes kcal et macronutriments sont des '
+    + 'MOYENNES PAR JOUR, jamais des totaux, et son alcool est le total de la semaine. Une '
+    + 'valeur nulle signifie « aucune journée enregistrée », jamais zéro. Ne cite donc jamais '
+    + 'une journée précise à partir de "semaines". Les moyennes et verdicts calculés, eux, '
+    + 'portent sur TOUTE la période et restent journaliers : ce sont eux qui font foi.';
+}
+
 function consigneLongueur() {
   const b = plafondSortie();
   if (!b || b >= 1200) return '';
@@ -6812,8 +7320,8 @@ function consigneLongueur() {
     + 'Choisis ce qui compte le plus et laisse le reste.';
 }
 
-async function lancerAnalyse(nbJours) {
-  const d = donneesAnalyse(nbJours || JOURS_ANALYSE);
+async function lancerAnalyse(nbJours, compact) {
+  const d = donneesAnalyse(nbJours || JOURS_ANALYSE, compact);
   /* Le seuil porte sur les journées NUTRITIONNELLES, pas sur le nombre de lignes de la
      charge : une journée d'entraînement sans repas y figure légitimement, mais ne fonde
      aucune analyse. Sans cette distinction, trois séances sans le moindre repas
@@ -6840,12 +7348,21 @@ async function lancerAnalyse(nbJours) {
      ce meme budget. 1400 suffisait a Qwen, pas a gpt-oss-120b. */
   const corps = {
     model: modeleDe('analyse'), temperature: 0.3, max_tokens: 2200,
-    messages: [{ role: 'user', content: PROMPT_ANALYSE + consigneLongueur()
+    messages: [{ role: 'user', content: PROMPT_ANALYSE + consigneMailles(d) + consigneLongueur()
                  + '\n\nDonnées :\n' + JSON.stringify(d) }]
   };
   try {
     return extractJsonAnalyse(await groqTry(corps, JSON_SANS_REFLEXION));
   } catch (e) {
+    /* CHARGE TROP GROSSE : on rebatit en compact et on renvoie UNE fois. Sept journees
+       detaillees au lieu de quatorze, dix aliments au lieu de vingt, agregation des la
+       deuxieme semaine. Un seul rejeu, jamais une boucle : si le compact est refuse a son
+       tour, c'est que la periode demandee est hors de portee du palier gratuit, et le
+       message doit le dire plutot que de reessayer indefiniment. */
+    if (e && e.structurel && !compact) {
+      loader(true, 'Période trop lourde, nouvel essai en version resserrée…');
+      return await lancerAnalyse(nbJours, true);
+    }
     /* UN REPLI, comme en a le chemin photo depuis la v2.x. L'analyse n'en avait aucune :
        un seul essai, et un message d'echec. Une reponse coupee se rattrape pourtant en
        redemandant avec plus de marge — c'est le seul cas ou reessayer a un sens, une
@@ -7707,6 +8224,67 @@ function renderHistory() {
       'il monte les jours de séance et redescend les jours de repos. La ligne montre sa moyenne.</p>' : ''));
 
   poserHtml($('#chartSeances'), stripSeances(days));
+
+  const ep = ecartAuPlan();
+  poserHtml($('#sEcart'), !ep || !ep.notable ? '' :
+    '<div class="prio warn" style="margin-top:10px"><b>Ton plan déclare ' + ep.declare +
+    ' séance' + (ep.declare > 1 ? 's' : '') + ' par semaine, tu en fais ' +
+    ep.reel.toFixed(1).replace('.', ',') + ' sur les 4 dernières.</b> ' +
+    'Ce plan ne sert pas qu\'à l\'affichage : il fixe tes planchers de protéines et de ' +
+    'glucides, et il déplace tes cibles entre jours de séance et jours de repos. ' +
+    (ep.ecart < 0
+      ? 'Déclarer plus que tu ne fais gonfle ces planchers, et peut rendre ton déficit ' +
+        'impossible à tenir sur le papier.'
+      : 'Déclarer moins que tu ne fais sous-estime tes besoins.') +
+    ' Ajuste-le dans les Réglages si l\'écart dure.</div>');
+
+  /* ECART A LA TENDANCE. Affiche dans la carte du poids parce que c'est une lecture de la
+     pesee, pas une donnee autonome. Sous 500 g on se tait : c'est la precision d'une
+     balance domestique, et presenter ce bruit comme un signal serait pire que le silence. */
+  const eau = residuEau();
+  poserHtml($('#wEau'), !eau || !eau.notable ? '' :
+    '<div class="prio ' + (Math.abs(eau.ecart) >= 1.5 ? 'warn' : 'ok') + '" style="margin-top:10px">' +
+    '<b>' + (eau.ecart > 0 ? '+' : '−') + Math.abs(eau.ecart).toFixed(1).replace('.', ',') +
+    ' kg par rapport à ta tendance.</b> ' +
+    'Une variation aussi rapide est de l\'eau et du contenu digestif, pas du tissu : un kilo ' +
+    'de gras demande près de 7 700 kcal d\'écart.' +
+    (eau.causes && eau.causes.length
+      ? ' Probablement ' + eau.causes.join(', ') + '.' : '') + '</div>');
+
+  /* TABLEAU DES MESURES plutot qu'un graphique : a douze points par an, un tableau se lit
+     mieux qu'une courbe, et il montre l'ecart depuis la premiere mesure — la seule
+     comparaison qui ait du sens quand l'erreur de ruban vaut un centimetre et que la
+     variation mensuelle en vaut rarement plus. */
+  const ms = mesures();
+  const der = derniereMesure();
+  const mg = masseGrasseDe(der);
+  $('#mRate').textContent = der
+    ? 'dernière il y a ' + Math.max(0, Math.round((parseD(TODAY()) - parseD(der.date)) / DAY)) + ' j'
+    : '';
+  if (!ms.length) {
+    poserHtml($('#mTable'), '<p class="muted">Un tour de taille et un tour de cou suffisent ' +
+      'à estimer ta masse grasse, et à rallumer l\'alerte de disponibilité énergétique. ' +
+      'Une fois par mois.</p>');
+  } else {
+    const prem = ms[0];
+    const lignes = CHAMPS_MESURE.filter(c => der[c[0]] > 0).map(c => {
+      const d0 = prem[c[0]], d1 = der[c[0]];
+      const delta = (d0 > 0 && ms.length > 1) ? Math.round((d1 - d0) * 10) / 10 : null;
+      return '<tr><td>' + c[1].replace('Tour de ', '') + '</td><td><b>' +
+        d1.toFixed(1).replace('.', ',') + '</b> cm</td><td class="' +
+        (delta === null ? '' : delta < 0 ? 'bas' : delta > 0 ? 'haut' : '') + '">' +
+        (delta === null ? '—' : (delta > 0 ? '+' : delta < 0 ? '−' : '') +
+          Math.abs(delta).toFixed(1).replace('.', ',') + ' cm') + '</td></tr>';
+    }).join('');
+    poserHtml($('#mTable'), '<table class="mes"><thead><tr><th></th><th>actuel</th>' +
+      '<th>depuis le ' + parseD(prem.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + '</th></tr></thead><tbody>' + lignes + '</tbody></table>' +
+      (mg ? '<p class="note" style="margin-top:10px"><b>' + mg.bf.toFixed(1).replace('.', ',') +
+        ' % de masse grasse</b>' + (mg.maigre ? ', soit ' + mg.maigre.toFixed(1).replace('.', ',') +
+        ' kg de masse maigre' : '') + '. Estimation par circonférences, à 3 ou 4 points près : ' +
+        'suis la tendance, pas la valeur.</p>' : '') +
+      (ms.length < 3 ? '<p class="note">Il faut au moins trois relevés pour distinguer une ' +
+        'évolution du simple écart de mesure.</p>' : ''));
+  }
 }
 $$('.seg [data-range]').forEach(b => b.onclick = () => {
   $$('.seg [data-range]').forEach(x => x.classList.remove('on'));
@@ -7748,6 +8326,64 @@ $('#btnWeight').onclick = () => {
         if (!enregistrerPoids(el.querySelector('#wKg').value, el.querySelector('#wD').value)) return;
         closeSheet(); renderToday(); renderHistory(); renderSettings();
         toast('Poids enregistré');
+      };
+    });
+};
+
+/* SAISIE DES MESURES. Les cinq champs sont facultatifs : une mesure partielle vaut mieux
+   qu'une mesure sautee, et seules taille et cou (plus hanches chez la femme) sont
+   necessaires a l'estimation de masse grasse. Les champs se preremplissent de la derniere
+   valeur — on remesure rarement un cou, et retaper cinq nombres chaque mois est la
+   meilleure facon de ne plus les saisir du tout. */
+const CHAMPS_MESURE = [
+  ['taille',  'Tour de taille',  'au nombril, après une expiration normale'],
+  ['cou',     'Tour de cou',     'sous la pomme d\'Adam'],
+  ['hanches', 'Tour de hanches', 'au plus large'],
+  ['cuisse',  'Tour de cuisse',  'à mi-cuisse, toujours la même jambe'],
+  ['bras',    'Tour de bras',    'bras relâché, toujours le même']
+];
+
+$('#btnMesure').onclick = () => {
+  const d = derniereMesure() || {};
+  const p = S().profile || {};
+  /* Les hanches ne sont demandees aux hommes que s'ils en ont deja saisi : elles
+     n'entrent pas dans leur formule, et un champ sans emploi est un champ qui decourage. */
+  const champs = CHAMPS_MESURE.filter(c => c[0] !== 'hanches' || p.sex === 'f' || d.hanches > 0);
+  sheet('Mesures du mois',
+    '<p class="note">Le matin, à jeun, debout et détendu. Le mètre à plat, serré sans ' +
+    'comprimer la peau. Refais les mêmes gestes à chaque fois : c\'est la régularité du ' +
+    'geste qui rend la comparaison possible, pas la précision d\'une mesure isolée.</p>' +
+    champs.map(c => '<label class="f"><span>' + c[1] + ' (cm)</span>' +
+      '<input class="in" id="ms_' + c[0] + '" inputmode="decimal" placeholder="' + c[2] + '" value="' +
+      (d[c[0]] > 0 ? d[c[0]] : '') + '"></label>').join('') +
+    '<label class="f"><span>Date</span><input class="in" id="ms_date" type="date" value="' + TODAY() + '"></label>' +
+    '<div id="ms_bf" class="note"></div>' +
+    '<button class="btn pri" id="ms_ok">Enregistrer</button>',
+    el => {
+      const lire = () => { const o = { date: el.querySelector('#ms_date').value };
+        champs.forEach(c => { const v = parseFloat((el.querySelector('#ms_' + c[0]).value || '')
+          .replace(',', '.')); if (v > 0) o[c[0]] = Math.round(v * 10) / 10; });
+        return o; };
+      const apercu = () => { const o = lire();
+        const bf = masseGrasseNavy(p.sex, p.height, o.taille, o.cou, o.hanches);
+        el.querySelector('#ms_bf').innerHTML = bf === null
+          ? 'Renseigne au moins le tour de taille et le tour de cou pour estimer la masse grasse.'
+          : '<b>' + bf.toFixed(1).replace('.', ',') + ' %</b> de masse grasse estimée. '
+            + 'Elle remplacera la valeur de ton profil.'; };
+      el.addEventListener('input', apercu); apercu();
+      el.querySelector('#ms_ok').onclick = () => {
+        const o = lire();
+        if (!dateValide(o.date)) return toast('Date invalide');
+        if (!CHAMPS_MESURE.some(c => o[c[0]] > 0)) return toast('Renseigne au moins une mesure');
+        DB.mesures = (DB.mesures || []).filter(m => m.date !== o.date).concat([o]);
+        /* LA BOUCLE SE FERME ICI. Le profil reprend la masse grasse estimee, ce qui
+           rallume la disponibilite energetique sans que l'utilisateur ait a recopier
+           un chiffre d'un ecran a l'autre. Un releve qui ne sert a rien ne se refait pas. */
+        const bf = masseGrasseNavy(p.sex, p.height, o.taille, o.cou, o.hanches);
+        if (bf !== null) S().profile.bodyFat = Math.round(bf);
+        save(); closeSheet(); renderHistory(); renderSettings();
+        toast(bf === null ? 'Mesures enregistrées'
+                          : 'Mesures enregistrées · masse grasse ' + Math.round(bf) + ' %');
       };
     });
 };
@@ -8451,7 +9087,7 @@ function docNutrition() {
      '<b>Disponibilité énergétique</b> : Loucks 2011 (<i>J Sports Sci</i>) · ' +
      'Mountjoy 2018 (<i>consensus RED-S du CIO</i>)',
      '<b>Rythme de variation du poids</b> : Garthe 2011 (<i>IJSNEM</i>)'
-    /* Le renvoi vers `COACH-FOURCHETTES-SPEC-v2.md` a ete retire : ce fichier vit dans
+    /* Le renvoi vers `COACH-SPEC-v3.md` a ete retire : ce fichier vit dans
        le dossier de developpement, pas sur le telephone. Pointer vers une ressource
        que le lecteur ne peut pas atteindre ne l'aide pas, cela le frustre. Les auteurs
        et les annees suffisent a retrouver chaque travail. */
@@ -8477,6 +9113,26 @@ $('#btnCalc').onclick = () => {
       .map(([v, l]) => '<option value="' + v + '"' + (Math.abs(p.act - v) < .01 ? ' selected' : '') + '>' + l + '</option>').join('') +
     '</select></label>' +
     '<label class="f"><span>Masse grasse (%)</span><input class="in" id="cMg" inputmode="numeric" placeholder="inconnue" value="' + (p.bodyFat > 0 ? p.bodyFat : '') + '"></label>' +
+    /* `<details>` natif plutot qu'un pliage maison : l'etat ouvert/ferme est porte par le
+       navigateur, il n'y a rien a memoriser et le bloc reste accessible au clavier. */
+    '<details class="calcmg"><summary>Je ne connais pas ma masse grasse</summary>' +
+    '<p class="note">Mesure le matin, à jeun, debout et détendu. Le mètre à plat, serré ' +
+    'sans comprimer la peau. L\'important est de refaire les mêmes gestes à chaque fois.</p>' +
+    '<div class="grid2">' +
+    '<label class="f"><span>Tour de taille (cm)</span><input class="in" id="mgT" inputmode="decimal" placeholder="au nombril"></label>' +
+    (p.sex === 'f'
+      ? '<label class="f"><span>Tour de hanches (cm)</span><input class="in" id="mgH" inputmode="decimal" placeholder="au plus large"></label>'
+      : '<label class="f"><span>Tour de cou (cm)</span><input class="in" id="mgC" inputmode="decimal" placeholder="sous la pomme d\'Adam"></label>') +
+    '</div>' +
+    (p.sex === 'f'
+      ? '<label class="f"><span>Tour de cou (cm)</span><input class="in" id="mgC" inputmode="decimal" placeholder="sous le larynx"></label>'
+      : '') +
+    '<div id="mgOut" class="note"></div>' +
+    '<button class="btn sm gho" id="mgOk" style="width:100%" disabled>Utiliser cette estimation</button>' +
+    '<p class="note" style="margin-top:8px">Précision d\'environ 3 à 4 points face à une ' +
+    'mesure DEXA. C\'est grossier pour juger une composition corporelle, et suffisant pour ' +
+    'ce qu\'en fait Coach : activer l\'alerte de disponibilité énergétique, aujourd\'hui ' +
+    'éteinte faute de valeur.</p></details>' +
     '<label class="f"><span>Écart énergétique</span><select class="in" id="cAim">' +
     [[-500, 'Déficit marqué (−500 kcal)'], [-250, 'Déficit doux (−250 kcal)'], [0, 'À l\'équilibre'], [250, 'Surplus doux (+250 kcal)'], [500, 'Surplus marqué (+500 kcal)']]
       .map(([v, l]) => '<option value="' + v + '"' + (p.aim == v ? ' selected' : '') + '>' + l + '</option>').join('') +
@@ -8540,6 +9196,40 @@ $('#btnCalc').onclick = () => {
               'ou réduis le volume d\'entraînement hebdomadaire.</span>');
         return { v, kcal, f, water };
       }
+      /* ESTIMATION PAR CIRCONFERENCES. Le handler est pose sur les champs de mesure, donc
+         il s'execute AVANT celui du panneau qui ecoute en remontee : `#cMg` est deja a
+         jour quand `compute()` le relit, et les planchers affiches suivent sans qu'on ait
+         a rappeler quoi que ce soit. */
+      const majMg = () => {
+        const sx = el.querySelector('#cSex') ? el.querySelector('#cSex').value : p.sex;
+        const bf = masseGrasseNavy(sx, +(el.querySelector('#cH') || {}).value || p.height,
+          +(el.querySelector('#mgT') || {}).value, +(el.querySelector('#mgC') || {}).value,
+          +(el.querySelector('#mgH') || {}).value);
+        const out = el.querySelector('#mgOut'), btn = el.querySelector('#mgOk');
+        if (!out) return;
+        if (bf === null) {
+          out.textContent = 'Renseigne les mesures ci-dessus.';
+          if (btn) btn.disabled = true;
+          return;
+        }
+        const kg = +(el.querySelector('#cW') || {}).value || p.weight || 0;
+        out.innerHTML = '<b>' + bf.toFixed(1).replace('.', ',') + ' %</b> de masse grasse'
+          + (kg > 0 ? ', soit ' + (kg * (1 - bf / 100)).toFixed(1).replace('.', ',')
+                      + ' kg de masse maigre.' : '.');
+        if (btn) { btn.disabled = false; btn.dataset.bf = bf; }
+      };
+      ['#mgT', '#mgC', '#mgH'].forEach(id => { const n = el.querySelector(id);
+        if (n) n.addEventListener('input', majMg); });
+      const bOk = el.querySelector('#mgOk');
+      if (bOk) bOk.onclick = () => {
+        const champ = el.querySelector('#cMg');
+        if (champ && bOk.dataset.bf) {
+          champ.value = Math.round(+bOk.dataset.bf);
+          cur = compute();                      // les planchers suivent immediatement
+          toast('Masse grasse estimée à ' + Math.round(+bOk.dataset.bf) + ' %');
+        }
+      };
+
       let cur = compute();
       el.addEventListener('input', () => { cur = compute(); });
       el.addEventListener('change', () => { cur = compute(); });
@@ -8632,6 +9322,18 @@ function sanitizeBackup(inc) {
   const weights = (inc.weights || [])
     .filter(w => w && isDate(w.date) && Number(w.kg) >= 20 && Number(w.kg) <= 400)
     .map(w => ({ date: w.date, kg: Math.round(Number(w.kg) * 10) / 10 }));
+
+  /* Memes bornes physiques que partout : une circonference se situe entre 10 et 200 cm,
+     et une valeur hors de cette plage vient d'une faute de frappe, pas d'un corps. Les
+     champs absents restent absents — une mesure partielle reste exploitable. */
+  const cmOuRien = v => { const n = Number(v);
+    return n >= 10 && n <= 200 ? Math.round(n * 10) / 10 : undefined; };
+  const mesures = (inc.mesures || [])
+    .filter(m => m && isDate(m.date))
+    .map(m => ({ date: m.date, taille: cmOuRien(m.taille), cou: cmOuRien(m.cou),
+                 hanches: cmOuRien(m.hanches), cuisse: cmOuRien(m.cuisse), bras: cmOuRien(m.bras) }))
+    .filter(m => m.taille || m.cou || m.hanches || m.cuisse || m.bras)
+    .slice(0, 400);
 
   const s = inc.settings || {};
   const g = s.goals || {}, gx = s.goalsMax || {}, p = s.profile || {};
@@ -8756,6 +9458,7 @@ function sanitizeBackup(inc) {
     },
     entries: entries,
     weights: weights,
+    mesures: mesures,
     /* Séances : objets `{d, a, v}`. On accepte encore les chaînes de dates des
        versions <= v4.2, en les rattachant à la première activité du catalogue. */
     trainings: (Array.isArray(inc.trainings) ? inc.trainings : []).map(x => {
@@ -8803,7 +9506,14 @@ $('#fImp').onchange = e => {
       ['aliments favoris', (inc.settings.foods || []).length, fourni('foods')],
       ['compléments', (inc.settings.supps || []).length, fourni('supps')],
       ['volumes d\'eau', (inc.settings.waterPresets || []).length, fourni('waterPresets')],
-      ['objectifs', fourni('goals') ? 1 : 0, fourni('goals')]
+      ['objectifs', fourni('goals') ? 1 : 0, fourni('goals')],
+      /* MESURES ET HISTORIQUE DES OBJECTIFS, arrives en v15.0 et v14.0. Ils manquaient a
+         cet inventaire, donc l'utilisateur ne voyait pas qu'une vieille sauvegarde n'en
+         portait pas — et le remplacement les effacait en silence. C'est exactement le
+         defaut que cet inventaire existe pour empecher, reapparu faute d'y ajouter les
+         nouvelles series. Toute serie ajoutee a `sanitizeBackup` doit figurer ici. */
+      ['mesures', (inc.mesures || []).length, brut.mesures !== undefined && brut.mesures !== null],
+      ['historique des objectifs', (inc.settings.goalsHisto || []).length, fourni('goalsHisto')]
     ];
     const manquants = inv.filter(x => !x[2]).map(x => x[0]);
 
@@ -8834,6 +9544,24 @@ $('#fImp').onchange = e => {
             if (x && !vues.has(x.d)) { vues.add(x.d); DB.trainings.push(x); nE++; }
           });
           DB.trainings.sort((a, b) => a.d.localeCompare(b.d));
+
+          /* MESURES, reunies par DATE comme les pesees : un releve par jour, et celui qui
+             est deja en place gagne. La fusion les ignorait completement — importer une
+             sauvegarde qui en portait ne les restaurait pas. */
+          const vuesM = new Set((DB.mesures || []).map(x => x.date));
+          let nM = 0;
+          (inc.mesures || []).forEach(x => {
+            if (x && !vuesM.has(x.date)) { vuesM.add(x.date); DB.mesures.push(x); nM++; }
+          });
+          DB.mesures.sort((a, b) => a.date.localeCompare(b.date));
+
+          /* HISTORIQUE DES OBJECTIFS, reuni par date lui aussi. Sans cela une fusion
+             laissait l'historique local seul juge de journees qui venaient d'arriver. */
+          const vuesH = new Set((DB.settings.goalsHisto || []).map(x => x.date));
+          ((inc.settings || {}).goalsHisto || []).forEach(x => {
+            if (x && !vuesH.has(x.date)) { vuesH.add(x.date); DB.settings.goalsHisto.push(x); }
+          });
+          DB.settings.goalsHisto.sort((a, b) => a.date.localeCompare(b.date));
 
           /* Une sauvegarde sert aussi à ne pas retaper sa configuration. La fusion
              restaure donc objectifs et profil, et complète les listes par identifiant
@@ -8886,17 +9614,24 @@ $('#fImp').onchange = e => {
           if (nC) bilan.push(nC + ' complément' + (nC > 1 ? 's' : ''));
           if (nV) bilan.push(nV + ' volume' + (nV > 1 ? 's' : ''));
           if (nE) bilan.push(nE + ' jour' + (nE > 1 ? 's' : '') + ' d\'entraînement');
+          if (nM) bilan.push(nM + ' relevé' + (nM > 1 ? 's' : '') + ' de mesures');
           toast(bilan.length ? 'Restauré : ' + bilan.join(', ') : 'Rien de nouveau à restaurer');
         };
         el.querySelector('#iRepl').onclick = () => {
           if (!confirm('Remplacer définitivement toutes tes données actuelles ?')) return;
           const avant = JSON.parse(JSON.stringify(DB.settings));
           const avantTr = (DB.trainings || []).slice();
+          const avantMes = (DB.mesures || []).slice();
           DB = deepMerge(DEFAULTS, inc);
           /* Remplacer ne veut pas dire effacer ce dont le fichier ne parle pas :
              une sauvegarde antérieure aux repas habituels ne doit pas les supprimer. */
-          ['templates', 'foods', 'supps', 'waterPresets', 'goals', 'profile', 'goalsWeight', 'model']
+          ['templates', 'foods', 'supps', 'waterPresets', 'goals', 'profile', 'goalsWeight',
+           'model', 'goalsHisto']
             .forEach(k => { if (!fourni(k) && avant[k] !== undefined) DB.settings[k] = avant[k]; });
+          /* `mesures` vit a la RACINE, pas dans `settings` : la boucle ci-dessus ne peut
+             pas l'atteindre. Sans cette ligne, restaurer une sauvegarde anterieure a la
+             v15.0 effacait definitivement tous les releves de circonferences. */
+          if (brut.mesures === undefined || brut.mesures === null) DB.mesures = avantMes;
           if (!fourni('goalsMax')) {
             const pr = DB.settings.profile || {};
             DB.settings.goalsMax = fourni('goals')
