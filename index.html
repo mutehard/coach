@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.2</title>
+<title>Coach v15.3</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,39 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.3 — **L'analyse disait ce que l'ecran affichait deja. Elle dit maintenant ce qu'il
+             ne montre pas, et elle se verifie d'une semaine sur l'autre.**
+             Cinq corrections de fond sur la pertinence, plus un champ facultatif.
+             1. LA PRIORITE DEVIENT VERIFIABLE. Elle portait une action ; elle porte
+                desormais {action, critere}, le critere disant comment savoir dans une
+                semaine que c'est fait. Et la charge renvoie `priorite_precedente` : chaque
+                analyse commence par dire si la consigne de la precedente a tenu. Une
+                consigne qu'on ne verifie jamais cesse d'etre suivie, et une suite
+                d'instantanes n'est pas un suivi.
+             2. POIDS VISE, facultatif, dans le calculateur d'objectifs. Avec lui, le bloc
+                `projection` porte une ECHEANCE — semaines restantes et date estimee — ou
+                l'alerte quand le rythme mesure en ELOIGNE. Sans lui, le rythme seul.
+                `projection()` s'abstient quand |rythme| reste sous 0,05 kg/semaine :
+                extrapoler du bruit produit une date fausse enoncee comme un fait.
+             3. QUATRE REGLES D'ANALYSE. Ne jamais redire un chiffre que l'ecran affiche,
+                ne pas transformer un non-evenement en constat, nommer un aliment et une
+                quantite dans chaque conseil, et citer la projection sans la refaire.
+             4. `complements` RETIRE de la charge. 805 caracteres cites nulle part dans le
+                prompt : le modele les recevait sans savoir qu'en faire. Les complements
+                restent enregistres et affiches dans le journal.
+             5. CORRECTION d'un defaut de la v15.2. Les consignes conditionnelles, converties
+                depuis les litteraux gabarits, envoyaient un antislash parasite et un vrai
+                saut de ligne a chaque pliure : un gabarit traite « antislash + saut » comme
+                une continuation et n'emet rien, une chaine simple en fait deux caracteres.
+                Trente-deux occurrences, soixante-quatre caracteres payes pour rien.
+             6. `prioriteNormalisee()` ramene les deux formes de `priorite` a un seul objet,
+                A LA LECTURE et non seulement a l'ecriture : l'analyse deja enregistree dans
+                le navigateur reste sur le disque sous l'ancienne forme, et un ecran qui ne
+                lirait que la nouvelle aurait fait disparaitre la ligne sans rien dire.
+             Cout mesure : 6107 jetons a 30 jours (76 % du budget d'une minute), 6210 a
+             3 mois compact, contre 84 % en v15.2 malgre les regles ajoutees. Le numero de
+             version de l'onglet « A propos » est desormais pose par le script.
+
     v15.2 — **L'analyse tenait 96 % du budget d'une minute. Elle en tient 84.**
              Message de Groq releve chez l'utilisateur : « Limit 8000, Used 6035, Requested
              6785 ». Un seul appel consommait presque toute l'allocation, et la moindre
@@ -2141,7 +2174,10 @@ input[type=date].in::-webkit-datetime-edit-fields-wrapper{padding:0}
 
     <div class="card">
       <h2>À propos</h2>
-      <p class="muted">Coach v15.2 — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
+      <!-- Le numero est POSE PAR LE SCRIPT depuis `VERSION_APP`, jamais ecrit ici. Un
+           numero recopie dans le HTML statique est un numero qui se figera : c'est ce
+           qui avait laisse le badge de l'onglet sur v13.14 pendant trois versions. -->
+      <p class="muted">Coach <span id="aPropVer"></span> — journal alimentaire personnel.<br>Fichier HTML unique, données locales à l'appareil.</p>
       <p class="note" style="margin-top:12px">Sur iPhone : Safari → Partager → <b>Sur l'écran d'accueil</b>. L'app s'ouvre alors en plein écran et ses données sont conservées durablement.</p>
       <!-- La documentation vit DANS l'application, jamais sur une page distante : le
            fichier est unique et doit fonctionner hors ligne. Un lien externe créerait
@@ -2260,7 +2296,8 @@ const DEFAULTS = {
     modele: 12,   /* voir MODELE_SEUILS */
     /* `bodyFat` à 0 signifie « inconnu » : les protéines retombent alors sur le
        poids total. Renseigné, il fait basculer le calcul sur la masse maigre. */
-    profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0, but: 'maintien', bodyFat: 0 },
+    profile: { sex: 'h', age: 35, height: 175, weight: 75, act: 1.55, aim: 0, but: 'maintien',
+               bodyFat: 0, poidsCible: 0 },
     /* Activités, avec le coût énergétique DÉDUIT du profil (v5.0).
 
        Musculation et course à pied ne se valent pas : à 78 kg, 60 min de musculation
@@ -2525,6 +2562,46 @@ function residuEau() {
   if (seance) causes.push('séance récente');
   return { ecart: ecart, notable: true, date: d.date, causes: causes,
            tendance: Math.round(tr.fin * 10) / 10, pesee: d.kg };
+}
+
+/* PROJECTION — ou mene le rythme actuel, et quand.
+
+   Calculee ICI et non par le modele. Une extrapolation est une multiplication : la
+   confier a un modele de langage, c'est accepter qu'il se trompe d'un facteur deux sur
+   une phrase que l'utilisateur lira comme un fait. La regle de la v13.15 s'applique
+   telle quelle — l'application calcule, le modele interprete.
+
+   LA PENTE MESUREE PRIME SUR LE DEFICIT THEORIQUE. On pourrait deduire le rythme du
+   deficit (345 kcal/jour / 7700 = 0,31 kg/semaine), mais ce calcul suppose que l'apport
+   est estime juste, ce que l'erreur de 20 a 30 % par repas interdit. La regression de
+   poids, elle, mesure ce qui s'est reellement passe. */
+function projection() {
+  const p = S().profile || {};
+  const w = DB.weights.slice().sort((a, b) => a.date.localeCompare(b.date))
+    .filter(x => x.date >= shiftD(TODAY(), -56));
+  const tr = tendancePoids(peseesHorsPause(w));
+  if (!tr || Math.abs(tr.rythme) < 0.05) return null;   // rythme indistinct du bruit
+  const actuel = Math.round(tr.fin * 10) / 10;
+  const cible = +p.poidsCible || 0;
+  const out = { rythme_kg_par_semaine: Math.round(tr.rythme * 100) / 100,
+                poids_tendance_kg: actuel,
+                dans_4_semaines_kg: Math.round((actuel + tr.rythme * 4) * 10) / 10 };
+  if (cible > 0) {
+    const reste = cible - actuel;
+    /* Le signe doit concorder : viser 72 kg en prenant du poids ne donne pas une
+       echeance, ca donne un probleme — et c'est CA qu'il faut dire. */
+    if (reste * tr.rythme > 0) {
+      const sem = Math.abs(reste / tr.rythme);
+      out.poids_vise_kg = cible;
+      out.semaines_restantes = Math.round(sem * 10) / 10;
+      out.date_estimee = dstr(new Date(parseD(TODAY()).getTime() + sem * 7 * DAY));
+    } else {
+      out.poids_vise_kg = cible;
+      out.ecart_au_but_kg = Math.round(reste * 10) / 10;
+      out.alerte = 'le rythme actuel ELOIGNE du poids vise';
+    }
+  }
+  return out;
 }
 
 function poidsReference(p) {
@@ -6412,6 +6489,7 @@ async function runAnalysis() {
 /* Version affichee, LUE DANS LE TITRE et jamais recopiee. Un numero present a cinq
    endroits est un numero faux a quatre d'entre eux le jour ou l'on oublie une ligne. */
 const VERSION_APP = (document.title.match(/v[\d.]+/) || ['']) [0];
+{ const n = document.getElementById('aPropVer'); if (n) n.textContent = VERSION_APP; }
 
 const JOURS_ANALYSE = 60;
 /* LA CARTE ET L'ANALYSE LISENT LA MEME PERIODE : celle que l'utilisateur a choisie.
@@ -7050,11 +7128,22 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
     aliments_consommes: { colonnes: colAliments,
       note: 'valeurs moyennes PAR PORTION, pas cumulees sur la periode',
       lignes: aliments },
-    complements: (S().supps || []).map(x => ({
-      nom: x.name, dose: x.dose || null, kcal: r0(x.kcal), proteines_g: r0(x.prot),
-      glucides_g: r0(x.carb), lipides_g: r0(x.fat), fibres_g: r0(x.fiber),
-      prises_sur_la_periode: DB.entries.filter(e => e.supp === x.id && e.date >= depuis && e.date <= jusqu).length
-    })),
+    /* `complements` a ete RETIRE de la charge en v15.3. Il pesait 805 caracteres et
+       n'etait cite nulle part dans le prompt : le modele le recevait sans savoir qu'en
+       faire, et le payait sur un budget qu'on venait de voir deborder. Les complements
+       restent enregistres et affiches dans le journal, ils ne partent simplement plus. */
+    /* PRIORITE PRECEDENTE — ce qui transforme une suite d'instantanes en un suivi.
+       Elle etait stockee depuis des versions et n'etait jamais renvoyee : chaque analyse
+       repartait de zero, et le coach oubliait ce qu'il avait demande la semaine d'avant. */
+    priorite_precedente: (function () {
+      const a = S().analyse;
+      const pr = prioriteNormalisee(a && a.priorite);
+      if (!pr) return null;
+      return { il_y_a_jours: Math.floor((Date.now() - ((a && a.quand) || 0)) / DAY),
+               action: pr.action, critere: pr.critere || null };
+    })(),
+    /* PROJECTION, calculee par l'application. Le modele la CITE, il ne la refait pas. */
+    projection: projection(),
     repas_habituels: (S().templates || []).map(t => {
       const s2 = sumItems(t.items);
       return { nom: t.name, moment: mealLabel(t.meal), kcal: r0(s2.kcal),
@@ -7108,6 +7197,9 @@ en prise, DEUX zones selon l'anciennete : 0,25 à 0,5 % chez qui débute en musc
 ne présente donc jamais 0,1 à 0,25 % comme trop lent, ni 0,25 à 0,5 % comme la seule norme ;
 - les objectifs de macronutriments sont des PLANCHERS : aucun des quatre n'a de plafond documenté, \
 ne présente jamais un dépassement comme un défaut. Seul l'alcool a un plafond, hebdomadaire ;
+- ANCRE TES RÉPONSES DANS CE QU'IL MANGE VRAIMENT. "aliments_consommes" porte les apports \
+PAR PORTION de ses aliments habituels : une réponse qui cite un de ses aliments et une \
+quantité se suit dès le repas suivant, une réponse générale ne se suit jamais ;
 - LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
 "bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
 "coherence_des_planchers" et "moyennes_sur_jours_suivis" portent des résultats DÉJÀ calculés \
@@ -7173,9 +7265,23 @@ d'une personne qui utilise une application de journal alimentaire.
 Réponds UNIQUEMENT par un objet JSON valide, sans texte autour, exactement à ce format :
 {"bilan":"deux à trois phrases","constats":[{"titre":"court","detail":"une à deux phrases","niveau":"ok"}],\
 "conseils":[{"action":"ce qu'il faut faire, à l'impératif","pourquoi":"une phrase de justification"}],\
-"priorite":"la seule chose à changer cette semaine, en une phrase"}
+"priorite":{"action":"la seule chose à changer cette semaine, en une phrase à l'impératif",\
+"critere":"comment savoir dans une semaine que c'est fait, en une mesure chiffrée"}}
 
 Règles d'analyse :
+- NE REDIS JAMAIS UN CHIFFRE QUE L'ÉCRAN AFFICHE DÉJÀ. L'utilisateur voit son apport moyen, \
+son déficit, ses planchers et sa tendance de poids avant même de te lire. Un constat qui les \
+répète ne lui apprend rien et lui fait perdre son temps. Un constat doit porter une RELATION, \
+une CAUSE ou une CONSÉQUENCE qu'il ne peut pas lire lui-même : pourquoi deux grandeurs se \
+contredisent, ce qu'un écart va produire s'il dure, quel comportement explique un chiffre. \
+Et ne transforme jamais un non-événement en constat : « l'alcool est sous le plafond » n'est \
+pas une information, c'est l'absence de problème. S'il n'y a que deux choses à dire, n'en dis \
+que deux ;
+- CHAQUE CONSEIL NOMME UN ALIMENT OU UNE QUANTITÉ. Tu as "aliments_consommes" avec les \
+apports PAR PORTION de ce que cette personne mange vraiment : sers-t'en. « Augmente les \
+fibres » ne vaut rien ; « ajoute 40 g de flocons d'avoine au petit-déjeuner, +4 g de fibres \
+pour 150 kcal » se fait dès demain. Un conseil qu'on ne peut pas exécuter le jour même n'est \
+pas un conseil ;
 - LES CHIFFRES CALCULÉS FONT FOI, ne les recalcule jamais. Les blocs "energie", \
 "bilan_energetique_hebdo", "alcool_hebdo", "disponibilite_energetique", \
 "coherence_des_planchers" et "moyennes_sur_jours_suivis" portent des \
@@ -7264,10 +7370,12 @@ function consignesConditionnelles(d) {
   const out = [];
   const pauses = (d.moyennes_sur_jours_suivis || {}).journees_en_pause_ecartees > 0;
   const chg = ((d.energie || {}).changements_d_objectif || []).length > 0;
-  if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est \\\nprésent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais \\\ncomme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux \\\nque la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est \\\nune perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
-  if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre \\\nl\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche \\\nd\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la \\\npersonne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement \\\nd\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la \\\npériode en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
-  if (pauses) out.push('- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans \\\n"journees_en_pause" d\'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : \\\nvacances, semaine chargée, pause alimentaire planifiée. C\'est un outil légitime en phase de perte \\\nprolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge \\\nd\'alcool, ne la présente jamais comme un manquement, et n\'en tire aucune conclusion sur la \\\nvariation de poids — sodium, alcool et glycogène y retiennent de l\'eau et masquent la masse grasse. \\\nSi la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse \\\nles autres normalement. Si la personne est encore en pause, ne propose aucun changement à \\\nappliquer maintenant : formule ce qui sera à reprendre au retour ;\n');
-  if ((d.suivi || {}).phase === 'demarrage') out.push('- ANCIENNETÉ DU SUIVI. Le bloc "suivi" dit depuis combien de jours cette personne enregistre. \\\nQuand "phase" vaut "demarrage" — moins de quinze jours — plusieurs conclusions ne sont PAS SOUTENUES \\\npar les données, et s\'en abstenir est une question d\'exactitude avant d\'être une question de ton :\n  · un poids qui ne descend pas sur une ou deux semaines ne démontre RIEN. Les variations d\'eau, de \\\nglycogène et de contenu digestif dépassent largement la perte de gras attendue sur cette durée. \\\nN\'écris ni « stagnation », ni « le déficit n\'est pas réel », ni « ton apport est proche du maintien » ;\n  · un plancher de fibres ou de protéines encore loin du compte est ATTENDU à ce stade : changer ses \\\nhabitudes et ses quantités demande des semaines, pas des jours. Ne le présente pas comme un manquement ;\n  · dis explicitement ce que la période ne permet pas encore de conclure, puis nomme ce qui est DÉJÀ \\\nacquis — la régularité de l\'enregistrement, un plancher tenu, une habitude installée ;\n  · un seul changement à installer, choisi pour être tenable, pas trois.\n  Au-delà de quinze jours, "phase" vaut "etabli" : reprends alors le ton habituel, direct et exigeant, \\\net juge la tendance de poids sans ménagement.\n');
+  if (d.priorite_precedente) out.push('- COMMENCE PAR LA PRIORITÉ PRÉCÉDENTE quand "priorite_precedente" est présent. Dis en une phrase si elle est tenue, à moitié tenue ou abandonnée, en t\'appuyant sur les données — pas sur une impression. C\'est la première chose que l\'utilisateur veut savoir, et une consigne qu\'on ne vérifie jamais cesse d\'être suivie. Si elle est tenue, passe à autre chose : ne répète pas une consigne acquise ;\n');
+  if (d.projection) out.push('- LA PROJECTION EST CALCULÉE, ne la refais pas. Le bloc "projection" donne le rythme mesuré, le poids dans quatre semaines et, si un poids est visé, l\'échéance — ou l\'alerte quand le rythme en éloigne. Cite ces nombres tels quels : une extrapolation refaite de tête se trompe, et elle sera lue comme un fait. Si "poids_vise_kg" manque, tu peux dire en une phrase que le renseigner donnerait une échéance ;\n');
+  if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est présent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux que la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est une perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
+  if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre l\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche d\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement d\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la période en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
+  if (pauses) out.push('- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans "journees_en_pause" d\'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : vacances, semaine chargée, pause alimentaire planifiée. C\'est un outil légitime en phase de perte prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge d\'alcool, ne la présente jamais comme un manquement, et n\'en tire aucune conclusion sur la variation de poids — sodium, alcool et glycogène y retiennent de l\'eau et masquent la masse grasse. Si la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse les autres normalement. Si la personne est encore en pause, ne propose aucun changement à appliquer maintenant : formule ce qui sera à reprendre au retour ;\n');
+  if ((d.suivi || {}).phase === 'demarrage') out.push('- ANCIENNETÉ DU SUIVI. Le bloc "suivi" dit depuis combien de jours cette personne enregistre. Quand "phase" vaut "demarrage" — moins de quinze jours — plusieurs conclusions ne sont PAS SOUTENUES par les données, et s\'en abstenir est une question d\'exactitude avant d\'être une question de ton :\n  · un poids qui ne descend pas sur une ou deux semaines ne démontre RIEN. Les variations d\'eau, de glycogène et de contenu digestif dépassent largement la perte de gras attendue sur cette durée. N\'écris ni « stagnation », ni « le déficit n\'est pas réel », ni « ton apport est proche du maintien » ;\n  · un plancher de fibres ou de protéines encore loin du compte est ATTENDU à ce stade : changer ses habitudes et ses quantités demande des semaines, pas des jours. Ne le présente pas comme un manquement ;\n  · dis explicitement ce que la période ne permet pas encore de conclure, puis nomme ce qui est DÉJÀ acquis — la régularité de l\'enregistrement, un plancher tenu, une habitude installée ;\n  · un seul changement à installer, choisi pour être tenable, pas trois.\n  Au-delà de quinze jours, "phase" vaut "etabli" : reprends alors le ton habituel, direct et exigeant, et juge la tendance de poids sans ménagement.\n');
   return out.length ? '\n' + out.join('') : '';
 }
 
@@ -7947,6 +8055,26 @@ function jugerRythme(kgSem, poids, aim) {
    L'analyse est CONSERVÉE entre deux ouvertures : la relancer à chaque visite de
    l'onglet brûlerait le quota pour rien et donnerait un résultat différent à chaque
    fois sans que rien n'ait changé. Au-delà de sept jours, on invite à la relancer. */
+/* FORME DE `priorite` — une chaine jusqu'en v15.2, un objet {action, critere} depuis la
+   v15.3. La normalisation se fait a la LECTURE, et pas seulement a l'ecriture.
+
+   REGLE A RETENIR : quand une forme stockee change, la normaliser au moment d'enregistrer
+   ne couvre que les ecritures futures. L'analyse deja posee dans le navigateur reste sur
+   le disque sous l'ancienne forme, et un ecran qui ne lirait que la nouvelle ferait
+   disparaitre la ligne « A changer cette semaine » sans rien dire, jusqu'a la prochaine
+   analyse. C'est la meme famille de defaut que la migration v14.0 ecrite apres le
+   `return` : un changement de forme se verifie contre les donnees DEJA presentes.
+
+   Rend null pour une priorite vide, afin qu'un seul test suffise aux appelants. */
+function prioriteNormalisee(pr) {
+  if (!pr) return null;
+  if (typeof pr === 'string') {
+    return pr.trim() ? { action: pr.slice(0, 300), critere: '' } : null;
+  }
+  const action = String(pr.action || '').slice(0, 300);
+  return action ? { action: action, critere: String(pr.critere || '').slice(0, 200) } : null;
+}
+
 function renderAnalyse() {
   const box = $('#analyse');
   if (!box) return;
@@ -7970,8 +8098,17 @@ function renderAnalyse() {
     '<div class="row between" style="align-items:baseline;margin-bottom:10px">' +
     '<h2 style="margin:0">Analyse de Coach</h2>' +
     '<span class="tiny">' + (jours === 0 ? "aujourd'hui" : jours === 1 ? 'hier' : 'il y a ' + jours + ' jours') + '</span></div>' +
-    (a.priorite ? '<div class="prio warn" style="margin-top:0;margin-bottom:12px"><b>À changer cette semaine.</b> ' +
-      esc(a.priorite) + '</div>' : '') +
+    /* Le CRITERE s'affiche sous l'action : c'est lui qui rend la consigne verifiable,
+       et l'analyse suivante s'en sert pour dire si elle a ete tenue. */
+    (function () {
+      const pr = prioriteNormalisee(a.priorite);
+      if (!pr) return '';
+      return '<div class="prio warn" style="margin-top:0;margin-bottom:12px"><b>À changer cette semaine.</b> '
+        + esc(pr.action)
+        + (pr.critere ? '<em style="display:block;margin-top:5px">Objectif vérifiable : '
+                        + esc(pr.critere) + '</em>' : '')
+        + '</div>';
+    })() +
     /* Le bilan est la voix de Coach : la mascotte se tient a cote, comme si elle
        l'adressait a l'utilisateur. Les constats et conseils restent pleine largeur. */
     '<div class="dit" style="margin-bottom:14px"><img src="' + MASCOTTE.analyse + '" alt="" draggable="false">' +
@@ -8004,7 +8141,9 @@ $('#analyse').onclick = async e => {
     const r = await lancerAnalyse(range);
     loader(false);
     S().analyse = { quand: Date.now(), bilan: String(r.bilan || '').slice(0, 600),
-      priorite: String(r.priorite || '').slice(0, 300),
+      /* Le modele peut toujours rendre l'ancienne chaine : `prioriteNormalisee` ramene
+         les deux formes a {action, critere}, et borne les longueurs au passage. */
+      priorite: prioriteNormalisee(r.priorite),
       constats: (Array.isArray(r.constats) ? r.constats : []).slice(0, 4).map(c => ({
         titre: String(c.titre || '').slice(0, 80), detail: String(c.detail || '').slice(0, 300),
         niveau: ['ok', 'attention', 'alerte'].indexOf(c.niveau) >= 0 ? c.niveau : 'attention' })),
@@ -9136,6 +9275,11 @@ $('#btnCalc').onclick = () => {
     'mesure DEXA. C\'est grossier pour juger une composition corporelle, et suffisant pour ' +
     'ce qu\'en fait Coach : activer l\'alerte de disponibilité énergétique, aujourd\'hui ' +
     'éteinte faute de valeur.</p></details>' +
+    /* POIDS VISE, facultatif. Sans lui, l'analyse ne peut extrapoler qu'un rythme ; avec
+       lui, elle donne une ECHEANCE — « il te reste sept semaines a ce rythme » — qui est
+       ce que l'utilisateur veut vraiment savoir. */
+    '<label class="f"><span>Poids visé (kg)</span><input class="in" id="cPC" inputmode="decimal" ' +
+      'placeholder="facultatif" value="' + (p.poidsCible > 0 ? p.poidsCible : '') + '"></label>' +
     '<label class="f"><span>Écart énergétique</span><select class="in" id="cAim">' +
     [[-500, 'Déficit marqué (−500 kcal)'], [-250, 'Déficit doux (−250 kcal)'], [0, 'À l\'équilibre'], [250, 'Surplus doux (+250 kcal)'], [500, 'Surplus marqué (+500 kcal)']]
       .map(([v, l]) => '<option value="' + v + '"' + (p.aim == v ? ' selected' : '') + '>' + l + '</option>').join('') +
@@ -9158,7 +9302,8 @@ $('#btnCalc').onclick = () => {
         act: parseFloat(el.querySelector('#cAct').value),
         aim: parseFloat(el.querySelector('#cAim').value),
         but: el.querySelector('#cBut').value,
-        bodyFat: clamp(r0(el.querySelector('#cMg').value), 0, 60)
+        bodyFat: clamp(r0(el.querySelector('#cMg').value), 0, 60),
+        poidsCible: clamp(Number(String(el.querySelector('#cPC').value).replace(',', '.')) || 0, 0, 400)
       });
       /* Libellés du profil d'effort. Table close, indexée par une valeur que seule
          `profilEffort()` produit : rien ici ne vient d'une saisie. */
@@ -9457,7 +9602,9 @@ function sanitizeBackup(inc) {
                  act: clamp(Number(p.act) || 1.55, 1, 2.5),
                  but: ['perte','maintien','prise'].indexOf(p.but) >= 0 ? p.but : undefined,
                  aim: clamp(num(p.aim), -1500, 1500),
-                 bodyFat: clamp(num(p.bodyFat), 0, 60) }
+                 bodyFat: clamp(num(p.bodyFat), 0, 60),
+                 /* Zero = aucun poids vise. Memes bornes que les pesees. */
+                 poidsCible: clamp(num(p.poidsCible), 0, 400) }
     },
     entries: entries,
     weights: weights,
