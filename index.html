@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.3</title>
+<title>Coach v15.4</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,57 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.4 — **Le Conseil ouvrait chaque reponse sur la priorite de l'analyse, et la tuile
+             de deficit se taisait au lendemain d'un changement d'objectif.**
+             Deux remarques de l'utilisateur, le 20 octobre 2026.
+             1. LA CONSIGNE SE SPECIALISE, PAS LA CHARGE. « COMMENCE PAR LA PRIORITE
+                PRECEDENTE » ne testait que la presence du bloc, present dans les deux
+                charges depuis la v9.0 : chaque question de conseil s'ouvrait donc sur un
+                bilan de consigne que personne n'avait demande. Retirer le bloc cote conseil
+                aurait suffi a faire taire la consigne, mais aurait prive le modele d'un
+                contexte qu'il doit respecter sans en parler. Le bloc reste partout ; la
+                redaction varie : imperative a l'analyse, retenue au conseil — n'en parler
+                que si la question la touche, et alors en une phrase.
+                REGLE A RETENIR : quand deux emplois partagent une donnee mais pas le meme
+                usage, on specialise la CONSIGNE, pas la charge.
+             2. S'ABSTENIR DE JUGER N'AUTORISE PAS A SE TAIRE. Au lendemain d'un changement
+                d'objectif, le regime ne contient qu'une date — celle du jour, que la moyenne
+                ecarte parce qu'elle est partielle. Il n'y avait donc rien a mesurer, et la
+                tuile retombait sur le libelle generique « deficit vise » avec un tiret :
+                muette, impossible a distinguer d'une panne. Le test d'anciennete passe AVANT
+                celui de la mesure absente, et les trois etats se lisent desormais comme une
+                progression — « — · verdict dans 10 j », puis le chiffre avec « verdict dans
+                N j », puis le verdict colore. Un utilisateur sans aucun changement
+                d'objectif garde le libelle generique : pas de compte a rebours invente.
+             3. LA DOCUMENTATION INTEGREE N'ETAIT PLUS EN PHASE. Question de l'utilisateur,
+                revue ligne a ligne. Le palier progressif de fibres, RETIRE EN v15.2, etait
+                encore promis : « Coach te propose de monter par paliers » decrivait une
+                fonction qui n'existait plus. `verifier-doc.py` ne pouvait pas le voir — le
+                controle portant sur la meme ligne verifiait « 14 g pour 1000 kcal », qui
+                restait juste.
+                La reciproque etait plus lourde : les circonferences mensuelles (v15.0), la
+                retention d'eau, le poids vise (v15.3), les objectifs historises (v14.0) et
+                les pauses declarees existaient sans que la documentation en dise un mot. Le
+                releve mensuel est pourtant un geste que l'application ATTEND de
+                l'utilisateur. Trois sections ajoutees, un cinquieme geste dans « Par ou
+                commencer », et la disponibilite energetique enfin expliquee — elle figurait
+                dans les sources sans exister nulle part dans le corps.
+                La ligne sur les donnees nomme desormais les PHOTOS DE REPAS, et precise que
+                la cle API ne figure dans aucun envoi ni dans aucun export.
+             4. DEUX BARRIERES ELARGIES.
+                `verifier-doc.py` passe de 12 a 21 controles : une table FONCTIONS confronte
+                neuf fonctions visibles a leur symbole dans le code, DANS LES DEUX SENS. Elle
+                porte une pierre tombale — le palier de fibres, attendu absent des deux cotes.
+                Contre-epreuve sur les deux sens, chacun attrape.
+                `verifier-contexte.py` ne lisait les comptes de controles qu'EN TOUTES LETTRES
+                et pour deux barrieres sur cinq. Le « 12 contrôles » de `verifier-doc.py`,
+                ecrit en chiffres, a donc vieilli sans que rien ne le signale — et deux
+                « 27 contrôles » de l'audit dataient de la veille. Les cinq barrieres sont
+                desormais lues, dans les deux ecritures.
+             Le controle d'audit des cles sensibles vise desormais les acces de propriete et
+             les cles d'objet au lieu de mordre sur toute occurrence du mot. Contre-epreuve
+             sur trois formes de fuite reelle, chacune attrapee.
+
     v15.3 — **L'analyse disait ce que l'ecran affichait deja. Elle dit maintenant ce qu'il
              ne montre pas, et elle se verifie d'une semaine sur l'autre.**
              Cinq corrections de fond sur la pertinence, plus un champ facultatif.
@@ -6622,15 +6673,29 @@ function ecartAuMaintien(jours, profil) {
    le manque, l'ordre de grandeur du bruit résiduel d'estimation sur une telle moyenne ; 300
    pour l'excès, seuil à partir duquel la disponibilité énergétique commence à se dégrader. */
 function verdictEcart(e, visee) {
-  if (e.mesure === null) return { etat: '', libelle: visee === 'prise' ? 'surplus visé'
-                                          : visee === 'maintien' ? 'écart maintien' : 'déficit visé' };
   /* PAS DE VERDICT SUR UN OBJECTIF TROP JEUNE. La mesure reste affichee — c'est un fait —
      mais sans couleur ni jugement, et la tuile dit combien de journees manquent. Trancher
-     des le lendemain d'un changement reviendrait a qualifier un seul repas de travers. */
+     des le lendemain d'un changement reviendrait a qualifier un seul repas de travers.
+
+     TESTE AVANT `mesure === null`, et non apres (v15.4). Au lendemain d'un changement
+     d'objectif, le regime ne contient qu'une seule date : celle du jour, que la moyenne
+     ecarte parce qu'elle est partielle. Il n'y a donc RIEN a mesurer, `mesure` vaut null,
+     et la tuile retombait sur le libelle generique « deficit vise » avec un tiret — muette,
+     impossible a distinguer d'une panne. Remarque de l'utilisateur : « je n'ai plus
+     d'informations dans l'encart deficit vise, c'est normal ? ».
+
+     L'abstention etait juste, le silence ne l'etait pas. Les trois etats se lisent
+     desormais comme une progression : « — · verdict dans 10 j », puis le chiffre avec
+     « verdict dans N j », puis le verdict colore.
+
+     REGLE A RETENIR : s'abstenir de juger n'autorise pas a se taire. Un ecran qui ne dit
+     rien ne se lit pas comme une reserve, il se lit comme un defaut. */
   if (e.jeune) {
     const reste = Math.max(1, REGIME_RECUL - (e.jours || 0));
     return { etat: '', libelle: 'verdict dans ' + reste + ' j' };
   }
+  if (e.mesure === null) return { etat: '', libelle: visee === 'prise' ? 'surplus visé'
+                                          : visee === 'maintien' ? 'écart maintien' : 'déficit visé' };
   if (visee === 'maintien') {
     const d = Math.abs(e.mesure - e.objectif);
     return { etat: d <= 100 ? 'vert' : d <= 300 ? 'orange' : 'rouge', libelle: 'écart maintien' };
@@ -7134,7 +7199,22 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
        restent enregistres et affiches dans le journal, ils ne partent simplement plus. */
     /* PRIORITE PRECEDENTE — ce qui transforme une suite d'instantanes en un suivi.
        Elle etait stockee depuis des versions et n'etait jamais renvoyee : chaque analyse
-       repartait de zero, et le coach oubliait ce qu'il avait demande la semaine d'avant. */
+       repartait de zero, et le coach oubliait ce qu'il avait demande la semaine d'avant.
+
+       LE BLOC PART DANS LES DEUX CHARGES, LA CONSIGNE NON (v15.4). Jusqu'ici la consigne
+       « COMMENCE PAR LA PRIORITE PRECEDENTE » ne testait que la presence du bloc : chaque
+       question de conseil s'ouvrait donc sur un bilan de consigne que personne n'avait
+       demande. Demande de l'utilisateur, le 20 octobre 2026.
+
+       On a d'abord retire le bloc cote conseil — la regle de la v15.2 veut qu'une consigne
+       ne parte que si son bloc est la, et cela suffisait. Mais le conseil perdait alors
+       toute conscience de la consigne en cours et pouvait la contredire. L'utilisateur a
+       tranche : « on n'en parle que si la question la touche ». Le bloc reste donc partout,
+       et c'est la CONSIGNE qui varie selon l'emploi — voir `consignesConditionnelles`.
+
+       REGLE A RETENIR : quand deux emplois partagent une donnee mais pas le meme usage,
+       c'est la consigne qu'on specialise, pas la charge. Retirer la donnee prive le modele
+       d'un contexte qu'il pourrait avoir besoin de respecter sans en parler. */
     priorite_precedente: (function () {
       const a = S().analyse;
       const pr = prioriteNormalisee(a && a.priorite);
@@ -7248,7 +7328,7 @@ async function poserQuestion(question) {
   }));
   const corps = {
     model: modeleDe('analyse'), temperature: 0.4, max_tokens: 900,
-    messages: [{ role: 'user', content: PROMPT_CONSEIL + consignesConditionnelles(d) + consigneMailles(d)
+    messages: [{ role: 'user', content: PROMPT_CONSEIL + consignesConditionnelles(d, 'conseil') + consigneMailles(d)
                  + '\n\nSes données :\n' + JSON.stringify(d) }]
       .concat(hist)
       .concat([{ role: 'user', content: question }])
@@ -7365,12 +7445,19 @@ Si les données sont trop maigres pour conclure, dis-le franchement dans "bilan"
    le troisieme endroit ou elle s'applique, apres `consigneLongueur()` et
    `consigneMailles()` — le prompt est devenu le premier poste de la charge, devant les
    donnees, et chaque regle ajoutee se paie sur toutes les analyses. */
-function consignesConditionnelles(d) {
+function consignesConditionnelles(d, emploi) {
   if (!d) return '';
   const out = [];
   const pauses = (d.moyennes_sur_jours_suivis || {}).journees_en_pause_ecartees > 0;
   const chg = ((d.energie || {}).changements_d_objectif || []).length > 0;
-  if (d.priorite_precedente) out.push('- COMMENCE PAR LA PRIORITÉ PRÉCÉDENTE quand "priorite_precedente" est présent. Dis en une phrase si elle est tenue, à moitié tenue ou abandonnée, en t\'appuyant sur les données — pas sur une impression. C\'est la première chose que l\'utilisateur veut savoir, et une consigne qu\'on ne vérifie jamais cesse d\'être suivie. Si elle est tenue, passe à autre chose : ne répète pas une consigne acquise ;\n');
+  /* DEUX REDACTIONS POUR UNE MEME DONNEE. L'analyse DOIT commencer par verifier la
+     consigne precedente — c'est ce qui fait d'une suite d'instantanes un suivi. Le conseil
+     repond a une question posee : s'ouvrir sur un bilan de consigne, c'est ne pas y repondre.
+     Il garde la donnee pour ne pas conseiller a l'encontre de la consigne en cours, et il a
+     consigne de se taire dessus tant que la question ne la touche pas. */
+  if (d.priorite_precedente) out.push(emploi === 'conseil'
+    ? '- UNE PRIORITÉ EST EN COURS, portée par "priorite_precedente". Elle vient de l\'onglet Analyse, pas de cette conversation. N\'EN FAIS PAS LE SUJET DE TA RÉPONSE et ne l\'évoque que si la question la touche directement — auquel cas dis en une phrase si ce que tu conseilles reste compatible avec elle. Une réponse à une question précise qui s\'ouvre sur un bilan de consigne ne répond pas à la question ;\n'
+    : '- COMMENCE PAR LA PRIORITÉ PRÉCÉDENTE quand "priorite_precedente" est présent. Dis en une phrase si elle est tenue, à moitié tenue ou abandonnée, en t\'appuyant sur les données — pas sur une impression. C\'est la première chose que l\'utilisateur veut savoir, et une consigne qu\'on ne vérifie jamais cesse d\'être suivie. Si elle est tenue, passe à autre chose : ne répète pas une consigne acquise ;\n');
   if (d.projection) out.push('- LA PROJECTION EST CALCULÉE, ne la refais pas. Le bloc "projection" donne le rythme mesuré, le poids dans quatre semaines et, si un poids est visé, l\'échéance — ou l\'alerte quand le rythme en éloigne. Cite ces nombres tels quels : une extrapolation refaite de tête se trompe, et elle sera lue comme un fait. Si "poids_vise_kg" manque, tu peux dire en une phrase que le renseigner donnerait une échéance ;\n');
   if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est présent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux que la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est une perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
   if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre l\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche d\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement d\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la période en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
@@ -7450,7 +7537,7 @@ async function lancerAnalyse(nbJours, compact) {
      ce meme budget. 1400 suffisait a Qwen, pas a gpt-oss-120b. */
   const corps = {
     model: modeleDe('analyse'), temperature: 0.3, max_tokens: 2200,
-    messages: [{ role: 'user', content: PROMPT_ANALYSE + consignesConditionnelles(d) + consigneMailles(d) + consigneLongueur()
+    messages: [{ role: 'user', content: PROMPT_ANALYSE + consignesConditionnelles(d, 'analyse') + consigneMailles(d) + consigneLongueur()
                  + '\n\nDonnées :\n' + JSON.stringify(d) }]
   };
   try {
@@ -8304,7 +8391,9 @@ function renderHistory() {
   const debut = debutRegime();
   const joursRegime = debut ? days.filter(d => d >= debut) : days;
   const em = ecartAuMaintien(joursRegime, prof);
-  if (debut && em.jours > 0 && em.jours < REGIME_RECUL) em.jeune = true;
+  /* `em.jours` peut valoir 0 au lendemain d'un changement : le drapeau ne l'exclut plus,
+     sans quoi la tuile retombe sur le libelle generique et ne dit plus rien. */
+  if (debut && em.jours < REGIME_RECUL) em.jeune = true;
   const vd = verdictEcart(em, viseeDe(prof));
   /* Le signe est TOUJOURS écrit, y compris le plus : « 205 » face à « −250 » se lirait
      comme un déficit alors que c'est un excédent. Le moins est le signe typographique
@@ -9112,6 +9201,9 @@ function docNutrition() {
     '<li><b>Prends tes repas en photo</b> au fil de la journée. Si l\'estimation se trompe, ' +
     'corrige-la : elle refait le calcul avec ta correction.</li>' +
     '<li><b>Monte sur la balance</b> de temps en temps, à jeun. Coach s\'occupe du reste.</li>' +
+    '<li><b>Une fois par mois, prends tes mesures</b>, dans la carte « Mesures » de l\'onglet Suivi. ' +
+    'C\'est ce qui distingue le gras perdu du muscle perdu, ce que la balance ne saura jamais ' +
+    'te dire.</li>' +
     '</ol>' +
     pp('Un conseil pour bien démarrer : <b>ne cherche pas la perfection</b>. Une photo ' +
        'approximative vaut mille fois mieux qu\'un repas non enregistré. Ce qui compte, c\'est ' +
@@ -9163,9 +9255,14 @@ function docNutrition() {
      'testostérone baisse nettement chez l\'homme, et certaines vitamines ne s\'absorbent ' +
      'plus.</em></td></tr>',
      '<tr><td><b>Fibres</b></td><td>≥ ' + g(f.min.fiber) +
+     /* LE PALIER PROGRESSIF A ETE RETIRE EN v15.2, a la demande de l'utilisateur. La
+        documentation a continue de le promettre pendant deux versions : « Coach te propose
+        de monter par paliers » decrivait une fonction qui n'existait plus. `verifier-doc.py`
+        ne pouvait pas le voir — il compare des NOMBRES, et celui-ci etait juste.
+        Le conseil de progressivite reste, mais comme un fait nutritionnel, pas comme une
+        promesse de l'application. */
      '<em>14 g pour 1000 kcal, donc proportionnel à ce que tu manges. Si tu pars de loin, ' +
-     'Coach te propose de <b>monter par paliers</b> : d\'un coup, ça se paie toujours côté ' +
-     'digestion.</em></td></tr>',
+     'monte progressivement plutôt que d\'un coup : ça se paie toujours côté digestion.</em></td></tr>',
      '<tr><td><b>Eau</b></td><td>≥ 1500 ml, plus 600 ml par heure d\'effort' +
      '<em>un repère souple. Ta soif et la couleur de tes urines restent de meilleurs juges ' +
      'qu\'un chiffre.</em></td></tr>',
@@ -9198,6 +9295,44 @@ function docNutrition() {
     pp('Et pendant tes <b>' + SUIVI_DEMARRAGE + ' premiers jours</b>, Coach ne conclura rien ' +
        'sur ton poids. C\'est volontaire : sur si peu de temps, l\'eau masque complètement ce ' +
        'qui se passe vraiment. Continue simplement à enregistrer, ça viendra.') +
+    pp('Tu peux lui donner un <b>poids visé</b>, c\'est facultatif, dans le calculateur ' +
+       'd\'objectifs. Avec lui, Coach ne te donne plus seulement un rythme : il te dit combien ' +
+       'de semaines il reste et à quelle date tu y es, à ce rythme. Et si ton rythme t\'en ' +
+       '<b>éloigne</b>, il te le dit au lieu d\'inventer une échéance. Quand ta tendance est ' +
+       'trop plate pour se distinguer du bruit, il se tait : une date extrapolée depuis du ' +
+       'bruit se lirait comme un fait.') +
+
+    h2('Ce que la balance ne dit pas') +
+    pp('Elle pèse tout en bloc : muscle, gras, eau, contenu digestif. Deux choses vont plus loin.') +
+    pp('<b>Tes mesures, une fois par mois.</b> Cinq tours (taille, cou, hanches, cuisse, bras), ' +
+       'pris détendu, à jeun, sans comprimer la peau. L\'important n\'est pas la précision ' +
+       'absolue, c\'est de refaire <b>les mêmes gestes</b> à chaque fois. Un tour de taille qui ' +
+       'baisse pendant qu\'une cuisse et un bras tiennent, c\'est du gras perdu avec le muscle ' +
+       'gardé, et aucune balance ne te dira ça.') +
+    pp('<b>Ta masse grasse s\'en déduit</b> (méthode Navy, environ 3 à 4 points d\'écart avec ' +
+       'une mesure DEXA). C\'est grossier pour juger une composition corporelle, et suffisant ' +
+       'pour ce qu\'en fait Coach : allumer le garde-fou de <b>disponibilité énergétique</b>. ' +
+       'En dessous de 30 kcal par kilo de masse maigre, le corps coupe dans ce qui n\'est pas ' +
+       'vital : hormones, os, récupération. Tant que ta masse grasse reste inconnue, cette ' +
+       'alerte ne peut pas être calculée, donc elle reste éteinte.') +
+    pp('<b>La rétention d\'eau.</b> Quand ta dernière pesée s\'écarte de ta tendance de plus ' +
+       'de 500 g, Coach te dit que c\'est de l\'eau et cherche pourquoi dans les trois jours ' +
+       'qui précèdent. En dessous de 500 g il se tait : c\'est la précision d\'une balance de ' +
+       'salle de bain, pas un signal.') +
+
+    h2('Si tu changes d\'objectif, ou si tu fais une pause') +
+    pp('<b>Un objectif qui change ne réécrit pas le passé.</b> Coach date chacun de tes ' +
+       'objectifs, et chaque journée reste jugée contre la cible qui était la sienne ce ' +
+       'jour-là. C\'est pour ça que tu verras parfois un <b>escalier</b> dans les graphiques : ' +
+       'ce n\'est pas une incohérence, c\'est ta décision, datée.') +
+    pp('La tuile « déficit visé », elle, repart à zéro : elle décrit le <b>régime en cours</b>, ' +
+       'pas la période entière. Elle attend une dizaine de journées avant de se prononcer et ' +
+       'te dit combien il en manque. Trancher dès le lendemain reviendrait à juger un seul ' +
+       'repas de travers.') +
+    pp('<b>Une pause, ça se déclare.</b> Vacances, semaine chargée, coupure assumée : les ' +
+       'journées en pause sont écartées des moyennes et de la charge d\'alcool, et Coach n\'en ' +
+       'tire aucune conclusion sur ton poids, car l\'eau y masque tout. Ce n\'est pas un ' +
+       'relâchement, c\'est un outil.') +
 
     h2('Ce que Coach ne fait pas') +
     pp('Autant être clair tout de suite :') +
@@ -9209,8 +9344,10 @@ function docNutrition() {
     '<li>Il n\'est <b>pas précis au gramme</b>. L\'estimation photo se trompe de 20 à 30 % sur ' +
     'un repas. C\'est largement suffisant pour lire une tendance, jamais pour juger une ' +
     'assiette.</li>' +
-    '<li><b>Tes données restent sur ton téléphone</b>, sauf ce que tu envoies toi-même pour ' +
-    'une analyse ou une question.</li></ul>' +
+    '<li><b>Tes données restent sur ton téléphone.</b> Ce qui en sort : les <b>photos de ' +
+    'repas</b> que tu fais reconnaître, et tes données de suivi quand tu demandes une analyse ' +
+    'ou poses une question. Rien d\'autre. Ta <b>clé API</b> ne figure dans aucun de ces ' +
+    'envois ni dans tes exports : elle sert uniquement à t\'identifier auprès de Groq.</li></ul>' +
 
     h2('D\'où viennent ces chiffres') +
     pp('Ce ne sont pas des avis. Voici les travaux sur lesquels ils reposent.') +
