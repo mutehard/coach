@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.5</title>
+<title>Coach v15.6</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,31 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.6 — **La prise de poids etait jugee, jamais mesuree.** Question de l'utilisateur :
+             « est-ce que la prise de muscle est prise en compte dans la prise de poids ? ».
+             Dans les OBJECTIFS, oui — plancher proteique de la visee `prise`, deux zones de
+             rythme. Dans l'OBSERVATION, jamais : `jugerRythme()` applique une bande de
+             population au chiffre de la balance, il ne verifie pas que la prise de CETTE
+             personne est musculaire. Les donnees existaient pourtant depuis la v15.0 — il ne
+             manquait qu'une soustraction entre deux releves.
+             `repartitionPoids()` repartit la variation de poids entre gras et masse maigre,
+             entre le premier et le dernier releve de circonferences. La formule Navy se
+             trompe de 3 a 4 points en valeur absolue, mais cette erreur est surtout un biais
+             propre a la personne, qui S'ANNULE DANS LA DIFFERENCE ; ne reste que l'erreur
+             aleatoire du ruban, propagee par `incertitudeBf()` en perturbant chaque tour d'un
+             centimetre plutot qu'en derivant la formule. Environ +-1,2 kg sur un profil de
+             78 kg. D'ou deux abstentions : huit semaines au moins entre les releves, un kilo
+             au moins de variation. En dessous, la carte dit ce qui manque au lieu de se taire.
+             `masseGrasseDe()` lit desormais un POIDS LISSE sur +-7 jours au lieu de la pesee
+             du jour : une pesee isolee porte 1 a 2 kg d'eau, l'ordre de grandeur d'une annee
+             de progres. Ecart mesure sur un cas test : 77,1 kg brut contre 77,7 lisse.
+             L'analyse du Suivi recoit le bloc `repartition_du_poids` et doit lui consacrer un
+             constat, a la demande de l'utilisateur ; la mesure prime sur les bandes de rythme
+             quand l'ecart de masse maigre depasse l'incertitude. Le Conseil ne s'en sert que
+             si la question touche le poids ou la composition — meme specialisation que la
+             priorite en v15.4. Documentation integree et `verifier-doc.py` mis a jour
+             ensemble : dix fonctions surveillees dans les deux sens.
+
     v15.5 — **Le garde-fou de quota ne comptait pas ce qu'il allait lui-meme reserver.**
              Message releve chez l'utilisateur, systematique sur une analyse 60 jours :
              « Limit 8000, Used 5338, Requested 6047 ». L'application est censee ATTENDRE
@@ -2593,8 +2618,146 @@ function masseGrasseDe(m) {
   if (!m) return null;
   const bf = masseGrasseNavy(p.sex, p.height, m.taille, m.cou, m.hanches);
   if (bf === null) return null;
-  const kg = poidsAu(m.date);
+  /* POIDS LISSE, et non la pesee du jour (v15.6). Une pesee isolee porte 1 a 2 kg de
+     variation d'eau — l'ordre de grandeur d'une annee de progres reels. Multiplier une
+     masse grasse par un poids bruite produit une masse maigre bruitee, et c'est cette
+     masse maigre qu'on veut comparer d'un releve a l'autre. */
+  const kg = poidsLisseAu(m.date) || poidsAu(m.date);
   return { bf: bf, maigre: kg > 0 ? Math.round(kg * (1 - bf / 100) * 10) / 10 : null, poids: kg };
+}
+
+/* Fenetre de lissage autour d'un releve. Sept jours de part et d'autre : assez large pour
+   moyenner un cycle d'eau ordinaire, assez etroite pour qu'une prise ou une perte reelle
+   n'y soit pas diluee — a 0,2 kg/semaine, quinze jours ne deplacent la moyenne que de
+   0,2 kg, bien sous l'incertitude de la mesure elle-meme. */
+const LISSAGE_POIDS_JOURS = 7;
+
+function poidsLisseAu(date) {
+  const w = peseesHorsPause((DB.weights || []).slice().sort((a, b) => a.date.localeCompare(b.date)));
+  const d0 = shiftD(date, -LISSAGE_POIDS_JOURS), d1 = shiftD(date, LISSAGE_POIDS_JOURS);
+  const f = w.filter(x => x.date >= d0 && x.date <= d1 && x.kg > 0);
+  if (!f.length) return 0;                      // aucune pesee autour : l'appelant decide
+  return Math.round(f.reduce((a, x) => a + x.kg, 0) / f.length * 10) / 10;
+}
+
+/* INCERTITUDE DE LA MASSE GRASSE, propagee depuis l'erreur de ruban.
+
+   Elle est CALCULEE et non codee en dur : la formule Navy est logarithmique, sa sensibilite
+   depend donc de la morphologie. Un centimetre de tour de taille ne vaut pas le meme nombre
+   de points chez quelqu'un de mince et chez quelqu'un de corpulent.
+
+   On perturbe chaque circonference d'un centimetre et on relit la formule, plutot que d'en
+   deriver l'expression analytique : le resultat est le meme et il ne peut pas se tromper de
+   coefficient le jour ou la formule change. Les contributions se composent en quadrature,
+   les erreurs de ruban etant independantes d'un tour a l'autre. */
+const ERREUR_RUBAN = 1;               // cm, ruban souple repose a main levee
+
+function incertitudeBf(m) {
+  const p = S().profile || {};
+  if (!m) return null;
+  const base = masseGrasseNavy(p.sex, p.height, m.taille, m.cou, m.hanches);
+  if (base === null) return null;
+  const champs = p.sex === 'f' ? ['taille', 'cou', 'hanches'] : ['taille', 'cou'];
+  let v = 0;
+  for (let i = 0; i < champs.length; i++) {
+    const h = Object.assign({}, m);
+    h[champs[i]] = (+m[champs[i]] || 0) + ERREUR_RUBAN;
+    const b = masseGrasseNavy(p.sex, p.height, h.taille, h.cou, h.hanches);
+    if (b !== null) v += (b - base) * (b - base);
+  }
+  return v > 0 ? Math.sqrt(v) : null;
+}
+
+/* REPARTITION DE LA VARIATION DE POIDS entre masse grasse et masse maigre.
+
+   LE MANQUE QU'ELLE COMBLE. `jugerRythme()` applique une BANDE DE POPULATION au chiffre de
+   la balance : « au-dela de 0,5 % par semaine, la part de gras prise augmente nettement ».
+   C'est une statistique sur des cohortes, pas une mesure sur la personne. L'application
+   disposait pourtant de tout le necessaire depuis la v15.0 — il ne manquait qu'une
+   soustraction entre deux releves. Demande de l'utilisateur, le 30 octobre 2026.
+
+   L'ARITHMETIQUE est triviale :
+       gras   = poids x masse_grasse%
+       maigre = poids - gras
+   et la variation de chacun entre le premier et le dernier releve exploitable.
+
+   CE QUI NE L'EST PAS, c'est de savoir QUAND se taire. La formule Navy se trompe de 3 a 4
+   points face a une mesure DEXA, soit 2,5 a 3 kg de masse maigre apparente — plus qu'une
+   annee de progres reels. Ce qui rend le calcul utilisable, c'est que cette erreur est
+   surtout un BIAIS SYSTEMATIQUE propre a la personne : meme formule, meme ruban, memes
+   gestes, erreur a peu pres constante, qui S'ANNULE DANS LA DIFFERENCE. La valeur absolue
+   reste inutilisable, l'ecart devient lisible. C'est deja ce que dit la carte : « suis la
+   tendance, pas la valeur ».
+
+   Ne subsiste alors que l'erreur ALEATOIRE du ruban, propagee par `incertitudeBf()`.
+   Chiffrage sur un profil de 78 kg : environ 0,7 point de masse grasse par centimetre, soit
+   +-0,8 kg sur une difference entre deux releves. En face, une prise musculaire chez un
+   pratiquant confirme vaut environ 0,15 kg de maigre par semaine. D'ou :
+
+       4 semaines   0,6 kg de signal contre 0,8 de bruit   inexploitable
+      12 semaines   1,8 kg contre 0,8                      exploitable
+
+   Le seuil est pose a HUIT semaines, et a un kilo de variation : sous ces bornes, on
+   diviserait du bruit par du bruit. Meme discipline que `residuEau()` qui se tait sous
+   500 g et `projection()` sous 0,05 kg/semaine — une mesure qu'on ne peut pas distinguer
+   du bruit ne se presente pas comme un resultat.
+
+   RESERVE ASSUMEE : le biais ne s'annule que si la REPARTITION du gras ne change pas de
+   forme. Sur quelques mois c'est raisonnable, sur deux ans beaucoup moins. */
+const REPART_SEMAINES_MINI = 8;
+const REPART_KG_MINI = 1;
+
+function repartitionPoids() {
+  const pts = mesures().map(m => {
+    const c = masseGrasseDe(m);
+    const u = incertitudeBf(m);
+    return (c && c.poids > 0 && u !== null) ? { date: m.date, bf: c.bf, poids: c.poids, u: u } : null;
+  }).filter(Boolean);
+  if (pts.length < 2) return null;
+
+  const a = pts[0], b = pts[pts.length - 1];
+  const jours = Math.round((parseD(b.date) - parseD(a.date)) / DAY);
+  if (jours < REPART_SEMAINES_MINI * 7) return null;
+
+  const dPoids = Math.round((b.poids - a.poids) * 10) / 10;
+  if (Math.abs(dPoids) < REPART_KG_MINI) return null;
+
+  const grasA = a.poids * a.bf / 100, grasB = b.poids * b.bf / 100;
+  const dGras = Math.round((grasB - grasA) * 10) / 10;
+  const dMaigre = Math.round((dPoids - dGras) * 10) / 10;
+  /* Les deux incertitudes de composition se composent en quadrature. Celle du poids lisse
+     n'y figure pas : elle porte sur `dPoids`, qui est affiche tel quel et non deduit. */
+  const inc = Math.round(Math.sqrt(Math.pow(a.u / 100 * a.poids, 2)
+                                 + Math.pow(b.u / 100 * b.poids, 2)) * 10) / 10;
+  return { depuis: a.date, jours: jours, releves: pts.length,
+           variation_kg: dPoids, dont_gras_kg: dGras, dont_maigre_kg: dMaigre,
+           incertitude_kg: inc,
+           /* Vrai quand l'ecart de masse maigre depasse l'incertitude : seul cas ou l'on
+              peut affirmer un sens plutot que constater un nombre. */
+           maigre_significatif: Math.abs(dMaigre) > inc };
+}
+
+/* La phrase de la carte Mesures. Elle dit le RESULTAT quand il existe, et sinon CE QUI
+   MANQUE pour l'obtenir — jamais rien du tout. Regle posee en v15.4 sur la tuile de
+   deficit : s'abstenir de juger n'autorise pas a se taire. */
+function noteRepartition() {
+  const r = repartitionPoids();
+  const f = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1).replace('.', ',');
+  if (!r) {
+    if (mesures().length < 2) return '';
+    return '<p class="note">La répartition entre gras et masse maigre apparaîtra quand deux ' +
+      'relevés seront espacés d\'au moins ' + REPART_SEMAINES_MINI + ' semaines, avec au moins ' +
+      REPART_KG_MINI + ' kg de variation de poids entre eux. En dessous, l\'écart de ruban ' +
+      'l\'emporterait sur le résultat.</p>';
+  }
+  const depuis = parseD(r.depuis).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  return '<p class="note" style="margin-top:10px"><b>Depuis le ' + depuis + ' : ' +
+    f(r.variation_kg) + ' kg, dont ' + f(r.dont_maigre_kg) + ' kg de masse maigre</b> et ' +
+    f(r.dont_gras_kg) + ' kg de gras, à ±' + r.incertitude_kg.toFixed(1).replace('.', ',') +
+    ' kg près.' +
+    (r.maigre_significatif ? ''
+      : ' L\'écart de masse maigre reste dans cette marge : pas encore de quoi conclure.') +
+    '</p>';
 }
 
 /* RESIDU D'EAU — l'ecart entre la derniere pesee et la tendance a cette date.
@@ -7216,6 +7379,17 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
         masse_maigre_kg: mg ? mg.maigre : null
       };
     })(),
+    /* REPARTITION DU POIDS entre gras et maigre — calculee par l'application, citee par le
+       modele. Present dans les deux maillages : il pese moins de 200 caracteres et c'est
+       precisement le genre de resultat qu'on ne veut pas voir recalcule de tete. */
+    repartition_du_poids: (function () {
+      const r = repartitionPoids();
+      if (!r) return null;
+      return { depuis: r.depuis, semaines: Math.round(r.jours / 7), releves: r.releves,
+               variation_kg: r.variation_kg, dont_gras_kg: r.dont_gras_kg,
+               dont_maigre_kg: r.dont_maigre_kg, incertitude_kg: r.incertitude_kg,
+               maigre_significatif: r.maigre_significatif };
+    })(),
     /* ECART A LA TENDANCE DE POIDS — la retention d'eau, deduite et non mesuree. */
     retention_eau: (function () {
       const e = residuEau();
@@ -7556,6 +7730,12 @@ function consignesConditionnelles(d, emploi) {
     ? '- UNE PRIORITÉ EST EN COURS, portée par "priorite_precedente". Elle vient de l\'onglet Analyse, pas de cette conversation. N\'EN FAIS PAS LE SUJET DE TA RÉPONSE et ne l\'évoque que si la question la touche directement — auquel cas dis en une phrase si ce que tu conseilles reste compatible avec elle. Une réponse à une question précise qui s\'ouvre sur un bilan de consigne ne répond pas à la question ;\n'
     : '- COMMENCE PAR LA PRIORITÉ PRÉCÉDENTE quand "priorite_precedente" est présent. Dis en une phrase si elle est tenue, à moitié tenue ou abandonnée, en t\'appuyant sur les données — pas sur une impression. C\'est la première chose que l\'utilisateur veut savoir, et une consigne qu\'on ne vérifie jamais cesse d\'être suivie. Si elle est tenue, passe à autre chose : ne répète pas une consigne acquise ;\n');
   if (d.projection) out.push('- LA PROJECTION EST CALCULÉE, ne la refais pas. Le bloc "projection" donne le rythme mesuré, le poids dans quatre semaines et, si un poids est visé, l\'échéance — ou l\'alerte quand le rythme en éloigne. Cite ces nombres tels quels : une extrapolation refaite de tête se trompe, et elle sera lue comme un fait. Si "poids_vise_kg" manque, tu peux dire en une phrase que le renseigner donnerait une échéance ;\n');
+  /* La repartition se SPECIALISE comme la priorite : l'analyse lui doit un constat — c'est
+     la demande de l'utilisateur, « il faut que cette analyse apparaisse dans l'analyse du
+     suivi » —, le Conseil ne s'en sert que si la question la touche. */
+  if (d.repartition_du_poids) out.push(emploi === 'conseil'
+    ? '- LA RÉPARTITION DU POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit quelle part de la variation de poids est du gras et quelle part de la masse maigre depuis le premier relevé de circonférences, avec son incertitude. C\'est une MESURE SUR CETTE PERSONNE : quand "maigre_significatif" vaut vrai, elle prime sur les bandes de rythme générales — une prise mesurée comme majoritairement maigre ne se juge pas trop rapide sur la seule foi d\'un pourcentage hebdomadaire, et une perte qui préserve la masse maigre se dit. Quand il vaut faux, l\'écart de masse maigre reste dans la marge d\'erreur du ruban : dis-le, n\'en tire aucun sens. Cite les kilos tels quels, avec l\'incertitude ; sers-t\'en si la question touche le poids, la prise de muscle ou la composition, et pas autrement ;\n'
+    : '- LA RÉPARTITION DU POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit quelle part de la variation de poids est du gras et quelle part de la masse maigre depuis le premier relevé de circonférences, avec son incertitude. C\'est une MESURE SUR CETTE PERSONNE : quand "maigre_significatif" vaut vrai, elle prime sur les bandes de rythme générales — une prise mesurée comme majoritairement maigre ne se juge pas trop rapide sur la seule foi d\'un pourcentage hebdomadaire, et une perte qui préserve la masse maigre se dit. Quand il vaut faux, l\'écart de masse maigre reste dans la marge d\'erreur du ruban : dis-le, n\'en tire aucun sens. Cite les kilos tels quels, avec l\'incertitude ; CONSACRE-LUI UN CONSTAT : c\'est ce que la balance seule ne peut pas dire, et ce que l\'écran ne résume pas en une phrase ;\n');
   if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est présent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux que la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est une perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
   if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre l\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche d\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement d\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la période en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
   if (pauses) out.push('- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans "journees_en_pause" d\'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : vacances, semaine chargée, pause alimentaire planifiée. C\'est un outil légitime en phase de perte prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge d\'alcool, ne la présente jamais comme un manquement, et n\'en tire aucune conclusion sur la variation de poids — sodium, alcool et glycogène y retiennent de l\'eau et masquent la masse grasse. Si la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse les autres normalement. Si la personne est encore en pause, ne propose aucun changement à appliquer maintenant : formule ce qui sera à reprendre au retour ;\n');
@@ -8611,7 +8791,8 @@ function renderHistory() {
         ' kg de masse maigre' : '') + '. Estimation par circonférences, à 3 ou 4 points près : ' +
         'suis la tendance, pas la valeur.</p>' : '') +
       (ms.length < 3 ? '<p class="note">Il faut au moins trois relevés pour distinguer une ' +
-        'évolution du simple écart de mesure.</p>' : ''));
+        'évolution du simple écart de mesure.</p>' : '') +
+      noteRepartition());
   }
 }
 $$('.seg [data-range]').forEach(b => b.onclick = () => {
@@ -9412,6 +9593,14 @@ function docNutrition() {
        'En dessous de 30 kcal par kilo de masse maigre, le corps coupe dans ce qui n\'est pas ' +
        'vital : hormones, os, récupération. Tant que ta masse grasse reste inconnue, cette ' +
        'alerte ne peut pas être calculée, donc elle reste éteinte.') +
+    pp('<b>Où est passé ton poids.</b> Avec deux relevés espacés d\'au moins ' +
+       REPART_SEMAINES_MINI + ' semaines, Coach répartit ta variation de poids entre gras et ' +
+       'masse maigre : « +2,6 kg, dont +1,9 kg de masse maigre ». C\'est une mesure sur toi, ' +
+       'pas une moyenne de population, et l\'analyse s\'en sert en priorité pour juger ta prise ' +
+       'ou ta perte. La valeur absolue de ta masse grasse reste approximative, mais son ' +
+       '<b>évolution</b> est fiable : l\'erreur de la méthode est à peu près la même d\'un ' +
+       'relevé à l\'autre, et elle s\'annule dans la différence. Coach t\'indique toujours la ' +
+       'marge d\'erreur, et il se tait tant qu\'elle l\'emporte sur le résultat.') +
     pp('<b>La rétention d\'eau.</b> Quand ta dernière pesée s\'écarte de ta tendance de plus ' +
        'de 500 g, Coach te dit que c\'est de l\'eau et cherche pourquoi dans les trois jours ' +
        'qui précèdent. En dessous de 500 g il se tait : c\'est la précision d\'une balance de ' +
