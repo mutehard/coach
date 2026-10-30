@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-XaRBoQpj9ofeLpkBMDm7J0igYMpqc+WQljMpYhSOXHQ='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Vlf8lstt+aQAREUhNgXHbPhYOQFL8UteruSMtwxmKg4='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.9</title>
+<title>Coach v15.10</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,30 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.10 — **« Limite par minute atteinte » sur une premiere analyse, sans rien avant.**
+             Releve chez l'utilisateur le 30 octobre 2026, apres la mise en ligne de la v15.9 :
+             « Used 5277, Requested 5992 ». Trois refus releves depuis octobre portent la meme
+             signature : « Used » vaut le meme prompt que la demande refusee, plus 150 a 190
+             jetons. La meme requete etait donc passee juste avant, et l'application ne
+             l'avait pas comptee. Cause la plus probable, non etablie faute des journaux de
+             Groq : un RENVOI INTERNE.
+             1. LE CONTROLE DE QUOTA A CHAQUE ENVOI. `verrouLibre()` ne gardait que l'entree
+                d'un parcours ; derriere elle, `groqTry()` renvoie la requete aussitot apres
+                certains refus (parametre non pris en charge, plafond de sortie), sans aucun
+                controle. `groq()` attend desormais lui-meme ce que le journal exige, avec
+                le meme decompte annulable. Au premier envoi l'attente vaut 0.
+             2. ATTENTE ET RELANCE SUR REFUS PAR MINUTE, pour l'analyse et le Conseil, comme
+                le chemin photo le fait deja. Filet pour ce que le journal ne voit pas : la
+                meme cle utilisee sur un autre appareil, ou dans Safari a cote de l'ecran
+                d'accueil. `avecReprise` attend le delai donne par Groq puis relance, deux
+                fois au plus, jamais sur une limite journaliere.
+             3. UNE SEULE DEMANDE A LA FOIS (`unSeulAppel`), garde preventive contre un
+                double appui. Pas la cause : l'utilisateur n'avait appuye qu'une fois.
+             4. LE DECOMPTE SE CALE SUR L'HORLOGE. `attendreAvecCompteur` comptait des tops
+                de minuterie ; iOS les suspend dans une application quittee ou sous un ecran
+                verrouille, et l'attente reprenait au retour la ou elle s'etait arretee.
+                Trouve en eprouvant le point 1 dans un onglet ralenti.
+
     v15.9 — **Les trois defauts de la revue de securite du 30 octobre 2026.** Revue menee par
              l'epreuve : un piege injecte dans chaque source non fiable, aucune execution.
              1. UNE POLITIQUE DE SECURITE (CSP), seconde ligne de defense derriere `esc()`.
@@ -4356,6 +4380,25 @@ async function groq(body) {
      dont on dispose. */
   const avecImage = !!(body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0);
   const estim = (body.max_tokens || 0) + promptEstime(avecImage);
+  /* LE CONTROLE DE QUOTA S'APPLIQUE A CHAQUE ENVOI, renvois internes compris (v15.10).
+
+     `verrouLibre()` ne garde que l'ENTREE d'un parcours. Derriere elle, `groqTry()`
+     renvoie la requete aussitot apres certains refus (parametre non pris en charge,
+     plafond de sortie), et ce second envoi partait sans aucun controle, alors que le
+     premier, deja traite par Groq, venait de consommer la minute. Trois refus releves
+     chez l'utilisateur portent cette signature : « Used » vaut a chaque fois le meme
+     prompt que la demande refusee, plus 150 a 190 jetons — la meme requete, passee
+     juste avant. Le 30 octobre 2026, sur une premiere analyse : « Used 5277,
+     Requested 5992 ».
+
+     Au premier envoi, `verrouLibre()` a deja attendu ce qu'il fallait : ce controle
+     renvoie 0. Il ne coute donc rien qu'aux renvois, la ou il manquait. */
+  const attente = attenteNecessaire(estim, body.model);
+  if (attente > 0 && attente <= ATTENTE_MAX && !ANNULER_REPRISE) {
+    await attendreAvecCompteur(attente, 'Quota par minute atteint.');
+    if (ANNULER_REPRISE) throw new Error('Demande annulée.');
+    loader(true, 'Nouvel essai…');
+  }
   noterReservation(estim, body.model);
   DERNIERE_RESERVATION = (S().journalQuota || [])[(S().journalQuota || []).length - 1] || null;
 
@@ -4860,18 +4903,64 @@ const ATTENTE_MAX = 90;
 
 /* Attente interruptible, avec compte à rebours affiché dans le voile de chargement. */
 function attendreAvecCompteur(secondes, libelle) {
+  /* Le reste se lit sur l'HORLOGE, pas en comptant les tops (v15.10). iOS suspend les
+     minuteries d'une application quittee ou d'un ecran verrouille : un decompte par tops
+     reprenait au retour la ou il s'etait arrete, alors que l'attente etait deja ecoulee. */
   return new Promise(resolve => {
-    let reste = Math.ceil(secondes);
-    const peindre = () => loader(true, libelle + '\nReprise automatique dans ' + reste + ' s…', true);
+    const fin = Date.now() + Math.ceil(secondes) * 1000;
+    const reste = () => Math.ceil((fin - Date.now()) / 1000);
+    const peindre = () => loader(true, libelle + '\nReprise automatique dans ' + reste() + ' s…', true);
     peindre();
     const t = setInterval(() => {
-      reste--;
-      if (reste <= 0 || ANNULER_REPRISE) { clearInterval(t); resolve(); return; }
+      if (reste() <= 0 || ANNULER_REPRISE) { clearInterval(t); resolve(); return; }
       peindre();
     }, 1000);
   });
 }
 let ANNULER_REPRISE = false;
+
+/* REPRISE SUR REFUS PAR MINUTE, pour l'analyse du Suivi et le Conseil (v15.10).
+
+   Le chemin photo attend et relance depuis longtemps (`analyseAvecRepli`). Ces deux-la
+   ne le faisaient pas : un refus 429 finissait en feuille « Analyse impossible », alors
+   que Groq donnait lui-meme le delai — « try again in 24.5175s ».
+
+   La comptabilite locale ne peut pas tout prevoir : elle ne voit que les appels de CET
+   appareil, dans CE contexte. La meme cle utilisee ailleurs — un autre appareil, Safari
+   a cote de l'application posee sur l'ecran d'accueil, qui ont chacun leur stockage —
+   consomme un quota qu'elle ignore. Le refus est alors la seule information, et il dit
+   quand reessayer. Memes bornes que les photos : deux reprises, 90 s au plus, jamais sur
+   une limite journaliere, annulable. */
+async function avecReprise(fn, libelleReprise, essai) {
+  const n = essai || 0;
+  try { return await fn(); }
+  catch (e) {
+    if (e && e.quota && !e.parJour && n < REPRISES_MAX &&
+        e.attendre > 0 && e.attendre <= ATTENTE_MAX && !ANNULER_REPRISE) {
+      await attendreAvecCompteur(e.attendre + 1, 'Quota par minute atteint.');
+      if (ANNULER_REPRISE) throw e;
+      loader(true, libelleReprise);
+      return avecReprise(fn, libelleReprise, n + 1);
+    }
+    throw e;
+  }
+}
+
+/* UNE SEULE DEMANDE AU MODELE A LA FOIS, pour l'analyse et le Conseil (v15.10).
+
+   Garde preventive. Le bouton n'en avait aucune : deux appuis rapproches auraient passe
+   tous deux le controle de quota AVANT que le premier n'ait rien reserve, et seraient
+   partis ensemble. Ce n'est PAS la cause du refus releve le 30 octobre 2026 —
+   l'utilisateur n'avait appuye qu'une fois ; la cause la plus probable est un renvoi
+   interne, voir `groq()`. Rendre la main en silence est la bonne reponse : la demande voulue est deja
+   en cours. */
+let APPEL_EN_COURS = false;
+async function unSeulAppel(fn) {
+  if (APPEL_EN_COURS) return;
+  APPEL_EN_COURS = true;
+  try { return await fn(); }
+  finally { APPEL_EN_COURS = false; }
+}
 
 /* Repli : si la réflexion a consommé la réponse et qu'aucun JSON n'en sort, on rejoue
    sans réflexion. On ne rejoue QUE sur un échec d'extraction — une erreur réseau ou une
@@ -8740,8 +8829,12 @@ function renderAnalyse() {
     '↻ Relancer l\'analyse</button></div>';
 }
 
-$('#analyse').onclick = async e => {
+$('#analyse').onclick = e => {
   if (!e.target.closest('#anGo')) return;
+  return unSeulAppel(() => lancerAnalyseSuivi());
+};
+
+async function lancerAnalyseSuivi() {
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
   ANNULER_REPRISE = false;
   /* La fenetre est posee AVANT le controle de quota : `coutPrevu('analyse')` lit la
@@ -8751,7 +8844,7 @@ $('#analyse').onclick = async e => {
   if (!(await verrouLibre('analyse'))) return;
   loader(true, 'Analyse de tes données…\nCela prend quelques secondes.');
   try {
-    const r = await lancerAnalyse(range);
+    const r = await avecReprise(() => lancerAnalyse(range), 'Reprise de l\'analyse…');
     loader(false);
     S().analyse = { quand: Date.now(), bilan: String(r.bilan || '').slice(0, 600),
       /* Le modele peut toujours rendre l'ancienne chaine : `prioriteNormalisee` ramene
@@ -8769,7 +8862,7 @@ $('#analyse').onclick = async e => {
     sheet('Analyse impossible', '<div class="err">' + esc(err.message) + '</div>' + rawBlock(err) +
       '<button class="btn" data-x>Fermer</button>');
   }
-};
+}
 
 /* -------------------------------------------------------------------------
    Vue « Conseil » — chat libre avec Coach
@@ -8814,7 +8907,11 @@ function renderChat() {
   if (dernier) dernier.scrollIntoView({ block: 'end' });
 }
 
-async function envoyerQuestion(q) {
+function envoyerQuestion(q) {
+  return unSeulAppel(() => envoyerQuestionSeule(q));
+}
+
+async function envoyerQuestionSeule(q) {
   const question = String(q || '').trim();
   if (!question) return;
   if (!S().apiKey.trim()) { toast('Ajoute ta clé API Groq dans Réglages'); showTab('settings'); return; }
@@ -8835,7 +8932,7 @@ async function envoyerQuestion(q) {
 
   loader(true, 'Coach réfléchit…');
   try {
-    const rep = await poserQuestion(question);
+    const rep = await avecReprise(() => poserQuestion(question), 'Coach réfléchit…');
     loader(false);
     S().chat.push({ r: 'a', t: rep.slice(0, 3000) });
     while (S().chat.length > 30) S().chat.shift();
