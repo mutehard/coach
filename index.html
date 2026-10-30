@@ -2,8 +2,14 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
+<!-- POLITIQUE DE SECURITE (v15.9). Seconde ligne de defense derriere esc() : seul le script
+     dont l'empreinte figure ici peut s'executer, et le reseau ne joint que Groq et Open Food
+     Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
+     apres toute modification du script, la relancer, sinon la page reste blanche.
+     frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-XaRBoQpj9ofeLpkBMDm7J0igYMpqc+WQljMpYhSOXHQ='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.7</title>
+<title>Coach v15.9</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +32,47 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.9 — **Les trois defauts de la revue de securite du 30 octobre 2026.** Revue menee par
+             l'epreuve : un piege injecte dans chaque source non fiable, aucune execution.
+             1. UNE POLITIQUE DE SECURITE (CSP), seconde ligne de defense derriere `esc()`.
+                Seul le script dont l'empreinte figure dans la balise peut s'executer, et le
+                reseau ne joint que Groq et Open Food Facts : un oubli d'echappement futur ne
+                suffirait plus a executer du code ni a envoyer la cle ailleurs. L'empreinte
+                change a chaque modification ; `sceller-csp.py` la recalcule, appele par
+                `preparer-deploiement.py` avant les barrieres et par `serveur-local.py`.
+                L'audit refuse une empreinte perimee.
+             2. L'IMPORT N'ADOPTE PLUS JAMAIS LA CLE DU FICHIER. « Remplacer » installait la
+                cle d'une sauvegarde fabriquee a la place de celle de l'utilisateur, sans un
+                mot. Les exports n'en portent pas : la cle en place est toujours conservee.
+             3. LES VALEURS D'UN ALIMENT SONT BORNEES A LA SAISIE, plus seulement a l'import.
+                99 999 999 kcal et -500 g de proteines s'enregistraient tels quels. Une seule
+                source, `alimentBorne`, lue par l'editeur, la reponse du modele et l'import ;
+                l'utilisateur est prevenu quand une valeur a ete ramenee.
+             Sept controles ajoutes a `audit-securite.py`, chacun contre-eprouve.
+
+    v15.8 — **Un decompte « Quota par minute atteint » avant chaque analyse, meme apres
+             une pause.** Signale par l'utilisateur le 30 octobre 2026, apres la v15.5 qui
+             avait rendu la comptabilite de quota honnete.
+             1. L'ATTENTE FORFAITAIRE DE 60 S. Quand le cout prevu d'un appel depassait a
+                lui seul 8000 jetons, `attenteNecessaire` renvoyait 60 s, meme sur une
+                minute vide. Or l'estimation de depart d'une analyse vaut 6000 + 2200 =
+                8200 : toute analyse sans mesure memorisee attendait une minute pour rien.
+                Attendre ne peut rien contre une requete plus grosse que le plafond ; Groq
+                la refuse quoi qu'on fasse, et ce refus est deja traite. Le cout est donc
+                borne au plafond : sur une minute vide, l'analyse part.
+             2. LE COMPTEUR DE GROQ SE REMPLIT EN CONTINU, a 8000 / 60 jetons par seconde,
+                et non par sortie entiere de chaque reservation au bout de 60 s. Verifie
+                sur le message releve chez l'utilisateur : « Used 6035, Requested 6785,
+                try again in 36.15s », soit exactement 4820 jetons a 133,3 par seconde.
+                Deux analyses de suite attendent 46 s au lieu de 61.
+             3. UN VERROU PAR MODELE. Le verrou pose sur un refus 429 etait unique : un
+                refus sur le modele des photos bloquait l'analyse, qui tourne sur un autre
+                modele au budget intact, et une limite journaliere de l'un bloquait tous
+                les autres. `settings.verrous` remplace `quotaUntil` et `quotaJour`. Le
+                garde-fou sur en-tetes, inerte tant que Groq ne les expose pas, compare
+                desormais le solde au cout de l'appel lance et non a celui d'une photo.
+             Verifie sur quinze scenarios chiffres, dont le delai annonce par Groq.
+
     v15.7 — **La composition de la variation de poids, refaite apres revue.** La v15.6
              annoncait des kilos de masse maigre que la mesure ne soutenait pas. Revue
              technique, mathematique, physique et biologique demandee par l'utilisateur.
@@ -2399,8 +2446,9 @@ const DEFAULTS = {
     dernierCout: null,
     coutsRep: [],
     journalQuota: [],
-    quotaUntil: 0,
-    quotaJour: false,
+    /* Verrous de quota PAR MODELE, {modele: {fin, jour, reste, t}} (v15.8). Remplace
+       `quotaUntil` / `quotaJour`, un verrou unique qui bloquait tous les modeles. */
+    verrous: {},
     /* 1024 px par defaut : les etiquettes de produits se lisent mal en 768, et
        l'estimation d'un repas gagne au detail. Le cout tient — une photo detaillee
        reserve davantage sur le quota par minute, mais le budget de `coutPrevu()`
@@ -2508,6 +2556,12 @@ if (/llama-4/i.test(DB.settings.model || '')) {
   DB.settings.model = DEFAULTS.settings.model;
   DB.settings.models = [];
 }
+
+/* v15.8 : l'ancien verrou unique cède la place aux verrous par modèle. Ses deux clés
+   ne sont plus lues ; on les retire pour qu'un export ne les fasse pas passer pour
+   un état actif. */
+delete DB.settings.quotaUntil;
+delete DB.settings.quotaJour;
 
 /* Sauvegarde avec garde-fou de quota : si le stockage est plein, on supprime
    les vignettes les plus anciennes (les données nutritionnelles sont prioritaires). */
@@ -4053,8 +4107,6 @@ const MAX_PHOTOS = 2;
    Le verrou n'est qu'une prévision : il n'autorise rien, il évite seulement un appel
    voué à l'échec. Une limite journalière est signalée séparément, l'attente n'ayant
    alors pas le même sens. */
-const COUT_PHOTO = 5000;
-
 /* Les en-têtes de durée de Groq s'écrivent « 14.07s », « 1m30s », « 2m », « 850ms ». */
 function dureeVersSecondes(txt) {
   const t = String(txt || '').trim();
@@ -4069,23 +4121,48 @@ function dureeVersSecondes(txt) {
   return isFinite(tot) ? tot : 0;
 }
 
-function poserVerrou(secondes, journalier) {
+/* UN VERROU PAR MODELE, et non un verrou de compte (v15.8).
+
+   Groq limite chaque modele separement, et le journal `journalQuota` le sait depuis
+   longtemps. Le verrou, lui, etait reste UNIQUE : un refus essuye sur le modele des
+   photos bloquait l'analyse, qui tourne sur un autre modele dont le budget etait
+   intact. Meme defaut pour la limite journaliere.
+
+   `reste` n'est connu que lorsque Groq expose ses en-tetes : c'est alors le solde de
+   jetons au moment de la reponse. Il permet de laisser passer un appel qui y tient,
+   au lieu d'attendre la reinitialisation COMPLETE du compteur. Sur un refus 429, il
+   reste a -1 : le delai annonce par Groq s'applique tel quel. */
+function poserVerrou(secondes, journalier, modele, reste) {
   /* Deux secondes de marge : l'horloge du navigateur et celle de Groq ne sont pas
      synchronisées, et une reprise une seconde trop tôt relance le cycle d'échecs. */
+  const m = modele || S().model;
+  const v = S().verrous || (S().verrous = {});
   const fin = Date.now() + (secondes + 2) * 1000;
-  if (fin > (S().quotaUntil || 0)) {
-    S().quotaUntil = fin;
-    S().quotaJour = !!journalier;
+  if (!v[m] || fin > v[m].fin) {
+    v[m] = { fin: fin, jour: !!journalier, reste: isFinite(reste) ? reste : -1, t: Date.now() };
     try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
   }
 }
 
-/* Secondes restantes avant déblocage, 0 si la voie est libre. */
-function verrouRestant() {
-  const t = S().quotaUntil || 0;
-  if (!t) return 0;
-  const r = Math.ceil((t - Date.now()) / 1000);
-  return r > 0 ? r : 0;
+/* Le verrou encore actif sur ce modele, ou null. Purge ceux qui sont echus. */
+function verrouDe(modele) {
+  const v = S().verrous || {};
+  Object.keys(v).forEach(k => { if (!(v[k] && v[k].fin > Date.now())) delete v[k]; });
+  return v[modele || S().model] || null;
+}
+
+/* Secondes restantes avant qu'un appel de `cout` jetons passe SUR CE MODELE, 0 si la
+   voie est libre. Sans `cout`, le verrou s'applique en entier. */
+function verrouRestant(modele, cout) {
+  const v = verrouDe(modele);
+  if (!v) return 0;
+  const r = Math.ceil((v.fin - Date.now()) / 1000);
+  if (v.jour || !(v.reste >= 0) || !(cout > 0)) return r;
+  /* Le compteur de Groq se remplit en CONTINU (voir `attenteNecessaire`) : le solde lu
+     dans les en-tetes grossit de TPM_LIMITE / 60 jetons par seconde. */
+  const debit = TPM_LIMITE / TPM_FENETRE * 1000;
+  const manque = Math.min(cout, TPM_LIMITE) - v.reste - debit * (Date.now() - v.t) / 1000;
+  return manque > 0 ? Math.min(r, Math.ceil(manque / debit) + 1) : 0;
 }
 
 function texteAttente(s) {
@@ -4302,13 +4379,18 @@ async function groq(body) {
                 quand: Date.now() };
     if (q.reqL || q.tokL) { DB.settings.quota = q; try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {} }
 
-    /* Garde-fou : si le solde restant ne couvre plus une analyse photo, on pose le
-       verrou tout de suite. Mieux vaut annoncer l'attente que laisser l'utilisateur
-       déclencher une requête dont on sait déjà qu'elle sera refusée. */
+    /* Garde-fou : le solde restant est noté sur un verrou PROPRE A CE MODELE, avec sa
+       valeur. Mieux vaut annoncer l'attente que laisser l'utilisateur déclencher une
+       requête dont on sait déjà qu'elle sera refusée.
+
+       Jusqu'en v15.7, le seuil était le coût d'une PHOTO (5000) et le verrou commun à
+       tous les modèles : une analyse, qui laisse toujours moins de 5000 jetons,
+       verrouillait jusqu'au modèle des repas. `verrouRestant` compare désormais le
+       solde au coût de l'appel qu'on s'apprête réellement à lancer. */
     const reste = parseInt(q.tokR || '', 10);
-    if (isFinite(reste) && reste < COUT_PHOTO) {
+    if (isFinite(reste) && reste < TPM_LIMITE) {
       const d = dureeVersSecondes(q.tokZ);
-      if (d > 0) poserVerrou(d, false);
+      if (d > 0) poserVerrou(d, false, body.model, reste);
     }
   } catch (e) { /* en-têtes non exposés par CORS : on se rabat sur le message d'erreur */ }
 
@@ -4378,7 +4460,7 @@ async function groq(body) {
         S().journalQuota = (S().journalQuota || []).filter(x => x !== DERNIERE_RESERVATION);
         DERNIERE_RESERVATION = null;
       }
-      if (secs > 0) poserVerrou(secs, parJour);
+      if (secs > 0) poserVerrou(secs, parJour, body.model);
       const e = new Error((parJour ? 'Limite JOURNALIÈRE de ton compte Groq atteinte.' : 'Limite par minute atteinte.') + quand);
       e.quota = true; e.raw = m; e.parJour = parJour; e.attendre = secs;
       throw e;
@@ -4601,22 +4683,36 @@ function noterReservation(tokens, modele) {
 }
 
 /* Secondes à attendre pour qu'une requête de `cout` jetons passe SUR CE MODELE, 0 si
-   la voie est libre. On cherche le moment où assez de réservations anciennes seront
-   sorties de la fenêtre — calcul exact, puisqu'on connaît l'instant de chacune. */
+   la voie est libre.
+
+   LE COMPTEUR DE GROQ SE REMPLIT EN CONTINU (v15.8). Ce n'est pas une fenêtre où chaque
+   réservation reste entière soixante secondes puis disparaît d'un coup, comme le
+   supposait le calcul précédent : c'est un réservoir qui regagne TPM_LIMITE / 60 jetons
+   par seconde. Preuve par le message de Groq relevé chez l'utilisateur : « Limit 8000,
+   Used 6035, Requested 6785. Please try again in 36.15s ». Il manque
+   6035 + 6785 − 8000 = 4820 jetons, et 4820 / (8000 / 60) = 36,15 s. Exactement.
+
+   Deux défauts corrigés du même coup :
+     — l'ancien calcul attendait la sortie COMPLÈTE d'une réservation, soit 60 s après
+       une analyse, là où 45 s suffisent ;
+     — quand le coût prévu dépassait à lui seul 8000, il renvoyait 60 s FORFAITAIRES,
+       même sur une minute vide. Attendre ne pouvait rien y changer : une requête plus
+       grosse que le plafond est refusée par Groq quoi qu'on fasse, et ce refus est
+       traité ailleurs (rejeu compact, message explicite). C'était le décompte
+       systématique signalé par l'utilisateur le 30 octobre 2026. Le coût est donc
+       borné au plafond : on attend au plus que le réservoir soit plein, jamais au-delà. */
 function attenteNecessaire(cout, modele) {
   const t = Date.now();
   const j = (S().journalQuota || []).filter(x => x && t - x.t < TPM_FENETRE && memeModele(x, modele))
                                     .sort((a, b) => a.t - b.t);
-  let total = j.reduce((a, x) => a + x.n, 0);
-  if (total + cout <= TPM_LIMITE) return 0;
-  for (let i = 0; i < j.length; i++) {
-    total -= j[i].n;
-    if (total + cout <= TPM_LIMITE) {
-      /* +1 s de marge : les horloges du navigateur et de Groq ne sont pas synchronisées. */
-      return Math.max(1, Math.ceil((j[i].t + TPM_FENETRE - t) / 1000) + 1);
-    }
-  }
-  return Math.ceil(TPM_FENETRE / 1000);
+  const debit = TPM_LIMITE / TPM_FENETRE;            // jetons regagnés par milliseconde
+  let dette = 0, dernier = j.length ? j[0].t : t;
+  j.forEach(x => { dette = Math.max(0, dette - debit * (x.t - dernier)) + x.n; dernier = x.t; });
+  dette = Math.max(0, dette - debit * (t - dernier));
+  const manque = dette + Math.min(cout, TPM_LIMITE) - TPM_LIMITE;
+  if (manque <= 0) return 0;
+  /* +1 s de marge : les horloges du navigateur et de Groq ne sont pas synchronisées. */
+  return Math.ceil(manque / debit / 1000) + 1;
 }
 
 /* BUDGET DE SORTIE PAR EMPLOI — UNE SEULE SOURCE, lue par la REQUETE et par la PREDICTION.
@@ -4864,11 +4960,13 @@ function normalise(j) {
     titre: String(j.plat || 'Repas').slice(0, 60),
     confiance: ['haute', 'moyenne', 'basse'].includes(j.confiance) ? j.confiance : 'moyenne',
     remarque: String(j.remarque || '').slice(0, 200),
-    items: arr.map(a => ({
-      name: String(a.nom || 'Aliment').slice(0, 50),
-      qty: r0(a.quantite_g), kcal: r0(a.kcal),
-      prot: r0(a.proteines_g), carb: r0(a.glucides_g), fat: r0(a.lipides_g),
-      fiber: r0(a.fibres_g), alc: r0(a.alcool_g), water: r0(a.hydratation_ml)
+    /* Bornes appliquees DES LA LECTURE, pas seulement a l'enregistrement : l'editeur
+       qui suit doit montrer des valeurs possibles, et le total qu'il affiche aussi. */
+    items: arr.filter(a => a && typeof a === 'object').map(a => alimentBorne({
+      name: typeof a.nom === 'string' ? a.nom.slice(0, 50) : '',
+      qty: a.quantite_g, kcal: a.kcal,
+      prot: a.proteines_g, carb: a.glucides_g, fat: a.lipides_g,
+      fiber: a.fibres_g, alc: a.alcool_g, water: a.hydratation_ml
     }))
   };
 }
@@ -6529,6 +6627,37 @@ function closeSheet(all) {
   if (all) s.forEach(x => x.remove()); else s[s.length - 1].remove();
 }
 
+/* BORNES D'UN ALIMENT — une seule source, lue par la SAISIE, par la REPONSE DU MODELE et
+   par l'IMPORT (v15.9).
+
+   Jusqu'en v15.8, seul l'import bornait ces valeurs. Un repas enregistre depuis l'editeur
+   gardait tout ce qu'on y mettait : la revue de securite du 30 octobre 2026 y a fait
+   entrer 99 999 999 kcal et -500 g de proteines, par une reponse de modele piegee. Une
+   faute de frappe y menait aussi bien. Le meme repas, exporte puis reimporte, ressortait
+   a 50 000 : deux regles pour une seule grandeur.
+
+   Ces plafonds ne jugent pas un repas, ils ecartent l'impossible : 50 000 kcal ou 5 kg de
+   proteines dans une seule ligne ne decrivent aucun aliment reel. */
+const BORNES_ALIMENT = { qty: 50000, kcal: 50000, prot: 5000, carb: 5000, fat: 5000,
+                         fiber: 1000, alc: 1000, water: 20000 };
+
+function alimentBorne(i) {
+  const x = i || {};
+  const nom = typeof x.name === 'string' || typeof x.name === 'number' ? String(x.name).trim() : '';
+  const o = { name: nom.slice(0, 60) || 'Aliment' };
+  Object.keys(BORNES_ALIMENT).forEach(k => {
+    const n = r0(x[k]);
+    o[k] = n > 0 ? Math.min(n, BORNES_ALIMENT[k]) : 0;
+  });
+  return o;
+}
+
+/* Vrai si l'aliment portait une valeur que `alimentBorne` a dû ramener. */
+function alimentHorsBornes(i) {
+  const b = alimentBorne(i);
+  return Object.keys(BORNES_ALIMENT).some(k => r0(i[k]) !== b[k]);
+}
+
 /* Bloc HTML d'un aliment éditable */
 function itemHtml(i, idx) {
   const f = (k, lab, v) => '<label><span>' + lab + '</span><input inputmode="numeric" data-i="' + idx + '" data-k="' + k + '" value="' + r0(v) + '"></label>';
@@ -6676,9 +6805,7 @@ function openEditor(entry, ctx) {
       if (!nom) return;
       const t = {
         id: uid(), name: nom.slice(0, 40), meal: el.querySelector('#eMeal').value,
-        items: clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
-                                 prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat),
-                                 fiber: r0(i.fiber), alc: r0(i.alc), water: r0(i.water) })),
+        items: clean.map(alimentBorne),
         supps: []
       };
       S().templates = (S().templates || []).concat([t]);
@@ -6692,14 +6819,16 @@ function openEditor(entry, ctx) {
       entry.title = (el.querySelector('#eTitle').value || 'Repas').trim();
       entry.meal = el.querySelector('#eMeal').value;
       entry.date = el.querySelector('#eDate').value || TODAY();
-      entry.items = clean.map(i => ({ name: (i.name || 'Aliment').trim(), qty: r0(i.qty), kcal: r0(i.kcal),
-                                     prot: r0(i.prot), carb: r0(i.carb), fat: r0(i.fat),
-                                     fiber: r0(i.fiber), alc: r0(i.alc), water: r0(i.water) }));
+      const ramene = clean.some(alimentHorsBornes);
+      entry.items = clean.map(alimentBorne);
       if (isNew) DB.entries.push(entry);
       save();
       curDate = entry.date;
       closeSheet(); renderToday(); renderHistory();
-      toast(isNew ? encouragement() : 'Modifications enregistrées');
+      /* On dit ce qu'on a corrige : une valeur changee en silence passerait pour une
+         erreur de l'application le jour ou l'utilisateur la remarquerait. */
+      toast(ramene ? 'Valeur impossible ramenée à la limite : vérifie ce repas'
+                   : isNew ? encouragement() : 'Modifications enregistrées');
     };
     const del = el.querySelector('#eDel');
     if (del) del.onclick = () => {
@@ -6804,15 +6933,17 @@ async function verrouLibre(emploi) {
        — la comptabilité LOCALE, qui prédit le refus avant de l'essuyer (préventif).
      C'est ce second mécanisme qui remplace le garde-fou de la v4.2, inopérant faute
      d'en-têtes exposés par Groq. */
-  const r = Math.max(verrouRestant(), attenteNecessaire(coutPrevu(emploi), modeleDe(emploi)));
+  const m = modeleDe(emploi), cout = coutPrevu(emploi);
+  const jour = !!(verrouDe(m) || {}).jour;
+  const r = Math.max(verrouRestant(m, cout), attenteNecessaire(cout, m));
   if (!r) return true;
-  if (!S().quotaJour && r <= ATTENTE_MAX) {
+  if (!jour && r <= ATTENTE_MAX) {
     ANNULER_REPRISE = false;
     await attendreAvecCompteur(r, 'Quota par minute atteint.');
     if (ANNULER_REPRISE) { loader(false); toast('Analyse annulée'); return false; }
     return true;
   }
-  if (S().quotaJour) {
+  if (jour) {
     sheet('Quota journalier atteint',
       '<div class="err">La limite JOURNALIÈRE de ton compte Groq est atteinte.</div>' +
       '<p class="muted" style="margin-bottom:12px">Elle se réinitialise à minuit UTC, soit 2 h du matin en France. ' +
@@ -6836,7 +6967,7 @@ async function verrouLibre(emploi) {
   const t = setInterval(() => {
     const n = el.querySelector('#vqCount');
     if (!n || !document.body.contains(el)) { clearInterval(t); return; }
-    const s2 = verrouRestant();
+    const s2 = Math.max(verrouRestant(m, cout), attenteNecessaire(cout, m));
     if (!s2) { clearInterval(t); el.remove(); toast('C\'est bon, tu peux relancer l\'analyse'); return; }
     n.textContent = texteAttente(s2);
   }, 1000);
@@ -9101,7 +9232,8 @@ function renderSettings() {
     parModele[m].cout = Math.max(parModele[m].cout, coutPrevu(e));
   });
   $('#quotaInfo').innerHTML += Object.keys(parModele).map(m => {
-    const util = quotaUtilise(m), att = attenteNecessaire(parModele[m].cout, m);
+    const util = quotaUtilise(m),
+          att = Math.max(verrouRestant(m, parModele[m].cout), attenteNecessaire(parModele[m].cout, m));
     return '<b>' + esc(m) + '</b> <em>(' + parModele[m].libelles.join(', ') + ')</em><br>' +
       'Sur la dernière minute : <b>' + util + ' / ' + TPM_LIMITE + '</b> jetons · ' +
       'prochain appel estimé à <b>' + parModele[m].cout + '</b>. ' +
@@ -10034,11 +10166,8 @@ function sanitizeBackup(inc) {
       date: isDate(e.date) ? e.date : TODAY(),
       meal: mealIds.indexOf(e.meal) >= 0 ? e.meal : 'collation',
       title: txt(e.title, 80) || 'Repas',
-      items: (Array.isArray(e.items) ? e.items : []).filter(i => i && typeof i === 'object').map(i => ({
-        name: txt(i.name, 60) || 'Aliment', qty: pos(i.qty, 50000), kcal: pos(i.kcal, 50000),
-        prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000),
-        fiber: pos(i.fiber, 1000), alc: pos(i.alc, 1000), water: pos(i.water, 20000)
-      }))
+      /* Memes bornes que la saisie : `alimentBorne` est la seule source (v15.9). */
+      items: (Array.isArray(e.items) ? e.items : []).filter(i => i && typeof i === 'object').map(alimentBorne)
     };
     if (/^[A-Za-z0-9_-]{1,40}$/.test(e.supp || '')) o.supp = e.supp;
     return o;
@@ -10066,7 +10195,13 @@ function sanitizeBackup(inc) {
   return {
     version: 1,
     settings: {
-      apiKey: /^[A-Za-z0-9_-]{0,200}$/.test(s.apiKey || '') ? (s.apiKey || '') : '',
+      /* LA CLE D'UN FICHIER N'EST JAMAIS ADOPTEE (v15.9). Un export de Coach n'en porte pas
+         depuis que l'utilisateur l'a exige ; une cle presente ne peut donc venir que d'un
+         fichier fabrique. La revue de securite du 30 octobre 2026 l'a constate : « Remplacer »
+         installait la cle du fichier a la place de la sienne, sans un mot, et ses photos et
+         ses donnees seraient parties vers le compte Groq d'un tiers. Vide ici, elle ne peut
+         plus rien remplacer : le remplacement et la fusion retombent sur la cle en place. */
+      apiKey: '',
       model: txt(s.model, 120) || DEFAULTS.settings.model,
       /* Pas de repli sur le defaut ici : la chaine VIDE est une valeur qui veut dire
          « le meme que les photos ». La remplacer par le modele de vision figerait un
@@ -10086,11 +10221,7 @@ function sanitizeBackup(inc) {
           id: /^[A-Za-z0-9_-]{1,40}$/.test(x.id) ? x.id : uid(),
           name: txt(x.name, 40) || 'Repas type',
           meal: MEALS.map(m => m.id).indexOf(x.meal) >= 0 ? x.meal : 'petit-dej',
-          items: (Array.isArray(x.items) ? x.items : []).filter(i => i && typeof i === 'object').map(i => ({
-            name: txt(i.name, 60) || 'Aliment', qty: pos(i.qty, 50000), kcal: pos(i.kcal, 50000),
-            prot: pos(i.prot, 5000), carb: pos(i.carb, 5000), fat: pos(i.fat, 5000),
-            fiber: pos(i.fiber, 1000), alc: pos(i.alc, 1000), water: pos(i.water, 20000)
-          })),
+          items: (Array.isArray(x.items) ? x.items : []).filter(i => i && typeof i === 'object').map(alimentBorne),
           supps: (Array.isArray(x.supps) ? x.supps : []).filter(id => /^[A-Za-z0-9_-]{1,40}$/.test(id)).slice(0, 30)
         })),
       waterPresets: (Array.isArray(s.waterPresets) ? s.waterPresets : []).slice(0, 30)
@@ -10127,8 +10258,8 @@ function sanitizeBackup(inc) {
          peut-être plus celles de l'appareil. */
       chat: [],
       dernierCout: null, coutsRep: [], journalQuota: [],
-      /* le verrou est un état de session, jamais restauré depuis un fichier */
-      quotaUntil: 0, quotaJour: false,
+      /* les verrous sont un état de session, jamais restaurés depuis un fichier */
+      verrous: {},
       imgPx: [512, 768, 1024].indexOf(num(s.imgPx)) >= 0 ? num(s.imgPx) : 1024,
       activites: (function () {
         /* On repart TOUJOURS du catalogue par défaut et on ne reprend du fichier que
@@ -10329,7 +10460,6 @@ $('#fImp').onchange = e => {
           DB.settings.waterPresets = compl(DB.settings.waterPresets, s.waterPresets);
           const nC = DB.settings.supps.length - avC, nT = DB.settings.templates.length - avT;
           const nA = DB.settings.foods.length - avA, nV = DB.settings.waterPresets.length - avV;
-          if (!DB.settings.apiKey && s.apiKey) DB.settings.apiKey = s.apiKey;
 
           save(); closeSheet(); renderAll();
           /* On énonce ce qui est revenu : c'est le seul moyen de constater qu'un
@@ -10372,7 +10502,8 @@ $('#fImp').onchange = e => {
           }
           normaliserModele(DB.settings, r0(brutS.modele) || 0);
           normaliserFourchettes();
-          if (!DB.settings.apiKey) DB.settings.apiKey = avant.apiKey;
+          /* La cle en place, TOUJOURS : `sanitizeBackup` n'en importe aucune (v15.9). */
+          DB.settings.apiKey = avant.apiKey || '';
           if (brut.trainings === undefined) DB.trainings = avantTr;
           save(); closeSheet(); renderAll();
           toast(manquants.length ? 'Données remplacées · ' + manquants.join(', ') + ' conservés' : 'Données remplacées');
