@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Vlf8lstt+aQAREUhNgXHbPhYOQFL8UteruSMtwxmKg4='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Xzd5hc2abldwFjdMdK3gZ++tccNbv/GtmQWUJ/6UlzQ='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.10</title>
+<title>Coach v15.11</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,28 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.11 — **« Quota par minute atteint » tournait en boucle.** Signale par l'utilisateur
+             le 30 octobre 2026, juste apres la v15.10. Cause ETABLIE par simulation : un
+             compteur de Groq modelise fidelement reproduit a l'identique son message
+             « Used 5277, Requested 5992, try again in 24.5175s », puis la boucle — refus a
+             5277, 6490, 7098, et « Analyse impossible ».
+             1. GROQ COMPTE LE PROMPT D'UNE REQUETE REFUSEE. L'application retirait toute
+                requete refusee de son journal, la croyant gratuite. Chaque relance butait
+                donc sur le prompt de la precedente, et l'aggravait. La reservation d'un
+                refus est desormais ramenee au prompt (plus 250 jetons de surcout constate)
+                au lieu d'etre effacee.
+             2. LE DELAI ANNONCE PAR GROQ N'INCLUT PAS CE PROMPT. Il est calcule avant que
+                Groq compte la requete refusee. Le delai attendu y ajoute le temps
+                d'absorber ce prompt ; `ATTENTE_MAX` passe de 90 a 120 s pour l'accueillir.
+                Explique le constat de la v4.2, « le delai annonce ne suffisait jamais ».
+             3. LE PLAFOND DE SORTIE APPRIS NE PERIME PLUS. Oublie au bout d'une semaine, il
+                faisait repartir chaque semaine une requete large, refusee et comptee :
+                c'etait le premier maillon de la boucle, et la signature des trois refus
+                releves en octobre.
+             Verifie sur trois scenarios a vitesse reelle : plafond perime (une requete,
+             passe aussitot), plafond inconnu (un refus, une attente de 28 s, passe), 6000
+             jetons consommes ailleurs avec la meme cle (un refus, une attente, passe).
+
     v15.10 — **« Limite par minute atteinte » sur une premiere analyse, sans rien avant.**
              Releve chez l'utilisateur le 30 octobre 2026, apres la mise en ligne de la v15.9 :
              « Used 5277, Requested 5992 ». Trois refus releves depuis octobre portent la meme
@@ -4326,16 +4348,23 @@ function extractJson(txt) {
    de sortie, sur-reserver fait REFUSER la requete. Le cout de la prudence a change de
    signe, et la marge est devenue le defaut.
 
-   On n'ecrit donc aucune valeur en dur : on APPREND le plafond quand Groq le nomme, on
-   s'y tient, et on l'oublie au bout d'une semaine pour que la limite qui disparait ne
-   bride pas l'application indefiniment. */
-const OTPM_PEREMPTION = 7 * 864e5;   // une semaine
+   On n'ecrit donc aucune valeur en dur : on APPREND le plafond quand Groq le nomme, et
+   on s'y tient.
+
+   PLUS DE PEREMPTION (v15.10). Le plafond etait oublie au bout d'une semaine, « pour que
+   la limite qui disparait ne bride pas l'application indefiniment ». Chaque semaine, la
+   premiere requete repartait donc large et se faisait refuser — et ce refus N'EST PAS
+   GRATUIT : Groq compte le prompt d'une requete refusee (voir `groq()`). Le renvoi
+   immediat se heurtait a ce compte, ses relances aussi, et l'analyse tournait en boucle
+   sur « Quota par minute atteint » avant d'echouer. Reproduit a l'identique le 30 octobre
+   2026 : « Used 5277, Requested 5992, try again in 24.5175s ». Sonder la limite coutait
+   une minute de quota et une analyse ratee par semaine ; la garder ne coute rien tant que
+   les reponses tiennent sous le plafond, ce qui est le cas depuis le 18 septembre. */
 const OTPM_MARGE = 100;              // on reste sous le plafond, jamais dessus
 
 function plafondSortie() {
   const o = S().otpm;
   if (!o || !(o.limite > 0)) return 0;
-  if (Date.now() - (o.vu || 0) > OTPM_PEREMPTION) return 0;   // on retente large
   return Math.max(200, o.limite - OTPM_MARGE);
 }
 
@@ -4401,6 +4430,26 @@ async function groq(body) {
   }
   noterReservation(estim, body.model);
   DERNIERE_RESERVATION = (S().journalQuota || [])[(S().journalQuota || []).length - 1] || null;
+
+  /* UNE REQUETE REFUSEE N'EST PAS GRATUITE (v15.10). Jusqu'ici on retirait sa reservation
+     du journal, en la croyant sans effet. Groq compte pourtant son PROMPT : apres un refus
+     de plafond de sortie, il annonce « Used 5277 » pour une requete dont le prompt fait
+     5092 jetons, sans qu'aucune autre ait ete envoyee. Le journal croyait la minute vide,
+     laissait partir le renvoi, qui etait refuse a son tour et compte encore : chaque
+     relance aggravait le compteur au lieu d'attendre qu'il se vide. Reproduit en
+     simulation : refus a 5277, puis 6490, puis 7098, puis « Analyse impossible ».
+
+     On ramene donc la reservation au seul prompt — la marge de reponse, elle, n'a pas
+     ete reservee — au lieu de l'effacer. */
+  /* Groq compte un prompt refuse 150 a 190 jetons au-dessus du `prompt_tokens` qu'il
+     rapporte sur une reponse reussie : trois messages releves, « Used » contre
+     « Requested » moins la marge de reponse. On retient 250, au-dessus du plus grand. */
+  const reduireAuPrompt = () => {
+    if (!DERNIERE_RESERVATION) return;
+    DERNIERE_RESERVATION.n = r0(promptEstime(avecImage) + SURCOUT_REFUS);
+    DERNIERE_RESERVATION = null;
+    try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
+  };
 
   let res;
   try {
@@ -4471,12 +4520,7 @@ async function groq(body) {
       const e = new Error('Groq limite la longueur de réponse à ' + limOtpm
         + ' jetons par minute sur ton compte. Nouvel essai, en plus court.');
       e.otpm = limOtpm; e.raw = m;
-      /* Une requete REFUSEE n'a rien consomme : on retire la reservation posee avant
-         l'envoi, comme le fait deja le branchement 429 juste en dessous. */
-      if (DERNIERE_RESERVATION) {
-        S().journalQuota = (S().journalQuota || []).filter(x => x !== DERNIERE_RESERVATION);
-        DERNIERE_RESERVATION = null;
-      }
+      reduireAuPrompt();
       throw e;
     }
     if (res.status === 429) {
@@ -4495,14 +4539,16 @@ async function groq(body) {
       /* On retient l'instant à partir duquel une nouvelle tentative a une chance
          d'aboutir. Deux sources, dans l'ordre de fiabilité : l'en-tête `retry-after`,
          puis le délai que Groq écrit en clair dans son message (« try again in 14.07s »). */
-      const secs = ra > 0 ? ra : (parseFloat((m.match(/try again in ([\d.]+)\s*s/i) || [])[1]) || 0);
-      /* Une requête REFUSÉE n'est pas traitée : elle ne consomme rien. On retire donc
-         la réservation posée juste avant l'envoi, sans quoi la comptabilité locale
-         gonflerait à chaque refus et imposerait des attentes imaginaires. */
-      if (DERNIERE_RESERVATION) {
-        S().journalQuota = (S().journalQuota || []).filter(x => x !== DERNIERE_RESERVATION);
-        DERNIERE_RESERVATION = null;
-      }
+      let secs = ra > 0 ? ra : (parseFloat((m.match(/try again in ([\d.]+)\s*s/i) || [])[1]) || 0);
+      /* LE DELAI DE GROQ N'INCLUT PAS LA REQUETE QU'IL REFUSE (v15.10). Il le calcule sur
+         son compteur AVANT d'y ajouter le prompt refuse, qu'il compte aussitot apres.
+         Attendre le delai annonce ne suffisait donc jamais : la relance butait sur le
+         prompt de la tentative precedente. Constat deja fait en v4.2 — « le delai
+         annonce par Groq ne suffisait jamais » — sans que la cause en soit vue. On y
+         ajoute le temps que met le compteur a absorber ce prompt. Une limite JOURNALIERE
+         n'est pas concernee : elle ne se vide pas a la minute. */
+      if (secs > 0 && !parJour) secs += (promptEstime(avecImage) + SURCOUT_REFUS) / (TPM_LIMITE / 60);
+      reduireAuPrompt();
       if (secs > 0) poserVerrou(secs, parJour, body.model);
       const e = new Error((parJour ? 'Limite JOURNALIÈRE de ton compte Groq atteinte.' : 'Limite par minute atteinte.') + quand);
       e.quota = true; e.raw = m; e.parJour = parJour; e.attendre = secs;
@@ -4690,6 +4736,7 @@ function modeleDe(emploi) {
 }
 
 const TPM_LIMITE = 8000;
+const SURCOUT_REFUS = 250;   // voir `reduireAuPrompt` dans `groq()`
 const TPM_FENETRE = 60000;
 
 /* QUOTA PAR MODELE, et non par compte.
@@ -4896,10 +4943,12 @@ function noterCoutReponse(n) {
    attend le temps que Groq a lui-même indiqué.
 
    Bornes : deux reprises au maximum, jamais sur une limite JOURNALIÈRE — attendre
-   n'y changerait rien — et jamais plus de 90 secondes d'attente, au-delà desquelles
+   n'y changerait rien — et jamais plus de `ATTENTE_MAX` secondes d'attente, au-delà desquelles
    mieux vaut rendre la main. */
 const REPRISES_MAX = 2;
-const ATTENTE_MAX = 90;
+/* 120 et non plus 90 (v15.10) : le delai d'un refus inclut desormais le prompt refuse,
+   qu'il faut laisser absorber, soit jusqu'a une minute de plus que le delai de Groq. */
+const ATTENTE_MAX = 120;
 
 /* Attente interruptible, avec compte à rebours affiché dans le voile de chargement. */
 function attendreAvecCompteur(secondes, libelle) {
@@ -4929,7 +4978,7 @@ let ANNULER_REPRISE = false;
    appareil, dans CE contexte. La meme cle utilisee ailleurs — un autre appareil, Safari
    a cote de l'application posee sur l'ecran d'accueil, qui ont chacun leur stockage —
    consomme un quota qu'elle ignore. Le refus est alors la seule information, et il dit
-   quand reessayer. Memes bornes que les photos : deux reprises, 90 s au plus, jamais sur
+   quand reessayer. Memes bornes que les photos : deux reprises, `ATTENTE_MAX` au plus, jamais sur
    une limite journaliere, annulable. */
 async function avecReprise(fn, libelleReprise, essai) {
   const n = essai || 0;
