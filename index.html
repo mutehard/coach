@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.4</title>
+<title>Coach v15.5</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,37 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.5 — **Le garde-fou de quota ne comptait pas ce qu'il allait lui-meme reserver.**
+             Message releve chez l'utilisateur, systematique sur une analyse 60 jours :
+             « Limit 8000, Used 5338, Requested 6047 ». L'application est censee ATTENDRE
+             quand la place manque, pas essuyer un refus : c'etait tout l'objet de la v15.2.
+             Trois ecarts, tous dans le meme sens, tous mesures.
+             1. LA PREDICTION NE LISAIT PAS LE MEME NOMBRE QUE LA REQUETE. `lancerAnalyse`
+                envoyait `max_tokens: 2200`, son repli 3200, le Conseil 900 ; pendant ce
+                temps `coutPrevu()` predisait avec `budgetReponse()`, borne a 1400 et
+                calibre sur les seules reponses PHOTO. Sous-estimation de 1300 jetons par
+                analyse, 2300 par repli. Une seule table `SORTIE` est desormais lue par la
+                requete ET par la prediction.
+             2. LA RESERVATION POSEE AVANT L'ENVOI FORFAITISAIT LE PROMPT A 800 JETONS.
+                Vrai d'une saisie texte, faux d'un facteur six pour une analyse dont le
+                prompt pese ~5000. Ecart mesure : 4000 jetons, pendant toute la duree de
+                l'appel. Le commentaire au-dessus de cette ligne disait pourtant a quoi
+                elle sert : couvrir le cas ou la reponse n'arrive jamais. Elle ne le
+                couvrait pas. `promptEstime()` lit la derniere mesure de l'emploi en cours,
+                la meme source que `coutPrevu()`.
+             3. `EMPLOI_EN_COURS` N'ETAIT JAMAIS POSE A 'conseil'. Une question du Conseil
+                s'executait donc avec la valeur laissee par l'operation precedente, le plus
+                souvent 'analyse' : son prompt etait memorise comme un cout d'ANALYSE, sous
+                la maille de la fenetre affichee. Une grandeur enregistree sous le nom d'une
+                autre. `conseil` devient un emploi a part entiere — son modele, son verrou,
+                sa maille de cout.
+             Verifie sur six scenarios : une analyse seule sur une minute vide part sans
+             attendre, tout le reste attend avec un decompte au lieu d'etre refuse, y
+             compris lorsque la correction a posteriori n'a pas pu avoir lieu.
+             REGLE A RETENIR : un garde-fou qui predit le cout d'un appel doit lire LA MEME
+             valeur que l'appel. Deux constantes pour une seule grandeur finissent toujours
+             par diverger, et celle qui ment est celle qu'on ne voit pas partir.
+
     v15.4 — **Le Conseil ouvrait chaque reponse sur la priorite de l'analyse, et la tuile
              de deficit se taisait au lendemain d'un changement d'objectif.**
              Deux remarques de l'utilisateur, le 20 octobre 2026.
@@ -3955,9 +3986,22 @@ async function groq(body) {
   const pl = plafondSortie();
   if (pl && body.max_tokens > pl) body = Object.assign({}, body, { max_tokens: pl });
   /* Réservation posée AVANT l'envoi : si la réponse n'arrive jamais (réseau coupé),
-     le quota a tout de même été consommé côté Groq et doit rester compté. */
-  const estim = (body.max_tokens || 0) + ((body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0)
-    ? ((S().dernierCout && S().dernierCout.photo && S().dernierCout.p) || 3000) : 800);
+     le quota a tout de même été consommé côté Groq et doit rester compté.
+
+     LE PROMPT N'EST PLUS FORFAITISE A 800 (v15.5). C'etait vrai des appels de saisie
+     texte, pour lesquels ce forfait a ete ecrit ; l'analyse et le Conseil, eux, envoient
+     un prompt de l'ordre de 5000 jetons. La reservation posee valait donc 3000 la ou la
+     realite etait 7000, et ce pendant TOUTE la duree de l'appel — une analyse prend une
+     dizaine de secondes. Le commentaire ci-dessus dit exactement a quoi sert cette
+     reservation : couvrir le cas ou la reponse n'arrive pas. Avec un forfait quatre fois
+     trop bas, elle ne le couvrait pas.
+
+     La correction a posteriori par `corrigerReservation()` reste en place : elle remplace
+     l'estimation par le chiffre exact de Groq des que la reponse arrive. Ce qui change
+     ici, c'est que l'estimation de depart cesse d'etre absurde quand elle est la seule
+     dont on dispose. */
+  const avecImage = !!(body.messages && JSON.stringify(body.messages).indexOf('image_url') >= 0);
+  const estim = (body.max_tokens || 0) + promptEstime(avecImage);
   noterReservation(estim, body.model);
   DERNIERE_RESERVATION = (S().journalQuota || [])[(S().journalQuota || []).length - 1] || null;
 
@@ -4122,9 +4166,10 @@ async function groq(body) {
          On retient donc ce que Groq a REELLEMENT compte, separement par maille — une
          analyse 30 jours et une analyse 3 mois n'ont pas le meme poids. La mesure prime
          sur l'estimation des le deuxieme appel. */
-      if (!estPhoto && EMPLOI_EN_COURS === 'analyse' && u.prompt_tokens > 0) {
+      if (!estPhoto && u.prompt_tokens > 0 &&
+          (EMPLOI_EN_COURS === 'analyse' || EMPLOI_EN_COURS === 'conseil')) {
         const c = S().coutAnalyse || {};
-        c[FENETRE_EN_COURS > 30 ? 'long' : 'court'] = r0(u.prompt_tokens);
+        c[mailleCout(EMPLOI_EN_COURS)] = r0(u.prompt_tokens);
         S().coutAnalyse = c;
       }
       try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
@@ -4238,7 +4283,7 @@ function corrigerReservation(reel) {
 function modeleDe(emploi) {
   const s = S();
   if (emploi === 'repas') return (s.modelRepas || '').trim() || s.model;
-  if (emploi === 'analyse') return (s.modelAnalyse || '').trim() || s.model;
+  if (emploi === 'analyse' || emploi === 'conseil') return (s.modelAnalyse || '').trim() || s.model;
   return s.model;
 }
 
@@ -4297,6 +4342,51 @@ function attenteNecessaire(cout, modele) {
   return Math.ceil(TPM_FENETRE / 1000);
 }
 
+/* BUDGET DE SORTIE PAR EMPLOI — UNE SEULE SOURCE, lue par la REQUETE et par la PREDICTION.
+
+   DEFAUT CORRIGE EN v15.5. Les deux divergeaient. `lancerAnalyse` envoyait
+   `max_tokens: 2200` et son repli 3200, le Conseil 900 ; pendant ce temps
+   `coutPrevu('analyse')` predisait le cout avec `budgetReponse()`, borne a 1400 et
+   calibre — regardez `noterCoutReponse` — sur les seules reponses PHOTO. La comptabilite
+   preventive sous-estimait donc CHAQUE analyse de 1300 jetons, et son repli de 2300.
+
+   C'est exactement le mecanisme qui transforme « l'application attend » en « Groq
+   refuse » : le garde-fou croit qu'il reste de la place parce qu'il ne compte pas ce
+   qu'il va lui-meme reserver. Message releve chez l'utilisateur le 30 octobre 2026 :
+   « Limit 8000, Used 5338, Requested 6047 ».
+
+   REGLE A RETENIR : un garde-fou qui predit le cout d'un appel doit lire LA MEME valeur
+   que l'appel. Deux constantes pour une seule grandeur finissent toujours par diverger,
+   et celle qui ment est celle qu'on ne voit pas partir. */
+const SORTIE = { analyse: 2200, analyseRepli: 3200, conseil: 900 };
+
+/* Taille presumee du prompt qu'on s'apprete a envoyer, en jetons. On prend la DERNIERE
+   MESURE de l'emploi en cours quand il y en a une : c'est la meme source que
+   `coutPrevu()`, et deux estimations du meme appel ne doivent pas se contredire. */
+function promptEstime(avecImage) {
+  if (avecImage) return (S().dernierCout && S().dernierCout.photo && S().dernierCout.p) || 3000;
+  if (EMPLOI_EN_COURS === 'analyse' || EMPLOI_EN_COURS === 'conseil') {
+    const vu = (S().coutAnalyse || {})[mailleCout(EMPLOI_EN_COURS)];
+    if (vu > 0) return vu;
+    return 6000;                    // meme valeur de depart que `coutPrevu()`
+  }
+  return 800;                       // saisie texte : prompt court, forfait d'origine
+}
+
+function budgetSortie(cle) {
+  const b = SORTIE[cle] || SORTIE.analyse;
+  const pl = plafondSortie();
+  return pl ? Math.min(b, pl) : b;
+}
+
+/* La maille sous laquelle le cout du prompt est memorise. Le Conseil a la sienne : il
+   envoie la fenetre entiere sans resserrage, la ou l'analyse au-dela d'un mois passe en
+   compact. Les confondre faisait predire une analyse compacte avec le poids d'un conseil. */
+function mailleCout(emploi) {
+  if (emploi === 'conseil') return 'conseil';
+  return FENETRE_EN_COURS > 30 ? 'long' : 'court';
+}
+
 /* Coût prévisionnel d'une analyse photo : dernier prompt mesuré, à défaut une valeur
    de départ prudente, plus la marge de réponse. */
 function coutPrevu(emploi) {
@@ -4306,18 +4396,19 @@ function coutPrevu(emploi) {
      Valeurs mesurees sur des appels reels ; le poste photo, lui, se recalibre seul
      sur la derniere mesure. */
   if (emploi === 'repas')   return 500 + 1500;    // prompt court, max_tokens 1500
-  if (emploi === 'analyse') {
+  if (emploi === 'analyse' || emploi === 'conseil') {
     /* LA MESURE PRIME SUR L'ESTIMATION. Separee par maille : une analyse 3 mois pese
        nettement plus qu'une analyse 30 jours, et les confondre ramenerait l'erreur que
        cette memoire corrige. */
     const c = S().coutAnalyse || {};
-    const vu = c[FENETRE_EN_COURS > 30 ? 'long' : 'court'];
-    if (vu > 0) return vu + budgetReponse();
+    const vu = c[mailleCout(emploi)];
+    const sortie = budgetSortie(emploi === 'conseil' ? 'conseil' : 'analyse');
+    if (vu > 0) return vu + sortie;
     /* 2800 etait l'estimation d'une charge bien plus legere. Mesure sur un journal reel
        de 66 journees : le prompt complet pese entre 5000 et 6900 jetons selon le
        decoupage du texte. Sous-estimer n'economise rien — ca empeche seulement
        l'application de voir venir le depassement et de patienter avant d'envoyer. */
-    return 6000 + budgetReponse();
+    return 6000 + sortie;
   }   // charge ~1500 jetons + consigne
   const dc = S().dernierCout;
   const prompt = (dc && dc.photo && dc.p > 0) ? dc.p : 3000;
@@ -7317,6 +7408,12 @@ Réponds en texte simple, sans mise en forme markdown.`;
 const TOURS_CONTEXTE = 4;
 
 async function poserQuestion(question) {
+  /* Pose ICI et nulle part ailleurs. Il ne l'etait pas du tout jusqu'en v15.5 : une
+     question du Conseil s'executait avec la valeur laissee par l'operation precedente,
+     le plus souvent 'analyse'. Son prompt etait alors memorise comme un cout d'ANALYSE,
+     sous la maille de la fenetre affichee — une grandeur enregistree sous le nom d'une
+     autre. */
+  EMPLOI_EN_COURS = 'conseil';
   const d = donneesConseil();
   /* L'appelant a DÉJÀ inscrit la question dans `S().chat`, pour l'afficher sans
      attendre la réponse. On l'écarte donc de l'historique, sinon elle partirait deux
@@ -7327,7 +7424,7 @@ async function poserQuestion(question) {
     role: m.r === 'u' ? 'user' : 'assistant', content: m.t
   }));
   const corps = {
-    model: modeleDe('analyse'), temperature: 0.4, max_tokens: 900,
+    model: modeleDe('conseil'), temperature: 0.4, max_tokens: budgetSortie('conseil'),
     messages: [{ role: 'user', content: PROMPT_CONSEIL + consignesConditionnelles(d, 'conseil') + consigneMailles(d)
                  + '\n\nSes données :\n' + JSON.stringify(d) }]
       .concat(hist)
@@ -7536,7 +7633,7 @@ async function lancerAnalyse(nbJours, compact) {
      plus grand ecrit plus, et si sa reflexion n'a pas pu etre coupee elle consomme
      ce meme budget. 1400 suffisait a Qwen, pas a gpt-oss-120b. */
   const corps = {
-    model: modeleDe('analyse'), temperature: 0.3, max_tokens: 2200,
+    model: modeleDe('analyse'), temperature: 0.3, max_tokens: budgetSortie('analyse'),
     messages: [{ role: 'user', content: PROMPT_ANALYSE + consignesConditionnelles(d, 'analyse') + consigneMailles(d) + consigneLongueur()
                  + '\n\nDonnées :\n' + JSON.stringify(d) }]
   };
@@ -7564,7 +7661,7 @@ async function lancerAnalyse(nbJours, compact) {
     if (plafondSortie()) throw e;
     loader(true, 'Réponse trop longue, nouvel essai…');
     return extractJsonAnalyse(await groqTry(
-      Object.assign({}, corps, { max_tokens: 3200 }), JSON_SANS_REFLEXION));
+      Object.assign({}, corps, { max_tokens: budgetSortie('analyseRepli') }), JSON_SANS_REFLEXION));
   }
 }
 
@@ -8297,7 +8394,7 @@ async function envoyerQuestion(q) {
      mesure memorisee pour CETTE maille, et une fenetre inconnue lui ferait reprendre
      l'estimation generique. */
   FENETRE_EN_COURS = range;
-  if (!(await verrouLibre('analyse'))) return;
+  if (!(await verrouLibre('conseil'))) return;
 
   const l = S().chat || (S().chat = []);
   l.push({ r: 'u', t: question.slice(0, 500) });
