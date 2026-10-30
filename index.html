@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.6</title>
+<title>Coach v15.7</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -26,6 +26,37 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.7 — **La composition de la variation de poids, refaite apres revue.** La v15.6
+             annoncait des kilos de masse maigre que la mesure ne soutenait pas. Revue
+             technique, mathematique, physique et biologique demandee par l'utilisateur.
+             1. LA FORMULE NAVY N'UTILISE PAS LE POIDS. A tours inchanges, toute prise etait
+                repartie au prorata du % de gras : ~83 % etiquetes « masse maigre » par
+                construction. Tours strictement identiques et +2,5 kg donnaient « +2,1 kg de
+                masse maigre, significatif ». Desormais : INDETERMINE.
+             2. LE BON TEST. On teste la PART DE GRAS de la variation contre 50 %, via
+                G = gras - poids/2, avec un verdict a trois issues a deux ecarts-types :
+                surtout du gras, surtout de la masse maigre, ou indetermine. Plus aucun
+                « dont X kg de masse maigre » : c'etait l'hypothese, pas la mesure.
+             3. REGRESSION SUR TOUS LES RELEVES. Ce qui fait varier un tour de taille, c'est
+                l'etat du corps ce jour-la ; repeter la mesure dans la seance n'y change rien,
+                multiplier les seances si. Remarque juste de l'utilisateur, qui a corrige ma
+                proposition de trois mesures d'affilee. Le bruit retenu est le plus grand de
+                l'ecart-type des residus et d'un plancher physique, l'erreur de ruban propagee.
+             4. COU FIGE a sa moyenne pour la variation : l'entrainement le fait grossir et la
+                formule le lisait comme du gras perdu. Un cou +1 cm basculait 0,6 kg.
+             5. RELEVES SANS PESEE REELLE A +-7 JOURS ECARTES, et masse maigre affichee non
+                calculee plutot que calculee sur le poids d'une autre date.
+             6. SAISIE : champs vides au lieu de pre-remplis, qui recopiaient la cuisse et le
+                bras du mois precedent dans chaque releve hebdomadaire ; fusion des saisies
+                d'un meme jour ; protocole et rythme rappeles — taille et cou chaque semaine.
+             7. LE TABLEAU des mesures suit la tendance et non la difference brute des deux
+                bouts, qui contredisait a l'ecran la ligne de composition juste en dessous.
+             8. `verifier-doc.py` : chaque fonction est marquee vivante ou retiree. Une
+                fonction vivante dont les deux motifs ont disparu passait pour « absente des
+                deux cotes », donc OK ; elle echoue desormais. Pierre tombale ajoutee pour les
+                kilos de masse maigre.
+             Verifie sur douze scenarios, dont les deux pieges de la v15.6 et le cas feminin.
+
     v15.6 — **La prise de poids etait jugee, jamais mesuree.** Question de l'utilisateur :
              « est-ce que la prise de muscle est prise en compte dans la prise de poids ? ».
              Dans les OBJECTIFS, oui — plancher proteique de la visee `prise`, deux zones de
@@ -2622,7 +2653,10 @@ function masseGrasseDe(m) {
      variation d'eau — l'ordre de grandeur d'une annee de progres reels. Multiplier une
      masse grasse par un poids bruite produit une masse maigre bruitee, et c'est cette
      masse maigre qu'on veut comparer d'un releve a l'autre. */
-  const kg = poidsLisseAu(m.date) || poidsAu(m.date);
+  /* Plus de repli sur `poidsAu()` depuis la v15.7 : sans pesee reelle autour du releve,
+     la masse maigre n'est pas calculee plutot que calculee sur un poids d'une autre date.
+     Le pourcentage, lui, ne depend pas du poids et reste affiche. */
+  const kg = poidsLisseAu(m.date);
   return { bf: bf, maigre: kg > 0 ? Math.round(kg * (1 - bf / 100) * 10) / 10 : null, poids: kg };
 }
 
@@ -2633,11 +2667,8 @@ function masseGrasseDe(m) {
 const LISSAGE_POIDS_JOURS = 7;
 
 function poidsLisseAu(date) {
-  const w = peseesHorsPause((DB.weights || []).slice().sort((a, b) => a.date.localeCompare(b.date)));
-  const d0 = shiftD(date, -LISSAGE_POIDS_JOURS), d1 = shiftD(date, LISSAGE_POIDS_JOURS);
-  const f = w.filter(x => x.date >= d0 && x.date <= d1 && x.kg > 0);
-  if (!f.length) return 0;                      // aucune pesee autour : l'appelant decide
-  return Math.round(f.reduce((a, x) => a + x.kg, 0) / f.length * 10) / 10;
+  const w = poidsReleve(date);
+  return w ? Math.round(w.kg * 10) / 10 : 0;        // 0 : aucune pesee autour, l'appelant decide
 }
 
 /* INCERTITUDE DE LA MASSE GRASSE, propagee depuis l'erreur de ruban.
@@ -2668,96 +2699,179 @@ function incertitudeBf(m) {
   return v > 0 ? Math.sqrt(v) : null;
 }
 
-/* REPARTITION DE LA VARIATION DE POIDS entre masse grasse et masse maigre.
+/* COMPOSITION DE LA VARIATION DE POIDS — refonte v15.7.
 
-   LE MANQUE QU'ELLE COMBLE. `jugerRythme()` applique une BANDE DE POPULATION au chiffre de
-   la balance : « au-dela de 0,5 % par semaine, la part de gras prise augmente nettement ».
-   C'est une statistique sur des cohortes, pas une mesure sur la personne. L'application
-   disposait pourtant de tout le necessaire depuis la v15.0 — il ne manquait qu'une
-   soustraction entre deux releves. Demande de l'utilisateur, le 30 octobre 2026.
+   CE QUE LA v15.6 FAISAIT DE TRAVERS. Revue technique, mathematique, physique et
+   biologique du 30 octobre 2026, demandee par l'utilisateur :
 
-   L'ARITHMETIQUE est triviale :
-       gras   = poids x masse_grasse%
-       maigre = poids - gras
-   et la variation de chacun entre le premier et le dernier releve exploitable.
+   1. La formule Navy N'UTILISE PAS LE POIDS. A tours inchanges, la masse grasse en %
+      ne bouge pas, et toute variation de poids etait repartie au prorata de ce % : environ
+      83 % etiquetes « masse maigre » PAR CONSTRUCTION. Tours strictement identiques et
+      +2,5 kg donnaient « +2,1 kg de masse maigre, significatif ».
+   2. Le test etait le mauvais. Il demandait « la masse maigre a-t-elle change ? », que
+      personne ne met en doute apres 2,5 kg. La seule question utile est « la variation
+      est-elle SURTOUT du gras ou SURTOUT de la masse maigre ? ».
+   3. Avec un ruban a +-1 cm, la part de gras d'une prise de 2,6 kg n'est connue qu'a
+      +-47 points. Un verdict tranche demande presque toujours plus de precision qu'on n'en a.
 
-   CE QUI NE L'EST PAS, c'est de savoir QUAND se taire. La formule Navy se trompe de 3 a 4
-   points face a une mesure DEXA, soit 2,5 a 3 kg de masse maigre apparente — plus qu'une
-   annee de progres reels. Ce qui rend le calcul utilisable, c'est que cette erreur est
-   surtout un BIAIS SYSTEMATIQUE propre a la personne : meme formule, meme ruban, memes
-   gestes, erreur a peu pres constante, qui S'ANNULE DANS LA DIFFERENCE. La valeur absolue
-   reste inutilisable, l'ecart devient lisible. C'est deja ce que dit la carte : « suis la
-   tendance, pas la valeur ».
+   LA METHODE RETENUE.
+   - On teste la PART DE GRAS de la variation contre 50 %. Ecrit autrement, on suit
+     G = gras - poids/2 : la variation est surtout grasse si dG a le meme signe que dPoids,
+     surtout maigre s'il a le signe oppose. Une seule grandeur, dont les residus portent
+     TOUTES les sources de bruit a la fois.
+   - REGRESSION sur tous les releves, et non difference des deux bouts. Ce qui domine
+     l'erreur du tour de taille, c'est l'etat du corps ce jour-la : digestion, eau,
+     respiration. Repeter la mesure dans la meme seance ne le reduit pas, multiplier les
+     seances si. Remarque juste de l'utilisateur, qui a corrige ma premiere proposition.
+   - Le bruit par releve est le PLUS GRAND de deux nombres : l'ecart-type des residus,
+     mesure sur ses propres donnees, et un plancher physique, l'erreur de ruban propagee par
+     la formule. Le plancher interdit d'annoncer une precision que le ruban ne peut pas
+     donner, meme quand trois releves s'alignent par hasard.
+   - Verdict a TROIS issues, a deux ecarts-types : surtout du gras, surtout de la masse
+     maigre, ou INDETERMINE. Le troisieme sera le plus frequent sur une prise lente, et
+     c'est la reponse exacte.
+   - LE COU EST FIGE a sa moyenne sur la serie. Chez un adulte, le tour de cou bouge peu
+     en quelques mois, et ce qui le fait bouger est surtout le muscle de l'entrainement et
+     le bruit du ruban : deux effets que la formule lit comme une baisse de gras. Mesure :
+     un cou +1 cm faisait basculer 0,6 kg du gras vers le maigre. Le figer supprime ce biais
+     flatteur et l'erreur de ruban du cou.
+   - Les releves sans pesee REELLE a +-7 jours sont ECARTES. La v15.6 retombait sur une
+     pesee lointaine ou sur le poids du profil : un chiffre fabrique entrait dans une mesure.
 
-   Ne subsiste alors que l'erreur ALEATOIRE du ruban, propagee par `incertitudeBf()`.
-   Chiffrage sur un profil de 78 kg : environ 0,7 point de masse grasse par centimetre, soit
-   +-0,8 kg sur une difference entre deux releves. En face, une prise musculaire chez un
-   pratiquant confirme vaut environ 0,15 kg de maigre par semaine. D'ou :
+   CE QUE RIEN ICI NE CORRIGE. Masse maigre ne veut pas dire muscle : le glycogene et son eau
+   peuvent ajouter 1 a 2 kg en debut de prise. Et une formule qui situe correctement un etat
+   peut mal suivre un CHANGEMENT : une erreur de pente ne s'annule pas dans une difference.
+   Le verdict est un indice tire d'un metre ruban, pas une composition corporelle. */
+const REPART_RELEVES_MINI = 3;     // la carte le disait deja : trois releves pour une evolution
+const REPART_SEMAINES_MINI = 8;    // laisse passer le remplissage initial du glycogene
+const REPART_KG_MINI = 1;          // sous un kilo, « la part de la variation » n'a pas de sens
+const BRUIT_PESEE = 0.7;           // kg, ecart quotidien d'une pesee autour de sa tendance
+const Z_REPART = 2;                // deux ecarts-types
 
-       4 semaines   0,6 kg de signal contre 0,8 de bruit   inexploitable
-      12 semaines   1,8 kg contre 0,8                      exploitable
+/* Le poids d'un releve, tire des SEULES pesees reelles a +-7 jours, hors pause. Rend aussi
+   leur nombre : le bruit du poids moyen en depend, et il entre dans l'incertitude. */
+function poidsReleve(date) {
+  const w = peseesHorsPause((DB.weights || []).slice().sort((a, b) => a.date.localeCompare(b.date)));
+  const d0 = shiftD(date, -LISSAGE_POIDS_JOURS), d1 = shiftD(date, LISSAGE_POIDS_JOURS);
+  const f = w.filter(x => x.date >= d0 && x.date <= d1 && x.kg > 0);
+  if (!f.length) return null;
+  return { kg: f.reduce((a, x) => a + x.kg, 0) / f.length, n: f.length };
+}
 
-   Le seuil est pose a HUIT semaines, et a un kilo de variation : sous ces bornes, on
-   diviserait du bruit par du bruit. Meme discipline que `residuEau()` qui se tait sous
-   500 g et `projection()` sous 0,05 kg/semaine — une mesure qu'on ne peut pas distinguer
-   du bruit ne se presente pas comme un resultat.
+/* Moindres carres ordinaires. `s` est l'ecart-type residuel, nul sous trois points :
+   deux points passent toujours exactement par leur droite. */
+function regressionLineaire(xs, ys) {
+  const n = xs.length;
+  const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  let sxx = 0, sxy = 0;
+  for (let k = 0; k < n; k++) { sxx += (xs[k] - mx) * (xs[k] - mx); sxy += (xs[k] - mx) * (ys[k] - my); }
+  const pente = sxx > 0 ? sxy / sxx : 0;
+  let ss = 0;
+  for (let k = 0; k < n; k++) { const r = ys[k] - (my + pente * (xs[k] - mx)); ss += r * r; }
+  return { pente: pente, sxx: sxx, s: n > 2 ? Math.sqrt(ss / (n - 2)) : 0 };
+}
 
-   RESERVE ASSUMEE : le biais ne s'annule que si la REPARTITION du gras ne change pas de
-   forme. Sur quelques mois c'est raisonnable, sur deux ans beaucoup moins. */
-const REPART_SEMAINES_MINI = 8;
-const REPART_KG_MINI = 1;
+/* Sensibilite de la masse grasse a l'erreur de ruban, le cou etant FIGE : seuls la taille,
+   et les hanches chez une femme, sont perturbes d'un centimetre. */
+function sigmaBfCouFige(sexe, h, taille, couRef, hanches) {
+  const base = masseGrasseNavy(sexe, h, taille, couRef, hanches);
+  if (base === null) return null;
+  let v = 0;
+  const bt = masseGrasseNavy(sexe, h, taille + ERREUR_RUBAN, couRef, hanches);
+  if (bt !== null) v += (bt - base) * (bt - base);
+  if (sexe === 'f') {
+    const bh = masseGrasseNavy(sexe, h, taille, couRef, hanches + ERREUR_RUBAN);
+    if (bh !== null) v += (bh - base) * (bh - base);
+  }
+  return Math.sqrt(v);
+}
 
+/* Rend `{ ok: true, ... }` quand un resultat existe, `{ ok: false, raison }` sinon. La
+   raison sert a la carte, qui dit CE QUI MANQUE au lieu de se taire. */
 function repartitionPoids() {
-  const pts = mesures().map(m => {
-    const c = masseGrasseDe(m);
-    const u = incertitudeBf(m);
-    return (c && c.poids > 0 && u !== null) ? { date: m.date, bf: c.bf, poids: c.poids, u: u } : null;
-  }).filter(Boolean);
-  if (pts.length < 2) return null;
+  const p = S().profile || {};
+  const brut = mesures().filter(m => m.taille > 0 && m.cou > 0 && (p.sex !== 'f' || m.hanches > 0));
+  const avecPoids = brut.map(m => ({ m: m, w: poidsReleve(m.date) })).filter(x => x.w);
+  const vide = { ok: false, releves: avecPoids.length };
+  if (avecPoids.length < REPART_RELEVES_MINI) return Object.assign(vide, { raison: 'releves' });
 
-  const a = pts[0], b = pts[pts.length - 1];
-  const jours = Math.round((parseD(b.date) - parseD(a.date)) / DAY);
-  if (jours < REPART_SEMAINES_MINI * 7) return null;
+  const t0 = parseD(avecPoids[0].m.date).getTime();
+  const jours = Math.round((parseD(avecPoids[avecPoids.length - 1].m.date).getTime() - t0) / DAY);
+  if (jours < REPART_SEMAINES_MINI * 7) return Object.assign(vide, { raison: 'duree', jours: jours });
 
-  const dPoids = Math.round((b.poids - a.poids) * 10) / 10;
-  if (Math.abs(dPoids) < REPART_KG_MINI) return null;
+  const couRef = avecPoids.reduce((a, x) => a + x.m.cou, 0) / avecPoids.length;
+  const pts = [];
+  for (let k = 0; k < avecPoids.length; k++) {
+    const m = avecPoids[k].m, w = avecPoids[k].w;
+    const bf = masseGrasseNavy(p.sex, p.height, m.taille, couRef, m.hanches);
+    const sbf = sigmaBfCouFige(p.sex, p.height, m.taille, couRef, m.hanches);
+    if (bf === null || sbf === null) continue;
+    const gras = w.kg * bf / 100;
+    /* Plancher de bruit de ce releve : erreur de ruban portee sur la masse grasse, plus
+       bruit du poids moyen. Ce dernier entre dans G avec le poids |bf - 1/2|. */
+    const sW = BRUIT_PESEE / Math.sqrt(w.n);
+    const plancher = Math.hypot(w.kg * sbf / 100, sW * Math.abs(bf / 100 - 0.5));
+    pts.push({ x: (parseD(m.date).getTime() - t0) / DAY, poids: w.kg, gras: gras,
+               g: gras - w.kg / 2, taille: m.taille, plancher: plancher });
+  }
+  if (pts.length < REPART_RELEVES_MINI) return Object.assign(vide, { raison: 'releves' });
 
-  const grasA = a.poids * a.bf / 100, grasB = b.poids * b.bf / 100;
-  const dGras = Math.round((grasB - grasA) * 10) / 10;
-  const dMaigre = Math.round((dPoids - dGras) * 10) / 10;
-  /* Les deux incertitudes de composition se composent en quadrature. Celle du poids lisse
-     n'y figure pas : elle porte sur `dPoids`, qui est affiche tel quel et non deduit. */
-  const inc = Math.round(Math.sqrt(Math.pow(a.u / 100 * a.poids, 2)
-                                 + Math.pow(b.u / 100 * b.poids, 2)) * 10) / 10;
-  return { depuis: a.date, jours: jours, releves: pts.length,
-           variation_kg: dPoids, dont_gras_kg: dGras, dont_maigre_kg: dMaigre,
-           incertitude_kg: inc,
-           /* Vrai quand l'ecart de masse maigre depasse l'incertitude : seul cas ou l'on
-              peut affirmer un sens plutot que constater un nombre. */
-           maigre_significatif: Math.abs(dMaigre) > inc };
+  const xs = pts.map(q => q.x);
+  const T = xs[xs.length - 1] - xs[0];
+  const rP = regressionLineaire(xs, pts.map(q => q.poids));
+  const rF = regressionLineaire(xs, pts.map(q => q.gras));
+  const rG = regressionLineaire(xs, pts.map(q => q.g));
+  const rT = regressionLineaire(xs, pts.map(q => q.taille));
+  const dP = rP.pente * T, dF = rF.pente * T, dG = rG.pente * T;
+  if (Math.abs(dP) < REPART_KG_MINI) return Object.assign(vide, { raison: 'poids', jours: Math.round(T) });
+
+  const plancher = Math.sqrt(pts.reduce((a, q) => a + q.plancher * q.plancher, 0) / pts.length);
+  const sigma = Math.max(rG.s, plancher);
+  const seG = sigma * T / Math.sqrt(rG.sxx);
+  const phi = dF / dP, sePhi = seG / Math.abs(dP);
+  const lo = phi - Z_REPART * sePhi, hi = phi + Z_REPART * sePhi;
+  const borne = v => Math.round(Math.min(100, Math.max(0, v * 100)));
+  return {
+    ok: true, depuis: avecPoids[0].m.date, jours: Math.round(T), releves: pts.length,
+    sens: dP > 0 ? 'prise' : 'perte',
+    variation_kg: Math.round(dP * 10) / 10,
+    taille_cm: Math.round(rT.pente * T * 10) / 10,
+    part_grasse_pct: borne(phi), part_grasse_min: borne(lo), part_grasse_max: borne(hi),
+    verdict: lo > 0.5 ? 'gras' : hi < 0.5 ? 'maigre' : 'indetermine'
+  };
 }
 
 /* La phrase de la carte Mesures. Elle dit le RESULTAT quand il existe, et sinon CE QUI
-   MANQUE pour l'obtenir — jamais rien du tout. Regle posee en v15.4 sur la tuile de
-   deficit : s'abstenir de juger n'autorise pas a se taire. */
+   MANQUE pour l'obtenir, jamais rien du tout. Regle posee en v15.4 : s'abstenir de juger
+   n'autorise pas a se taire. */
 function noteRepartition() {
   const r = repartitionPoids();
-  const f = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1).replace('.', ',');
-  if (!r) {
-    if (mesures().length < 2) return '';
-    return '<p class="note">La répartition entre gras et masse maigre apparaîtra quand deux ' +
-      'relevés seront espacés d\'au moins ' + REPART_SEMAINES_MINI + ' semaines, avec au moins ' +
-      REPART_KG_MINI + ' kg de variation de poids entre eux. En dessous, l\'écart de ruban ' +
-      'l\'emporterait sur le résultat.</p>';
+  if (!r.ok) {
+    if (!mesures().length) return '';
+    const manque = r.raison === 'releves'
+      ? 'au moins ' + REPART_RELEVES_MINI + ' relevés de taille et de cou accompagnés d\'une pesée dans la semaine'
+      : r.raison === 'duree'
+      ? 'au moins ' + REPART_SEMAINES_MINI + ' semaines entre le premier et le dernier relevé'
+      : 'au moins ' + REPART_KG_MINI + ' kg de variation de poids sur la période';
+    return '<p class="note">Pour dire si ta variation de poids est surtout du gras ou de la ' +
+      'masse maigre, il faut ' + manque + '. Chaque relevé supplémentaire rend la réponse plus sûre.</p>';
   }
+  const f = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1).replace('.', ',');
   const depuis = parseD(r.depuis).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
-  return '<p class="note" style="margin-top:10px"><b>Depuis le ' + depuis + ' : ' +
-    f(r.variation_kg) + ' kg, dont ' + f(r.dont_maigre_kg) + ' kg de masse maigre</b> et ' +
-    f(r.dont_gras_kg) + ' kg de gras, à ±' + r.incertitude_kg.toFixed(1).replace('.', ',') +
-    ' kg près.' +
-    (r.maigre_significatif ? ''
-      : ' L\'écart de masse maigre reste dans cette marge : pas encore de quoi conclure.') +
-    '</p>';
+  const tete = '<b>' + f(r.variation_kg) + ' kg depuis le ' + depuis + '</b>, tour de taille ' +
+    (Math.abs(r.taille_cm) < 0.05 ? 'stable.' : f(r.taille_cm) + ' cm.');
+  if (r.verdict === 'indetermine') {
+    const large = r.part_grasse_min <= 0 && r.part_grasse_max >= 100;
+    return '<p class="note" style="margin-top:10px">' + tete + ' Pas encore de quoi dire si c\'est ' +
+      'surtout du gras ou de la masse maigre : ' +
+      (large ? 'au mètre ruban, une variation de cette taille reste trop incertaine.'
+             : 'la part de gras se situe entre ' + r.part_grasse_min + ' et ' + r.part_grasse_max + ' %.') +
+      ' Chaque relevé supplémentaire resserre l\'estimation.</p>';
+  }
+  const quoi = r.verdict === 'gras' ? 'surtout du gras' : 'surtout de la masse maigre';
+  return '<p class="note" style="margin-top:10px">' + tete + ' <b>C\'est ' + quoi + '</b> : part ' +
+    'de gras estimée entre ' + r.part_grasse_min + ' et ' + r.part_grasse_max + ' %. La masse ' +
+    'maigre comprend l\'eau et les réserves des muscles, pas seulement le muscle.</p>';
 }
 
 /* RESIDU D'EAU — l'ecart entre la derniere pesee et la tendance a cette date.
@@ -7384,11 +7498,15 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
        precisement le genre de resultat qu'on ne veut pas voir recalcule de tete. */
     repartition_du_poids: (function () {
       const r = repartitionPoids();
-      if (!r) return null;
+      if (!r.ok) return null;
+      /* Plus de « dont X kg de masse maigre » depuis la v15.7 : ce nombre etait surtout
+         l'hypothese de la formule, et un modele le cite comme un fait. On transmet le
+         verdict et la fourchette de la part de gras, rien qui se lise comme une pesee. */
       return { depuis: r.depuis, semaines: Math.round(r.jours / 7), releves: r.releves,
-               variation_kg: r.variation_kg, dont_gras_kg: r.dont_gras_kg,
-               dont_maigre_kg: r.dont_maigre_kg, incertitude_kg: r.incertitude_kg,
-               maigre_significatif: r.maigre_significatif };
+               sens: r.sens, variation_kg: r.variation_kg, tour_de_taille_cm: r.taille_cm,
+               part_de_gras_pct: { estimee: r.part_grasse_pct, min: r.part_grasse_min,
+                                   max: r.part_grasse_max },
+               verdict: r.verdict };
     })(),
     /* ECART A LA TENDANCE DE POIDS — la retention d'eau, deduite et non mesuree. */
     retention_eau: (function () {
@@ -7734,8 +7852,8 @@ function consignesConditionnelles(d, emploi) {
      la demande de l'utilisateur, « il faut que cette analyse apparaisse dans l'analyse du
      suivi » —, le Conseil ne s'en sert que si la question la touche. */
   if (d.repartition_du_poids) out.push(emploi === 'conseil'
-    ? '- LA RÉPARTITION DU POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit quelle part de la variation de poids est du gras et quelle part de la masse maigre depuis le premier relevé de circonférences, avec son incertitude. C\'est une MESURE SUR CETTE PERSONNE : quand "maigre_significatif" vaut vrai, elle prime sur les bandes de rythme générales — une prise mesurée comme majoritairement maigre ne se juge pas trop rapide sur la seule foi d\'un pourcentage hebdomadaire, et une perte qui préserve la masse maigre se dit. Quand il vaut faux, l\'écart de masse maigre reste dans la marge d\'erreur du ruban : dis-le, n\'en tire aucun sens. Cite les kilos tels quels, avec l\'incertitude ; sers-t\'en si la question touche le poids, la prise de muscle ou la composition, et pas autrement ;\n'
-    : '- LA RÉPARTITION DU POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit quelle part de la variation de poids est du gras et quelle part de la masse maigre depuis le premier relevé de circonférences, avec son incertitude. C\'est une MESURE SUR CETTE PERSONNE : quand "maigre_significatif" vaut vrai, elle prime sur les bandes de rythme générales — une prise mesurée comme majoritairement maigre ne se juge pas trop rapide sur la seule foi d\'un pourcentage hebdomadaire, et une perte qui préserve la masse maigre se dit. Quand il vaut faux, l\'écart de masse maigre reste dans la marge d\'erreur du ruban : dis-le, n\'en tire aucun sens. Cite les kilos tels quels, avec l\'incertitude ; CONSACRE-LUI UN CONSTAT : c\'est ce que la balance seule ne peut pas dire, et ce que l\'écran ne résume pas en une phrase ;\n');
+    ? '- LA COMPOSITION DE LA VARIATION DE POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit si la variation de poids depuis le premier relevé de circonférences est SURTOUT DU GRAS ("gras"), SURTOUT DE LA MASSE MAIGRE ("maigre"), ou INDÉTERMINÉE à la précision d\'un mètre ruban ("indetermine"), avec la fourchette de la part de gras. Si le verdict vaut "indetermine", dis-le en une phrase et ne présente la composition comme connue sous AUCUNE forme, ni d\'après ce bloc ni d\'après le rythme hebdomadaire. Si le verdict est tranché, il prime sur les bandes de rythme générales, qui ne sont que des moyennes de population. Dis toujours « masse maigre », jamais « muscle » : elle comprend l\'eau et le glycogène, qui peuvent peser 1 à 2 kg en début de prise ; sers-t\'en si la question touche le poids, la prise de muscle ou la composition, et pas autrement ;\n'
+    : '- LA COMPOSITION DE LA VARIATION DE POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit si la variation de poids depuis le premier relevé de circonférences est SURTOUT DU GRAS ("gras"), SURTOUT DE LA MASSE MAIGRE ("maigre"), ou INDÉTERMINÉE à la précision d\'un mètre ruban ("indetermine"), avec la fourchette de la part de gras. Si le verdict vaut "indetermine", dis-le en une phrase et ne présente la composition comme connue sous AUCUNE forme, ni d\'après ce bloc ni d\'après le rythme hebdomadaire. Si le verdict est tranché, il prime sur les bandes de rythme générales, qui ne sont que des moyennes de population. Dis toujours « masse maigre », jamais « muscle » : elle comprend l\'eau et le glycogène, qui peuvent peser 1 à 2 kg en début de prise ; CONSACRE-LUI UN CONSTAT ;\n');
   if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est présent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux que la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est une perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
   if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre l\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche d\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement d\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la période en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
   if (pauses) out.push('- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans "journees_en_pause" d\'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : vacances, semaine chargée, pause alimentaire planifiée. C\'est un outil légitime en phase de perte prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge d\'alcool, ne la présente jamais comme un manquement, et n\'en tire aucune conclusion sur la variation de poids — sodium, alcool et glycogène y retiennent de l\'eau et masquent la masse grasse. Si la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse les autres normalement. Si la personne est encore en pause, ne propose aucun changement à appliquer maintenant : formule ce qui sera à reprendre au retour ;\n');
@@ -8775,9 +8893,24 @@ function renderHistory() {
       'Une fois par mois.</p>');
   } else {
     const prem = ms[0];
+    /* L'ECART EST CELUI DE LA TENDANCE, et non la difference brute des deux bouts (v15.7).
+       La difference brute portait le bruit de deux jours isoles — digestion, eau, ruban — et
+       contredisait sous les yeux de l'utilisateur la ligne de composition juste en dessous,
+       calculee, elle, par regression : « taille +1,4 cm » au-dessus de « tour de taille
+       +0,6 cm ». Deux chiffres pour une meme grandeur. Sous trois releves d'un tour, il n'y a
+       pas de tendance a estimer : on garde la difference. */
+    const t0m = parseD(prem.date).getTime();
     const lignes = CHAMPS_MESURE.filter(c => der[c[0]] > 0).map(c => {
-      const d0 = prem[c[0]], d1 = der[c[0]];
-      const delta = (d0 > 0 && ms.length > 1) ? Math.round((d1 - d0) * 10) / 10 : null;
+      const pts = ms.filter(m => m[c[0]] > 0);
+      let delta = null;
+      if (pts.length >= REPART_RELEVES_MINI) {
+        const xs = pts.map(m => (parseD(m.date).getTime() - t0m) / DAY);
+        const r = regressionLineaire(xs, pts.map(m => m[c[0]]));
+        delta = Math.round(r.pente * (xs[xs.length - 1] - xs[0]) * 10) / 10;
+      } else if (pts.length === 2) {
+        delta = Math.round((pts[1][c[0]] - pts[0][c[0]]) * 10) / 10;
+      }
+      const d1 = der[c[0]];
       return '<tr><td>' + c[1].replace('Tour de ', '') + '</td><td><b>' +
         d1.toFixed(1).replace('.', ',') + '</b> cm</td><td class="' +
         (delta === null ? '' : delta < 0 ? 'bas' : delta > 0 ? 'haut' : '') + '">' +
@@ -8790,8 +8923,6 @@ function renderHistory() {
         ' % de masse grasse</b>' + (mg.maigre ? ', soit ' + mg.maigre.toFixed(1).replace('.', ',') +
         ' kg de masse maigre' : '') + '. Estimation par circonférences, à 3 ou 4 points près : ' +
         'suis la tendance, pas la valeur.</p>' : '') +
-      (ms.length < 3 ? '<p class="note">Il faut au moins trois relevés pour distinguer une ' +
-        'évolution du simple écart de mesure.</p>' : '') +
       noteRepartition());
   }
 }
@@ -8858,13 +8989,24 @@ $('#btnMesure').onclick = () => {
   /* Les hanches ne sont demandees aux hommes que s'ils en ont deja saisi : elles
      n'entrent pas dans leur formule, et un champ sans emploi est un champ qui decourage. */
   const champs = CHAMPS_MESURE.filter(c => c[0] !== 'hanches' || p.sex === 'f' || d.hanches > 0);
-  sheet('Mesures du mois',
-    '<p class="note">Le matin, à jeun, debout et détendu. Le mètre à plat, serré sans ' +
-    'comprimer la peau. Refais les mêmes gestes à chaque fois : c\'est la régularité du ' +
-    'geste qui rend la comparaison possible, pas la précision d\'une mesure isolée.</p>' +
+  /* CHAMPS VIDES depuis la v15.7, et non pre-remplis avec le releve precedent. Deux
+     raisons. Un champ pre-rempli pousse a confirmer l'ancienne valeur au lieu de lire le
+     ruban. Et surtout, avec des releves de taille et de cou chaque semaine, les tours de
+     cuisse et de bras du mois precedent etaient REENREGISTRES a l'identique a chaque
+     saisie : des mesures jamais prises entraient dans la serie.
+
+     CONDITIONS ET RYTHME. C'est l'etat du corps ce jour-la qui fait varier le tour de
+     taille : digestion, eau, respiration. On le stabilise par les conditions, et on le
+     moyenne par le nombre de releves. Trois mesures dans la meme seance n'y changent
+     rien : elles partagent toutes le meme etat du corps. */
+  sheet('Mesures',
+    '<p class="note">Le matin, à jeun, après être passé aux toilettes, debout et détendu. ' +
+    'Mètre à plat et horizontal, sans comprimer la peau, lu en fin d\'expiration normale. ' +
+    '<b>Taille et cou chaque semaine si tu peux</b>, les autres tours une fois par mois : ' +
+    'c\'est le nombre de relevés qui rend la comparaison possible, pas la répétition d\'une ' +
+    'mesure dans la même séance.</p>' +
     champs.map(c => '<label class="f"><span>' + c[1] + ' (cm)</span>' +
-      '<input class="in" id="ms_' + c[0] + '" inputmode="decimal" placeholder="' + c[2] + '" value="' +
-      (d[c[0]] > 0 ? d[c[0]] : '') + '"></label>').join('') +
+      '<input class="in" id="ms_' + c[0] + '" inputmode="decimal" placeholder="' + c[2] + '"></label>').join('') +
     '<label class="f"><span>Date</span><input class="in" id="ms_date" type="date" value="' + TODAY() + '"></label>' +
     '<div id="ms_bf" class="note"></div>' +
     '<button class="btn pri" id="ms_ok">Enregistrer</button>',
@@ -8873,7 +9015,9 @@ $('#btnMesure').onclick = () => {
         champs.forEach(c => { const v = parseFloat((el.querySelector('#ms_' + c[0]).value || '')
           .replace(',', '.')); if (v > 0) o[c[0]] = Math.round(v * 10) / 10; });
         return o; };
-      const apercu = () => { const o = lire();
+      const apercu = () => {
+        const lu = lire();
+        const o = Object.assign({}, (DB.mesures || []).find(m => m.date === lu.date) || {}, lu);
         const bf = masseGrasseNavy(p.sex, p.height, o.taille, o.cou, o.hanches);
         el.querySelector('#ms_bf').innerHTML = bf === null
           ? 'Renseigne au moins le tour de taille et le tour de cou pour estimer la masse grasse.'
@@ -8884,11 +9028,17 @@ $('#btnMesure').onclick = () => {
         const o = lire();
         if (!dateValide(o.date)) return toast('Date invalide');
         if (!CHAMPS_MESURE.some(c => o[c[0]] > 0)) return toast('Renseigne au moins une mesure');
-        DB.mesures = (DB.mesures || []).filter(m => m.date !== o.date).concat([o]);
+        /* FUSION avec un releve deja pose le meme jour : la taille le matin, la cuisse le
+           soir. Remplacer effacerait la premiere saisie, maintenant que les champs ne sont
+           plus pre-remplis. */
+        const ancien = (DB.mesures || []).find(m => m.date === o.date) || {};
+        DB.mesures = (DB.mesures || []).filter(m => m.date !== o.date)
+          .concat([Object.assign({}, ancien, o)]);
         /* LA BOUCLE SE FERME ICI. Le profil reprend la masse grasse estimee, ce qui
            rallume la disponibilite energetique sans que l'utilisateur ait a recopier
            un chiffre d'un ecran a l'autre. Un releve qui ne sert a rien ne se refait pas. */
-        const bf = masseGrasseNavy(p.sex, p.height, o.taille, o.cou, o.hanches);
+        const fus = DB.mesures.find(m => m.date === o.date) || o;
+        const bf = masseGrasseNavy(p.sex, p.height, fus.taille, fus.cou, fus.hanches);
         if (bf !== null) S().profile.bodyFat = Math.round(bf);
         save(); closeSheet(); renderHistory(); renderSettings();
         toast(bf === null ? 'Mesures enregistrées'
@@ -9479,9 +9629,10 @@ function docNutrition() {
     '<li><b>Prends tes repas en photo</b> au fil de la journée. Si l\'estimation se trompe, ' +
     'corrige-la : elle refait le calcul avec ta correction.</li>' +
     '<li><b>Monte sur la balance</b> de temps en temps, à jeun. Coach s\'occupe du reste.</li>' +
-    '<li><b>Une fois par mois, prends tes mesures</b>, dans la carte « Mesures » de l\'onglet Suivi. ' +
-    'C\'est ce qui distingue le gras perdu du muscle perdu, ce que la balance ne saura jamais ' +
-    'te dire.</li>' +
+    '<li><b>Prends tes mesures</b> dans la carte « Mesures » de l\'onglet Suivi : tour de ' +
+    'taille et tour de cou chaque semaine si tu peux, les autres tours une fois par mois. ' +
+    'Avec le temps, c\'est ce qui permet de dire si ton poids bouge surtout en gras ou en ' +
+    'masse maigre, ce que la balance seule ne dira jamais.</li>' +
     '</ol>' +
     pp('Un conseil pour bien démarrer : <b>ne cherche pas la perfection</b>. Une photo ' +
        'approximative vaut mille fois mieux qu\'un repas non enregistré. Ce qui compte, c\'est ' +
@@ -9582,9 +9733,12 @@ function docNutrition() {
 
     h2('Ce que la balance ne dit pas') +
     pp('Elle pèse tout en bloc : muscle, gras, eau, contenu digestif. Deux choses vont plus loin.') +
-    pp('<b>Tes mesures, une fois par mois.</b> Cinq tours (taille, cou, hanches, cuisse, bras), ' +
-       'pris détendu, à jeun, sans comprimer la peau. L\'important n\'est pas la précision ' +
-       'absolue, c\'est de refaire <b>les mêmes gestes</b> à chaque fois. Un tour de taille qui ' +
+    pp('<b>Tes mesures.</b> Le tour de taille et le tour de cou chaque semaine si tu peux, les ' +
+       'trois autres (hanches, cuisse, bras) une fois par mois, pris le matin à jeun, détendu, ' +
+       'sans comprimer la peau. Ce qui fait varier un tour de taille, c\'est surtout l\'état du ' +
+       'corps ce jour-là : digestion, eau, respiration. Trois mesures d\'affilée n\'y changent ' +
+       'rien, elles partagent le même état. Ce qui compte, c\'est de refaire <b>les mêmes ' +
+       'gestes</b> dans les mêmes conditions, et d\'accumuler les relevés. Un tour de taille qui ' +
        'baisse pendant qu\'une cuisse et un bras tiennent, c\'est du gras perdu avec le muscle ' +
        'gardé, et aucune balance ne te dira ça.') +
     pp('<b>Ta masse grasse s\'en déduit</b> (méthode Navy, environ 3 à 4 points d\'écart avec ' +
@@ -9593,14 +9747,15 @@ function docNutrition() {
        'En dessous de 30 kcal par kilo de masse maigre, le corps coupe dans ce qui n\'est pas ' +
        'vital : hormones, os, récupération. Tant que ta masse grasse reste inconnue, cette ' +
        'alerte ne peut pas être calculée, donc elle reste éteinte.') +
-    pp('<b>Où est passé ton poids.</b> Avec deux relevés espacés d\'au moins ' +
-       REPART_SEMAINES_MINI + ' semaines, Coach répartit ta variation de poids entre gras et ' +
-       'masse maigre : « +2,6 kg, dont +1,9 kg de masse maigre ». C\'est une mesure sur toi, ' +
-       'pas une moyenne de population, et l\'analyse s\'en sert en priorité pour juger ta prise ' +
-       'ou ta perte. La valeur absolue de ta masse grasse reste approximative, mais son ' +
-       '<b>évolution</b> est fiable : l\'erreur de la méthode est à peu près la même d\'un ' +
-       'relevé à l\'autre, et elle s\'annule dans la différence. Coach t\'indique toujours la ' +
-       'marge d\'erreur, et il se tait tant qu\'elle l\'emporte sur le résultat.') +
+    pp('<b>Gras ou masse maigre ?</b> Avec au moins ' + REPART_RELEVES_MINI + ' relevés étalés sur ' +
+       REPART_SEMAINES_MINI + ' semaines, et une pesée dans la semaine de chacun, Coach dit si ta ' +
+       'variation de poids est surtout du gras, surtout de la masse maigre, ou s\'il ne peut pas ' +
+       'encore trancher. Un mètre ruban ne lit qu\'au centimètre près et ton tour de taille ' +
+       'bouge d\'un jour à l\'autre : sur une prise lente, la réponse honnête est souvent ' +
+       '« pas encore ». Le tour de cou n\'entre pas dans ce calcul d\'évolution, parce que ' +
+       'l\'entraînement le fait grossir et que la formule le prendrait pour du gras perdu. ' +
+       'Et masse maigre ne veut pas dire muscle : elle comprend l\'eau et les réserves des ' +
+       'muscles, qui peuvent peser 1 à 2 kg au début d\'une prise.') +
     pp('<b>La rétention d\'eau.</b> Quand ta dernière pesée s\'écarte de ta tendance de plus ' +
        'de 500 g, Coach te dit que c\'est de l\'eau et cherche pourquoi dans les trois jours ' +
        'qui précèdent. En dessous de 500 g il se tait : c\'est la précision d\'une balance de ' +
