@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-FqHFWhT8geZgSN4zRrdTTGhO0mveOyQmS77GpxoBEQA='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-TZY1fLKzDAwhCTUQggs+ox9Uiup+SFLsfERjfKV2gSA='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.12</title>
+<title>Coach v15.13</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,19 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.13 — **Trois regles de portions ajoutees a la consigne des photos et des repas en texte.**
+             Ameliorations simples demandees par l'utilisateur, sans nouvelle fonction.
+             1. COMPTER PLUTOT QU'ESTIMER : quand un aliment se compte, le modele compte les
+                pieces et applique un poids usuel (oeuf 60 g, tranche de pain 30 g, pomme
+                150 g...), et cite le decompte dans la remarque.
+             2. CUIT OU CRU : poids et valeurs du cuit tel qu'il est servi, sauf mention « cru ».
+                Le riz cuit vaut environ 130 kcal pour 100 g contre 350 cru : la confusion
+                triplait les calories d'un feculent.
+             3. GRAISSES CACHEES : une ligne « huile de cuisson » ou « beurre » pour un aliment
+                poele, frit, roti ou gratine, jamais pour un produit dont les valeurs comptent
+                deja la friture.
+             Cout : +1020 caracteres, environ 420 jetons par photo, 5 % du budget d'une minute.
+
     v15.12 — **La cause des decomptes : une requete rejetee devant CHAQUE analyse.** Revue
              complete du sujet demandee par l'utilisateur, toujours trois decomptes de 68 s
              des la premiere analyse, sans autre usage de sa cle.
@@ -4287,6 +4300,17 @@ Repères : assiette plate 26-28 cm, assiette creuse 20-22 cm, couvert 19-21 cm, 
 16-18 cm, verre 200-250 ml, canette 33 cl, bol 300-400 ml, main d'adulte 18-19 cm.
 Raisonne en VOLUME et non en surface : à surface égale, une assiette bombée contient deux à trois \
 fois plus qu'une assiette rase. Estime l'épaisseur autant que l'étendue.
+Quand un aliment se compte, COMPTE les pièces et multiplie par leur poids usuel au lieu d'estimer \
+une masse à l'œil : œuf 60 g, tranche de pain 30 g, quart de baguette 60 g, yaourt 125 g, pomme 150 g, \
+banane 120 g, pomme de terre moyenne 150 g, tomate 120 g, carré de chocolat 5 g, biscuit sec 8 g. \
+Cite le décompte dans "remarque", par exemple « 3 pommes de terre ».
+Féculents, viandes et légumes : estime le poids CUIT tel qu'il est servi et applique les valeurs du \
+cuit, sauf si l'utilisateur précise « cru ». Le riz cuit vaut environ 130 kcal pour 100 g contre 350 \
+cru, les pâtes cuites 150 contre 360 crues : ne confonds jamais les deux.
+Un aliment poêlé, sauté, frit, rôti ou gratiné a absorbé de la matière grasse : ajoute une ligne \
+« huile de cuisson » ou « beurre » estimée (une cuillère à soupe d'huile vaut environ 10 g et 90 kcal). \
+N'ajoute rien pour un aliment cuit à l'eau, à la vapeur ou cru, ni pour un produit dont les valeurs \
+usuelles comptent déjà la friture : frites, chips, beignets, viennoiseries.
 Sans aucun repère fiable, donne la portion usuelle du plat et abaisse "confiance".`;
 
 const PROMPT_MULTI = `Les photos montrent toutes LE MÊME repas : angles différents, détails, ou emballages \
