@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-3SenCOl8NDMa0czvzmHNThQO/m5jsc0+K0KqGWOMGK8='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-pdqOMKyYdKWwjSlZuAFCSlwp2VgNVntMbZYlWI3zbw4='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.14</title>
+<title>Coach v15.15</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,28 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.15 — **Des courbes a la place du tableau des mesures.** Demande de l'utilisateur :
+             « plus visuel ». Une petite courbe par tour mesure, sur un axe des dates COMMUN
+             a toutes, du premier releve a aujourd'hui : deux points alignes verticalement
+             sont du meme jour. L'echelle couvre au moins 2 cm pour qu'un centimetre de
+             ruban ne fasse pas une falaise, trois graduations au plus, tendance en
+             pointilles des trois releves. L'ecart annonce reste celui de la tendance, le
+             meme chiffre que la ligne de composition en dessous.
+             LE POIDS EN TETE, sur le meme axe, a la demande de l'utilisateur : lire de haut en
+             bas que le poids et la taille baissent ensemble. Pas un graphe unique a deux
+             echelles, dont l'impression depend des echelles choisies. Sans chiffre d'ecart,
+             que la ligne de composition donne deja ; pesees de pause en cercle creux.
+             VERDICT GRAS OU MASSE MAIGRE DES 4 SEMAINES au lieu de 8, a la demande de
+             l'utilisateur. Le test a deux ecarts-types reste : une variation encore dans le
+             bruit du ruban ressort « indetermine ». Le remplissage initial du glycogene, que
+             les 8 semaines laissaient passer, peut desormais etre lu comme de la masse maigre.
+             L'ANALYSE LIT LES MESURES, a la demande de l'utilisateur : « elles peuvent expliquer
+             les variations de poids ». `tendanceSerie()`, seule source pour la courbe et pour
+             la charge, transmet l'evolution de chaque tour, si elle depasse l'erreur du ruban,
+             et le poids sur la meme periode. Une regle demande de rapprocher la taille du poids,
+             comme explication probable et sans chiffrer de gras. La note « un releve par mois »,
+             fausse depuis la v15.7, est corrigee.
+
     v15.14 — **Le verdict energetique de la semaine retire du Journal.** Demande de
              l'utilisateur : « je ne comprends pas ce bloc et il ne m'apporte rien ». Ses
              quatre variantes disparaissent de sous les jauges : « Energie tenue », l'ecart
@@ -2889,7 +2911,14 @@ function incertitudeBf(m) {
    peut mal suivre un CHANGEMENT : une erreur de pente ne s'annule pas dans une difference.
    Le verdict est un indice tire d'un metre ruban, pas une composition corporelle. */
 const REPART_RELEVES_MINI = 3;     // la carte le disait deja : trois releves pour une evolution
-const REPART_SEMAINES_MINI = 8;    // laisse passer le remplissage initial du glycogene
+/* 4 semaines et non plus 8 (v15.15), a la demande de l'utilisateur, qui prend taille et cou
+   chaque semaine. Les 8 semaines laissaient passer le remplissage initial du glycogene et
+   donnaient au signal le temps de sortir de l'erreur du ruban. Ce second role reste tenu :
+   le verdict n'est rendu qu'a deux ecarts-types, et une variation encore noyee dans le
+   bruit ressort « indetermine ». Le premier ne l'est plus : dans les premieres semaines
+   d'un changement de regime, 1 a 2 kg d'eau et de glycogene peuvent etre lus comme de la
+   masse maigre. La carte et la documentation le disent. */
+const REPART_SEMAINES_MINI = 4;
 const REPART_KG_MINI = 1;          // sous un kilo, « la part de la variation » n'a pas de sens
 const BRUIT_PESEE = 0.7;           // kg, ecart quotidien d'une pesee autour de sa tendance
 const Z_REPART = 2;                // deux ecarts-types
@@ -7870,9 +7899,36 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
       return {
         /* Note courte : la regle de lecture complete est dans le prompt, la repeter ici
            la ferait payer deux fois sur une charge qu'on vient de degraisser. */
-        note: 'cm, un releve par mois. Ruban a ±1 cm : juge sur trois releves.',
+        /* « un releve par mois » etait faux depuis la v15.7 : taille et cou sont
+           hebdomadaires. Corrige en v15.15, avec les tendances calculees. */
+        note: 'cm. Taille et cou chaque semaine, les autres tours une fois par mois. Ruban a ±1 cm. '
+            + 'Les evolutions sont CALCULEES dans "tendances" : lis-les, ne les recalcule pas '
+            + 'depuis les releves bruts.',
         releves: m.map(x => ({ date: x.date, taille: x.taille, cou: x.cou,
                                hanches: x.hanches, cuisse: x.cuisse, bras: x.bras })),
+        /* TENDANCES DES TOURS (v15.15) — les chiffres des courbes, sur TOUS les releves et
+           non sur les quatre envoyes : en compact, deux releves bruts ne disaient rien
+           d'une douzaine de semaines. Et le poids sur la MEME periode que la taille, pour
+           que le modele compare deux evolutions du meme intervalle. */
+        tendances: (function () {
+          const out = {};
+          CHAMPS_MESURE.forEach(c => {
+            const pts = mesures().filter(x => x[c[0]] > 0);
+            const t = tendanceSerie(pts, c[0]);
+            if (t.delta === null) return;
+            out[c[0]] = { depuis: pts[0].date, releves: pts.length, ecart_cm: t.delta,
+                          au_dela_du_ruban: !!t.sigma && Math.abs(t.delta) > Z_REPART * t.sigma };
+          });
+          const pt = mesures().filter(x => x.taille > 0);
+          if (pt.length >= 2) {
+            const d0 = pt[0].date, d1 = pt[pt.length - 1].date;
+            const pes = (DB.weights || []).filter(w => w && w.kg > 0 && w.date >= d0 && w.date <= d1 && !enPause(w.date))
+              .slice().sort((a, b) => a.date.localeCompare(b.date)).map(w => ({ date: w.date, poids: w.kg }));
+            const tp = tendanceSerie(pes, 'poids');
+            if (tp.delta !== null) out.poids_sur_la_periode_de_la_taille_kg = tp.delta;
+          }
+          return Object.keys(out).length ? out : undefined;
+        })(),
         masse_grasse_estimee_pct: mg ? mg.bf : null,
         masse_maigre_kg: mg ? mg.maigre : null
       };
@@ -8238,6 +8294,20 @@ function consignesConditionnelles(d, emploi) {
   if (d.repartition_du_poids) out.push(emploi === 'conseil'
     ? '- LA COMPOSITION DE LA VARIATION DE POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit si la variation de poids depuis le premier relevé de circonférences est SURTOUT DU GRAS ("gras"), SURTOUT DE LA MASSE MAIGRE ("maigre"), ou INDÉTERMINÉE à la précision d\'un mètre ruban ("indetermine"), avec la fourchette de la part de gras. Si le verdict vaut "indetermine", dis-le en une phrase et ne présente la composition comme connue sous AUCUNE forme, ni d\'après ce bloc ni d\'après le rythme hebdomadaire. Si le verdict est tranché, il prime sur les bandes de rythme générales, qui ne sont que des moyennes de population. Dis toujours « masse maigre », jamais « muscle » : elle comprend l\'eau et le glycogène, qui peuvent peser 1 à 2 kg en début de prise ; sers-t\'en si la question touche le poids, la prise de muscle ou la composition, et pas autrement ;\n'
     : '- LA COMPOSITION DE LA VARIATION DE POIDS EST CALCULÉE, ne la refais pas. Le bloc "repartition_du_poids" dit si la variation de poids depuis le premier relevé de circonférences est SURTOUT DU GRAS ("gras"), SURTOUT DE LA MASSE MAIGRE ("maigre"), ou INDÉTERMINÉE à la précision d\'un mètre ruban ("indetermine"), avec la fourchette de la part de gras. Si le verdict vaut "indetermine", dis-le en une phrase et ne présente la composition comme connue sous AUCUNE forme, ni d\'après ce bloc ni d\'après le rythme hebdomadaire. Si le verdict est tranché, il prime sur les bandes de rythme générales, qui ne sont que des moyennes de population. Dis toujours « masse maigre », jamais « muscle » : elle comprend l\'eau et le glycogène, qui peuvent peser 1 à 2 kg en début de prise ; CONSACRE-LUI UN CONSTAT ;\n');
+  /* LES MESURES EXPLIQUENT LE POIDS (v15.15). Demande de l'utilisateur : « elles peuvent
+     expliquer les variations de poids ». Le verdict gras / maigre n'existe qu'apres
+     plusieurs semaines et un kilo de variation ; avant lui, rien ne demandait au modele de
+     rapprocher la taille du poids, et c'est justement quand il est le plus utile — un poids
+     qui stagne pendant que la taille baisse. L'application dit si l'ecart depasse le ruban ;
+     le modele interprete, sans chiffrer de gras ni de muscle. Specialisee comme la
+     repartition : constat dans l'analyse, le Conseil seulement si la question le touche. */
+  const tours = d.mesures && d.mesures.tendances;
+  if (tours && tours.taille) {
+    const regle = '- LES MESURES EXPLIQUENT LA VARIATION DE POIDS. "mesures.tendances" donne, CALCULÉE par l\'application, l\'évolution de chaque tour depuis son premier relevé, et "poids_sur_la_periode_de_la_taille_kg" celle du poids sur la même période. "au_dela_du_ruban" dit si l\'écart dépasse l\'erreur d\'un mètre ruban : s\'il vaut false, ne commente PAS ce tour, ce n\'est que du bruit. Rapproche le sens du tour de taille de celui du poids : un poids stable (moins de 0,5 kg) ou en hausse avec une taille qui baisse est une recomposition probable, moins de gras et plus de masse maigre ou d\'eau ; un poids et une taille qui baissent ensemble, une perte qui touche le gras abdominal ; un poids et une taille qui montent ensemble, une prise probablement grasse. Présente-le comme une explication PROBABLE, jamais comme une mesure : n\'en déduis aucun kilo de gras ni de muscle. Si "repartition_du_poids" est présent, il prime sur ce rapprochement';
+    out.push(regle + (emploi === 'conseil'
+      ? ' ; sers-t\'en si la question touche le poids, la composition ou les mesures, et pas autrement ;\n'
+      : ' ; si la taille dépasse l\'erreur du ruban, CONSACRE-LUI UNE PHRASE dans un constat sur le poids ;\n'));
+  }
   if (d.retention_eau) out.push('- LE POIDS SAUTE D\'UN JOUR A L\'AUTRE SANS QUE RIEN NE CHANGE. Si "retention_eau" est présent, l\'écart à la tendance est de l\'eau et du contenu digestif : ne l\'interprète jamais comme une prise ou une perte de gras. Le bloc "mesures", quand il existe, tranche bien mieux que la balance — un tour de taille qui baisse pendant qu\'une cuisse et un bras tiennent est une perte de gras avec maintien de la masse maigre, et cela mérite d\'être dit ;\n');
   if (chg) out.push('- LES OBJECTIFS ONT PU CHANGER PENDANT LA PÉRIODE, et chaque journée est jugée contre l\'objectif qui était le sien ce jour-là. La colonne "kcal_cible" peut donc varier en marche d\'escalier : ce n\'est PAS une incohérence des données, c\'est une décision datée de la personne, listée dans "energie.changements_d_objectif". Ne reproche jamais un changement d\'objectif et ne compare jamais une journée à une cible qui n\'existait pas encore. Si la période en contient un, dis-le en une phrase et juge chaque segment pour ce qu\'il est ;\n');
   if (pauses) out.push('- PAUSE DÉCLARÉE. Une journée dont "en_pause" vaut 1 — ou comptée dans "journees_en_pause" d\'une ligne hebdomadaire — est une coupure VOLONTAIRE et assumée : vacances, semaine chargée, pause alimentaire planifiée. C\'est un outil légitime en phase de perte prolongée, pas un relâchement. Ne la compte NI dans un écart énergétique, NI dans une charge d\'alcool, ne la présente jamais comme un manquement, et n\'en tire aucune conclusion sur la variation de poids — sodium, alcool et glycogène y retiennent de l\'eau et masquent la masse grasse. Si la période en contient, dis en une phrase que ces jours sont écartés du bilan, puis analyse les autres normalement. Si la personne est encore en pause, ne propose aucun changement à appliquer maintenant : formule ce qui sera à reprendre au retour ;\n');
@@ -8826,6 +8896,136 @@ function lineChart(pts, debutPeriode) {
     '</div>';
 }
 
+/* COURBE D'UNE MESURE (v15.15) — une petite courbe par tour, a la place du tableau.
+
+   Le tableau avait ete prefere en v15.0 parce que les mesures etaient MENSUELLES : a douze
+   points par an, une courbe n'avait rien a montrer. Depuis la v15.7, taille et cou se
+   prennent chaque semaine, et l'utilisateur a demande « plus visuel ».
+
+   Deux regles pour ne pas faire dire au trace plus que le ruban ne mesure :
+     - l'echelle verticale couvre au moins MESURE_ECHELLE_MIN cm. Le ruban se trompe d'un
+       centimetre environ (ERREUR_RUBAN) ; une echelle ajustee a deux mesures a 0,3 cm
+       d'ecart ferait d'un bruit une falaise ;
+     - la tendance, en pointilles, n'apparait qu'a partir de REPART_RELEVES_MINI releves,
+       et l'ecart annonce est CELUI DE LA TENDANCE, comme le tableau le faisait depuis la
+       v15.7 : le meme chiffre que la ligne de composition en dessous. */
+/* TENDANCE D'UNE SERIE DE RELEVES (v15.15) — UNE SEULE SOURCE pour la courbe affichee et
+   pour l'analyse du Suivi : le modele lit exactement le chiffre que l'utilisateur voit.
+   Regression des trois releves, difference brute a deux, rien a un.
+
+   `sigma` est l'incertitude de cet ecart, pour dire s'il depasse l'erreur du ruban. Le
+   bruit retenu est le plus grand de l'ecart-type des residus et de ERREUR_RUBAN, comme pour
+   la composition : un releve tres regulier ne doit pas faire croire a un ruban plus precis
+   qu'il n'est. Cette incertitude n'a de sens que pour un tour, en centimetres. */
+function tendanceSerie(pts, cle) {
+  if (!pts || pts.length < 2) return { delta: null, reg: null, sigma: null };
+  const t0 = parseD(pts[0].date).getTime();
+  const xs = pts.map(m => (parseD(m.date).getTime() - t0) / DAY), ys = pts.map(m => m[cle]);
+  const T = xs[xs.length - 1] - xs[0];
+  if (pts.length >= REPART_RELEVES_MINI) {
+    const reg = regressionLineaire(xs, ys);
+    const bruit = Math.max(reg.s, ERREUR_RUBAN);
+    return { delta: Math.round(reg.pente * T * 10) / 10, reg: reg,
+             sigma: reg.sxx > 0 ? bruit * T / Math.sqrt(reg.sxx) : null };
+  }
+  return { delta: Math.round((ys[ys.length - 1] - ys[0]) * 10) / 10, reg: null,
+           sigma: ERREUR_RUBAN * Math.SQRT2 };
+}
+
+const MESURE_ECHELLE_MIN = 2;      // cm
+const MTOP = 6, MBASE = 62, MLAB = 76, MH = 82;
+
+/* `x0` et `x1` : bornes de l'axe des dates, COMMUNES a toutes les courbes de la carte.
+   Sans elles, chaque courbe s'etirait sur ses propres releves : la cuisse, mesuree un
+   mois plus tot, finissait au meme bord droit que la taille mesuree hier, et deux points
+   alignes verticalement ne correspondaient plus a la meme date.
+
+   `opt` sert la courbe du POIDS, placee en tete de la meme carte sur le meme axe (v15.15,
+   demande de l'utilisateur : « mettre le poids et les mesures sur le meme graphe »). Un
+   graphe unique a deux echelles, kg et cm, a ete ecarte : l'impression d'y voir les deux
+   courbes parallele ou divergente depend entierement des echelles choisies. Empilees sur
+   le meme axe des dates, elles se lisent de haut en bas sans ce piege.
+     unite     : 'cm' ou 'kg' ;
+     echelleMin: amplitude verticale minimale ;
+     ecart     : afficher l'ecart de tendance. FAUX pour le poids, dont la variation est deja
+                 donnee par la ligne de composition, calculee autrement : deux chiffres pour
+                 une meme grandeur, c'est la contradiction corrigee en v15.7 ;
+     fins      : points fins, pesees de pause en cercle creux et hors tendance. */
+function courbeMesure(cle, libelle, ms, x0, x1, opt) {
+  const o = Object.assign({ unite: 'cm', echelleMin: MESURE_ECHELLE_MIN, ecart: true, fins: false }, opt || {});
+  const pts = ms.filter(m => m[cle] > 0);
+  if (!pts.length) return '';
+  const ys = pts.map(m => m[cle]);
+  const t0 = parseD(pts[0].date).getTime();
+  const der = ys[ys.length - 1];
+  /* Les points qui fondent la tendance : tous pour une mesure, hors pause pour le poids. */
+  const ptsR = o.fins ? pts.filter(m => !m.pause) : pts;
+  const jours = ptsR.map(m => (parseD(m.date).getTime() - t0) / DAY);
+  const ysR = ptsR.map(m => m[cle]);
+  const fmt = v => v.toFixed(1).replace('.', ',');
+  const depuis = parseD(pts[0].date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+
+  /* L'ecart : celui de la tendance des trois releves, la difference brute a deux, rien a un. */
+  /* `tendanceSerie` mesure ses jours depuis le premier point de la serie : la tendance du
+     poids, hors pause, peut donc partir un peu apres `t0`. Le trace en tient compte. */
+  const ts = tendanceSerie(ptsR, cle);
+  const delta = ts.delta, reg = ts.reg;
+  const ecart = delta === null || !o.ecart ? '' : ' · ' + (delta > 0 ? '+' : delta < 0 ? '−' : '') +
+    fmt(Math.abs(delta)) + ' ' + o.unite + ' depuis le ' + depuis;
+  const tete = '<div class="row between" style="margin-top:12px;font-size:13.5px">' +
+    '<span style="color:var(--dim2)">' + esc(libelle.replace('Tour de ', '').replace(/^./, c => c.toUpperCase())) + '</span>' +
+    '<span><b>' + fmt(der) + '</b> ' + o.unite + '<span class="tiny">' + ecart + '</span></span></div>';
+  if (pts.length < 2) {
+    return tete + '<div class="tiny" style="margin-top:2px">' +
+      (o.fins ? 'Une seule pesée' : 'Un seul relevé') + ' : la courbe apparaîtra au suivant.</div>';
+  }
+
+  const ymin = Math.min(...ys), ymax = Math.max(...ys);
+  const span = Math.max(ymax - ymin, o.echelleMin);
+  const milieu = (ymin + ymax) / 2, lo = milieu - span * 0.62, hi = milieu + span * 0.62;
+  const gauche = CGX, droite = CW - 4, plotH = MBASE - MTOP;
+  const X = t => x1 === x0 ? (gauche + droite) / 2 : gauche + ((t - x0) / (x1 - x0)) * (droite - gauche);
+  const Y = v => MBASE - ((v - lo) / (hi - lo)) * plotH;
+
+  /* Trois graduations au plus : la courbe ne fait que 56 px de haut. */
+  let pas = pasEchelle(hi - lo);
+  while ((hi - lo) / pas > 3) pas *= 2;
+  let grille = '', ordonnee = '';
+  for (let v = Math.ceil(lo / pas) * pas; v <= hi + 1e-9; v += pas) {
+    const y = Y(v);
+    if (y < MTOP - 1 || y > MBASE + 1) continue;
+    grille += '<line class="gl" x1="' + gauche + '" y1="' + y.toFixed(2) + '" x2="' + droite +
+      '" y2="' + y.toFixed(2) + '" opacity=".55"/>';
+    ordonnee += '<text class="gt" x="' + (gauche - 6) + '" y="' + (y + 3.4).toFixed(2) +
+      '" text-anchor="end">' + fmtKg(v, pas) + '</text>';
+  }
+  const date = t => { const d = new Date(t); return d.getDate() + '/' + (d.getMonth() + 1); };
+  const abscisse = '<text class="gt" x="' + gauche + '" y="' + MLAB + '" text-anchor="start">' + date(x0) + '</text>' +
+    '<text class="gt" x="' + droite + '" y="' + MLAB + '" text-anchor="end">' + date(x1) + '</text>';
+
+  const xsPix = pts.map(m => X(parseD(m.date).getTime()));
+  const d = ys.map((v, i) => (i ? 'L' : 'M') + xsPix[i].toFixed(2) + ' ' + Y(v).toFixed(2)).join(' ');
+  const dots = ys.map((v, i) => '<circle cx="' + xsPix[i].toFixed(2) + '" cy="' + Y(v).toFixed(2) +
+    '" r="' + (o.fins ? 1.7 : 2.6) + '"' + (pts[i].pause ? ' fill="#ffffff" stroke="#141414" stroke-width="1.2"'
+                                                     : ' fill="#141414"') + '/>').join('');
+  let tendance = '';
+  if (reg) {
+    const mx = jours.reduce((a, b) => a + b, 0) / jours.length;
+    const my = ysR.reduce((a, b) => a + b, 0) / ysR.length;
+    const yAt = j => my + reg.pente * (j - mx);
+    const xA = X(t0 + jours[0] * DAY), xB = X(t0 + jours[jours.length - 1] * DAY);
+    tendance = '<line x1="' + xA.toFixed(2) + '" y1="' + Y(yAt(jours[0])).toFixed(2) +
+      '" x2="' + xB.toFixed(2) + '" y2="' + Y(yAt(jours[jours.length - 1])).toFixed(2) +
+      '" stroke="#84878c" stroke-width="1.6" stroke-dasharray="5 4"/>';
+  }
+  return tete + '<svg class="chart" viewBox="0 0 ' + CW + ' ' + MH + '" role="img" aria-label="' +
+    esc(libelle) + ', ' + pts.length + (o.fins ? ' pesées' : ' relevés') + '">' + grille +
+    '<line class="gl" x1="' + gauche + '" y1="' + MBASE + '" x2="' + droite + '" y2="' + MBASE + '"/>' +
+    tendance +
+    '<path d="' + d + '" fill="none" stroke="#141414" stroke-width="' + (o.fins ? 1.5 : 2) + '" stroke-linejoin="round" stroke-linecap="round"/>' +
+    dots + ordonnee + abscisse + '</svg>';
+}
+
 /* Une graduation au demi-kilo doit montrer sa decimale, une au kilo non : afficher
    « 76,0 » a cote de « 77,0 » suggere une precision que le pas ne porte pas. */
 function fmtKg(v, pas) {
@@ -9269,10 +9469,8 @@ function renderHistory() {
     (eau.causes && eau.causes.length
       ? ' Probablement ' + eau.causes.join(', ') + '.' : '') + '</div>');
 
-  /* TABLEAU DES MESURES plutot qu'un graphique : a douze points par an, un tableau se lit
-     mieux qu'une courbe, et il montre l'ecart depuis la premiere mesure — la seule
-     comparaison qui ait du sens quand l'erreur de ruban vaut un centimetre et que la
-     variation mensuelle en vaut rarement plus. */
+  /* COURBES DES MESURES (v15.15), une par tour mesure, a la place du tableau de la v15.0.
+     Voir `courbeMesure` pour l'echelle minimale et la tendance. */
   const ms = mesures();
   const der = derniereMesure();
   const mg = masseGrasseDe(der);
@@ -9284,33 +9482,22 @@ function renderHistory() {
       'à estimer ta masse grasse, et à rallumer l\'alerte de disponibilité énergétique. ' +
       'Une fois par mois.</p>');
   } else {
-    const prem = ms[0];
-    /* L'ECART EST CELUI DE LA TENDANCE, et non la difference brute des deux bouts (v15.7).
-       La difference brute portait le bruit de deux jours isoles — digestion, eau, ruban — et
-       contredisait sous les yeux de l'utilisateur la ligne de composition juste en dessous,
-       calculee, elle, par regression : « taille +1,4 cm » au-dessus de « tour de taille
-       +0,6 cm ». Deux chiffres pour une meme grandeur. Sous trois releves d'un tour, il n'y a
-       pas de tendance a estimer : on garde la difference. */
-    const t0m = parseD(prem.date).getTime();
-    const lignes = CHAMPS_MESURE.filter(c => der[c[0]] > 0).map(c => {
-      const pts = ms.filter(m => m[c[0]] > 0);
-      let delta = null;
-      if (pts.length >= REPART_RELEVES_MINI) {
-        const xs = pts.map(m => (parseD(m.date).getTime() - t0m) / DAY);
-        const r = regressionLineaire(xs, pts.map(m => m[c[0]]));
-        delta = Math.round(r.pente * (xs[xs.length - 1] - xs[0]) * 10) / 10;
-      } else if (pts.length === 2) {
-        delta = Math.round((pts[1][c[0]] - pts[0][c[0]]) * 10) / 10;
-      }
-      const d1 = der[c[0]];
-      return '<tr><td>' + c[1].replace('Tour de ', '') + '</td><td><b>' +
-        d1.toFixed(1).replace('.', ',') + '</b> cm</td><td class="' +
-        (delta === null ? '' : delta < 0 ? 'bas' : delta > 0 ? 'haut' : '') + '">' +
-        (delta === null ? '—' : (delta > 0 ? '+' : delta < 0 ? '−' : '') +
-          Math.abs(delta).toFixed(1).replace('.', ',') + ' cm') + '</td></tr>';
-    }).join('');
-    poserHtml($('#mTable'), '<table class="mes"><thead><tr><th></th><th>actuel</th>' +
-      '<th>depuis le ' + parseD(prem.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }) + '</th></tr></thead><tbody>' + lignes + '</tbody></table>' +
+    const x0 = parseD(ms[0].date).getTime();
+    const x1 = Math.max(parseD(TODAY()).getTime(), parseD(ms[ms.length - 1].date).getTime());
+    /* LE POIDS EN TETE, sur le meme axe des dates : toutes les pesees de la periode. */
+    const pesees = (DB.weights || []).filter(w => w && w.kg > 0 && w.date >= ms[0].date && w.date <= TODAY())
+      .slice().sort((a, b) => a.date.localeCompare(b.date))
+      .map(w => ({ date: w.date, poids: w.kg, pause: enPause(w.date) }));
+    const enPauseVisible = pesees.some(w => w.pause);
+    const courbes = courbeMesure('poids', 'Poids', pesees, x0, x1,
+                                 { unite: 'kg', echelleMin: 2, ecart: false, fins: true }) +
+      CHAMPS_MESURE.map(c => courbeMesure(c[0], c[1], ms, x0, x1)).join('');
+    const avecTendance = CHAMPS_MESURE.some(c => ms.filter(m => m[c[0]] > 0).length >= REPART_RELEVES_MINI);
+    const legende = avecTendance
+      ? '<div class="tiny" style="text-align:right;margin-top:2px">- - tendance · écart de la tendance depuis le premier relevé' +
+        (enPauseVisible ? '<br>○ pesée prise en pause, hors tendance' : '') + '</div>'
+      : '';
+    poserHtml($('#mTable'), '<div style="margin-top:-12px">' + courbes + '</div>' + legende +
       (mg ? '<p class="note" style="margin-top:10px"><b>' + mg.bf.toFixed(1).replace('.', ',') +
         ' % de masse grasse</b>' + (mg.maigre ? ', soit ' + mg.maigre.toFixed(1).replace('.', ',') +
         ' kg de masse maigre' : '') + '. Estimation par circonférences, à 3 ou 4 points près : ' +
