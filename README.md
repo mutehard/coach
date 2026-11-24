@@ -22,8 +22,10 @@ python3 preparer-deploiement.py
 cd Deploiement && git add -A && git commit -m "Coach vX.Y" && git push
 ```
 
-Le script recopie la dernière version en `index.html`. GitHub Pages republie tout seul
-en une minute environ.
+Le script scelle l'empreinte de sécurité (CSP) de la dernière version, passe cinq
+contrôles automatiques — un seul échec et rien n'est copié —, puis la recopie en
+`index.html`. GitHub Pages republie tout seul en une minute environ. Un push ne suffit pas
+à affirmer la mise en ligne : vérifier le titre réellement servi par le site.
 
 ## À ne pas faire
 
