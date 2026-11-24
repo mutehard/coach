@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-pdqOMKyYdKWwjSlZuAFCSlwp2VgNVntMbZYlWI3zbw4='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7SoyHtL60XddHhWqBg35g1z70dcqUOUjap8yYXwjXCo='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.15</title>
+<title>Coach v15.16</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,29 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.16 — **Un deficit qui « expliquait » une prise de poids.** Analyse relevee chez
+             l'utilisateur : « Le deficit reel de 407 kcal depasse le deficit prevu, ce qui
+             explique la prise de poids de 0,9 kg ». Les deux mesures se contredisaient —
+             407 kcal de deficit annoncent -0,37 kg par semaine, la balance montrait +0,21 —
+             et rien ne disait au modele quoi faire d'une contradiction.
+             1. `coherenceDeficitPoids()` compare la variation que le deficit annonce a celle
+                que la balance mesure, SUR LA MEME FENETRE, et rend l'ecart inexplique en kcal
+                par jour. Incoherent au-dela de 300 kcal et de deux fois l'incertitude de la
+                pente de poids. Bloc `coherence_deficit_poids` dans la charge.
+             2. Regle conditionnelle : ne jamais presenter l'un comme la cause de l'autre, dire
+                que les mesures se contredisent, citer l'ecart, puis les causes probables dans
+                l'ordre — apports sous-estimes, eau et glycogene, masse maigre si les mesures
+                le soutiennent, depense surestimee. Constat dans l'analyse ; le Conseil s'en
+                sert si la question touche le poids, le deficit ou les apports.
+             3. LES CAUSES SUIVENT LE SENS DE L'ECART ET LES MESURES, remarque de l'utilisateur :
+                « la prise de poids ne peut pas s'expliquer par une prise de masse maigre ? ».
+                Taille en baisse au-dela du ruban pendant que le poids monte : masse maigre et
+                eau EN PREMIER. Balance plus basse que prevu : perte d'eau et de glycogene en
+                tete, et non des apports sous-estimes, qui seraient un contresens.
+             4. L'ECART EN KCAL SUPPOSE QUE TOUT EST DU GRAS (7700 kcal/kg) : l'eau, le glycogene
+                et le muscle valent bien moins. Le bloc et la regle le disent, et interdisent de
+                presenter l'ecart comme des calories mangees en trop.
+
     v15.15 — **Des courbes a la place du tableau des mesures.** Demande de l'utilisateur :
              « plus visuel ». Une petite courbe par tour mesure, sur un axe des dates COMMUN
              a toutes, du premier releve a aujourd'hui : deux points alignes verticalement
@@ -3096,6 +3119,63 @@ function residuEau() {
   if (seance) causes.push('séance récente');
   return { ecart: ecart, notable: true, date: d.date, causes: causes,
            tendance: Math.round(tr.fin * 10) / 10, pesee: d.kg };
+}
+
+/* COHERENCE ENTRE LE DEFICIT MESURE ET LA BALANCE (v15.16).
+
+   Analyse relevee chez l'utilisateur le 24 novembre 2026 : « Le deficit reel de 407 kcal
+   depasse le deficit prevu, ce qui explique la prise de poids de 0,9 kg ». Un deficit
+   n'explique pas une prise. Les deux mesures se CONTREDISAIENT — 407 kcal de deficit
+   annoncent -0,37 kg par semaine, la balance montrait +0,21 — et le modele, a qui la
+   consigne demande « quel comportement explique un chiffre », les a reliees a l'envers.
+
+   La regle de la v13.15 s'applique : l'application calcule, le modele interprete. On
+   compare donc ICI la variation que le deficit annonce a celle que la balance mesure,
+   SUR LA MEME FENETRE — la tendance transmise ailleurs porte sur huit semaines, le
+   deficit sur la periode analysee, et les comparer tels quels fabriquerait des
+   contradictions. L'ecart est rendu en kcal par jour : c'est l'energie que le calcul ne
+   retrouve pas, et la premiere explication est presque toujours un apport sous-estime.
+
+   Le seuil n'est pas fixe a l'aveugle : un ecart n'est declare incoherent que s'il depasse
+   a la fois COHERENCE_ECART_MIN et deux fois l'incertitude de la pente de poids, elle-meme
+   tiree des residus et bornee par le bruit d'une pesee. */
+const KCAL_PAR_KG_GRAS = 7700;      // energie d'un kilo de tissu adipeux
+const COHERENCE_PESEES_MIN = 6;
+const COHERENCE_JOURS_MIN = 21;
+const COHERENCE_ECART_MIN = 300;    // kcal/jour, en dessous l'ecart est dans l'erreur ordinaire des estimations
+
+function coherenceDeficitPoids(jours, p, jusqu) {
+  const em = ecartAuMaintien(jours, p);
+  if (em.mesure === undefined || em.mesure === null) return null;
+  const pes = (DB.weights || []).filter(w => w && w.kg > 0 && w.date >= jours[0] && w.date <= jusqu && !enPause(w.date))
+    .slice().sort((a, b) => a.date.localeCompare(b.date)).map(w => ({ date: w.date, poids: w.kg }));
+  if (pes.length < COHERENCE_PESEES_MIN) return null;
+  const t0 = parseD(pes[0].date).getTime();
+  const xs = pes.map(w => (parseD(w.date).getTime() - t0) / DAY);
+  const span = xs[xs.length - 1];
+  if (span < COHERENCE_JOURS_MIN) return null;
+  const reg = regressionLineaire(xs, pes.map(w => w.poids));
+  if (!(reg.sxx > 0)) return null;
+  const mesureKgSem = reg.pente * 7;
+  const attenduKgSem = em.mesure * 7 / KCAL_PAR_KG_GRAS;   // em.mesure < 0 en deficit
+  const ecartKcal = (mesureKgSem - attenduKgSem) * KCAL_PAR_KG_GRAS / 7;
+  const seKcal = Math.max(reg.s, BRUIT_PESEE) / Math.sqrt(reg.sxx) * KCAL_PAR_KG_GRAS;
+  const seuil = Math.max(COHERENCE_ECART_MIN, 2 * seKcal);
+  return {
+    deficit_reel_kcal_par_jour: Math.round(-em.mesure),
+    variation_attendue_kg_par_semaine: Math.round(attenduKgSem * 100) / 100,
+    variation_mesuree_kg_par_semaine: Math.round(mesureKgSem * 100) / 100,
+    ecart_inexplique_kcal_par_jour: Math.round(ecartKcal),
+    seuil_kcal_par_jour: Math.round(seuil),
+    sur_jours: Math.round(span), pesees: pes.length,
+    verdict: Math.abs(ecartKcal) >= seuil ? 'incoherent' : 'coherent',
+    /* 7700 kcal/kg est l'energie du GRAS. L'ecart en kcal suppose donc que toute la
+       variation de poids est du gras : l'eau, le glycogene et le muscle pesent bien moins
+       d'energie par kilo. Remarque de l'utilisateur, v15.16. */
+    note: 'ecart calcule comme si toute la variation de poids etait du gras (7700 kcal/kg). '
+        + 'Eau, glycogene et muscle valent bien moins par kilo : s ils entrent en jeu, '
+        + 'l ecart energetique reel est plus petit.'
+  };
 }
 
 /* PROJECTION — ou mene le rythme actuel, et quand.
@@ -7873,6 +7953,9 @@ function donneesCoach(nbJours, exclureJourCourant, compact) {
             + 'plus petit.'
       };
     })(),
+    /* COHERENCE DEFICIT / BALANCE — calculee par l'application, voir
+       `coherenceDeficitPoids`. Absent si la fenetre n'a pas assez de pesees. */
+    coherence_deficit_poids: coherenceDeficitPoids(jours, p, jusqu),
     /* Calcule par `alcoolHebdo()`, sur sept jours glissants. Le modele recevait
        auparavant soixante lignes journalieres et un plafond hebdomadaire, a charge pour
        lui de sommer la bonne fenetre : il en choisissait une differente a chaque appel. */
@@ -8301,6 +8384,33 @@ function consignesConditionnelles(d, emploi) {
      qui stagne pendant que la taille baisse. L'application dit si l'ecart depasse le ruban ;
      le modele interprete, sans chiffrer de gras ni de muscle. Specialisee comme la
      repartition : constat dans l'analyse, le Conseil seulement si la question le touche. */
+  /* LE DEFICIT ET LA BALANCE SE CONTREDISENT (v15.16). Sans cette regle, le modele a ecrit
+     qu'un deficit « explique » une prise de poids. */
+  const coh = d.coherence_deficit_poids;
+  if (coh && coh.verdict === 'incoherent') {
+    /* LES CAUSES DEPENDENT DU SENS DE L'ECART ET DES MESURES (v15.16, remarque de
+       l'utilisateur : « la prise de poids ne peut pas s'expliquer par une prise de masse
+       maigre ? »). Une liste figee mettait « apports sous-estimes » en tete dans tous les
+       cas — a contresens quand la balance descend PLUS vite que le deficit ne l'annonce, et
+       en retard sur les mesures quand la taille baisse nettement pendant que le poids monte :
+       c'est alors la masse maigre et l'eau qui expliquent le mieux. */
+    const taille = d.mesures && d.mesures.tendances && d.mesures.tendances.taille;
+    const tailleBaisse = !!(taille && taille.au_dela_du_ruban && taille.ecart_cm < 0);
+    let causes;
+    if (coh.ecart_inexplique_kcal_par_jour > 0) {
+      const maigre = 'de la masse maigre et de l\'eau : glycogène et eau stockés après une reprise d\'entraînement, une hausse des glucides ou un repas salé, 1 à 2 kg en quelques semaines puis un palier ; du muscle, mais jamais plus de 0,5 à 1 kg par mois et moins encore en déficit';
+      const apports = 'des apports sous-estimés, car une estimation sur photo se trompe de 20 à 30 % et les sauces, l\'huile et les grignotages non saisis s\'additionnent';
+      causes = tailleBaisse
+        ? ' EN PREMIER, ' + maigre + ' : le tour de taille baisse au-delà de l\'erreur du ruban pendant que le poids monte, c\'est une recomposition probable ; ensuite ' + apports + ' ; enfin une dépense de maintien surestimée'
+        : ' dans cet ordre : ' + apports + ' ; ' + maigre + ', à n\'avancer que si "mesures.tendances" ou "repartition_du_poids" le soutiennent, et en rappelant que la part eau et glycogène plafonne au bout de quelques semaines ; une dépense de maintien surestimée';
+    } else {
+      causes = ' dans cet ordre : une perte d\'eau et de glycogène, typique d\'un début de régime ou d\'une baisse des glucides ; des apports surestimés ; une dépense de maintien sous-estimée';
+    }
+    const regleC = '- LE DÉFICIT ET LA BALANCE SE CONTREDISENT, c\'est CALCULÉ dans "coherence_deficit_poids" : le déficit mesuré annonce une variation de poids ("variation_attendue_kg_par_semaine") que la balance ne montre pas ("variation_mesuree_kg_par_semaine"), sur la même période. NE PRÉSENTE JAMAIS L\'UN COMME LA CAUSE DE L\'AUTRE : un déficit n\'explique pas une prise de poids, un surplus n\'explique pas une perte. Dis que les deux mesures se contredisent et cite "ecart_inexplique_kcal_par_jour" en précisant qu\'il est calculé comme si toute la variation de poids était du gras : un kilo d\'eau, de glycogène ou de muscle représente bien moins d\'énergie, et l\'écart réel est plus petit dès qu\'ils entrent en jeu. Ne le présente JAMAIS comme des calories mangées en trop. Donne ensuite les causes probables' + causes;
+    out.push(regleC + (emploi === 'conseil'
+      ? ' ; sers-t\'en si la question touche le poids, le déficit ou les apports, et pas autrement ;\n'
+      : ' ; CONSACRE-LUI UN CONSTAT ;\n'));
+  }
   const tours = d.mesures && d.mesures.tendances;
   if (tours && tours.taille) {
     const regle = '- LES MESURES EXPLIQUENT LA VARIATION DE POIDS. "mesures.tendances" donne, CALCULÉE par l\'application, l\'évolution de chaque tour depuis son premier relevé, et "poids_sur_la_periode_de_la_taille_kg" celle du poids sur la même période. "au_dela_du_ruban" dit si l\'écart dépasse l\'erreur d\'un mètre ruban : s\'il vaut false, ne commente PAS ce tour, ce n\'est que du bruit. Rapproche le sens du tour de taille de celui du poids : un poids stable (moins de 0,5 kg) ou en hausse avec une taille qui baisse est une recomposition probable, moins de gras et plus de masse maigre ou d\'eau ; un poids et une taille qui baissent ensemble, une perte qui touche le gras abdominal ; un poids et une taille qui montent ensemble, une prise probablement grasse. Présente-le comme une explication PROBABLE, jamais comme une mesure : n\'en déduis aucun kilo de gras ni de muscle. Si "repartition_du_poids" est présent, il prime sur ce rapprochement';
