@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-JEOnxYCJ3rcUCkbX21f0JU7xENG1aQcdZ5iOmAkncIA='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-JBc4pg9RW1YeJ22lk4q0wNuZlyofyn09hdq5BWLTUVE='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.17</title>
+<title>Coach v15.18</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,22 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.18 — **Corrections de la revue complete du 24 novembre 2026.** Securite et calculs
+             sans defaut ; trois corrections de code.
+             1. LA MASSE GRASSE DU PROFIL VIENT DU RELEVE LE PLUS RECENT. Un releve saisi apres
+                coup, date d'avant le dernier, imposait sa valeur au profil, donc au poids de
+                reference, aux planchers de proteines et au seuil de disponibilite energetique.
+                L'apercu de la saisie le dit desormais.
+             2. La fenetre d'attente longue parlait d'« analyse photo » devant une analyse du
+                Suivi ou une question au Conseil.
+             3. Six regles CSS de l'ancien tableau des mesures, sans emploi depuis la v15.15,
+                retirees.
+             4. EAU : 1750 ml pour un homme, 1500 pour une femme, au lieu de 1500 pour tous.
+                La spec derivait elle-meme 1,75 a 2,0 L de boisson pour l'homme (EFSA) et
+                fixait pourtant le plancher en dessous ; l'utilisateur a choisi de suivre la
+                preconisation. Revision 6 des reglages : seules les installations restees a
+                1500 montent, avec une entree datee dans l'historique des objectifs.
+
     v15.17 — **Une courbe de la masse grasse estimee, sous celle du poids.** Demande de
              l'utilisateur, qui voulait savoir si l'evolution du poids tient au gras ou au
              muscle. Un point par releve, calcule par `masseGrasseNavy` comme la carte : le
@@ -2057,13 +2073,6 @@ select.in{-webkit-appearance:none;appearance:none;padding-right:36px;text-overfl
 .calcmg{margin:-6px 0 12px;border:1px solid var(--line);padding:10px;background:var(--card2)}
 .calcmg summary{font-size:13px;cursor:pointer;color:var(--acc-l);font-weight:600}
 .calcmg .note{margin:8px 0}
-table.mes{width:100%;border-collapse:collapse;font-size:13.5px}
-table.mes th{font-size:10px;text-transform:uppercase;color:var(--dim2);text-align:right;
-  font-weight:600;letter-spacing:.3px;padding-bottom:4px}
-table.mes th:first-child{text-align:left}
-table.mes td{padding:5px 0;border-top:1px solid var(--line);text-align:right}
-table.mes td:first-child{text-align:left;color:var(--dim2)}
-table.mes td.bas{color:var(--acc-l)} table.mes td.haut{color:var(--warn)}
 .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
 .grid5 .f span{font-size:10.5px}
@@ -2611,7 +2620,7 @@ const DEFAULTS = {
     /* Cout reel du prompt d'analyse, mesure par Groq, separe par maille. */
     coutAnalyse: null,
     otpm: null,
-    revReglages: 5,
+    revReglages: 6,
     supps: [],
     waterPresets: [],
     templates: [],
@@ -2621,7 +2630,7 @@ const DEFAULTS = {
        l'anneau et la jauge d'eau n'ont pas de sens en fourchette. */
     /* `water` porte le plancher de BASE, hors effort : la part liée aux séances est
        ajoutée jour par jour par `eauDuJour()`. */
-    goals: { kcal: 2200, prot: 130, carb: 240, fat: 53, fiber: 31, water: 1500 },
+    goals: { kcal: 2200, prot: 130, carb: 240, fat: 53, fiber: 31, water: 1750 },
     /* Zéro = pas de plafond. Les quatre macronutriments n'en ont plus depuis la
        v12.0 ; seul l'alcool en garde un, HEBDOMADAIRE et non journalier. */
     goalsMax: { prot: 0, carb: 0, fat: 0, fiber: 0, alc: 100 },
@@ -4025,7 +4034,7 @@ function normaliserModele(st, versionSource) {
   /* `goals.water` CHANGE DE SENS : cible complète de la journée avant la v12, plancher
      de base hors effort après. Reporter l'ancienne valeur gonflerait la cible d'un jour
      de séance — 2650 ml devenaient 3400 avec 75 minutes de musculation. */
-  if (st.goals) st.goals.water = eauObjectif();
+  if (st.goals) st.goals.water = eauObjectif(st.profile);
   /* Les PLANCHERS ne sont pas réécrits, mais le bandeau de réajustement doit proposer
      le recalcul : ils ont été calculés sous un modèle qui n'existe plus. */
   st.goalsWeight = 0;
@@ -4051,6 +4060,11 @@ function normaliserModele(st, versionSource) {
    remplacer un réglage que l'utilisateur a lui-même choisi serait une trahison, et
    il n'y a aucun moyen de distinguer « 768 hérité » de « 768 voulu » autrement que
    par cette règle. */
+/* Planchers d'eau de boisson par sexe, voir `eauObjectif` (v15.18). Declares avant la
+   migration des reglages, qui s'en sert au chargement. */
+const EAU_HOMME = 1750;
+const EAU_FEMME = 1500;
+
 (function migrerReglages() {
   const s = BRUT_STOCKE.settings;
   if (!s) return;                                // installation neuve : DEFAULTS suffit
@@ -4099,8 +4113,31 @@ function normaliserModele(st, versionSource) {
      jamais atteinte sur une installation deja a la revision 4 — c'est-a-dire toutes. Le
      symptome etait silencieux : l'historique restait vide, et le premier changement
      d'objectif reecrivait le passe comme avant la correction. */
-  if (rev >= 5) return;                            // rien de nouveau a appliquer
-  S().revReglages = 5;
+  /* Revision 6 — plancher d'eau de l'homme porte de 1500 a 1750 ml (v15.18).
+     MEME REGLE QUE DEPUIS LA v13.2 : seules les installations restees sur l'ANCIEN
+     DEFAUT montent ; une valeur reglee a la main ne bouge pas.
+     L'entree d'historique est ecrite ICI, sans `noterObjectifs()` : cette fonction lit
+     `TODAY`, une constante definie plus bas dans le fichier, et l'appeler a ce stade du
+     chargement leverait une erreur qui bloquerait l'application. `dstr`, declaree comme
+     fonction, est deja disponible. Sans historique, les objectifs courants s'appliquent
+     partout et il n'y a rien a dater. */
+  if (rev < 6) {
+    const g = S().goals || {}, pr = S().profile || {};
+    if (pr.sex !== 'f' && r0(g.water) === 1500) {
+      g.water = EAU_HOMME;
+      const h = S().goalsHisto || [];
+      if (h.length) {
+        const auj = dstr(new Date());
+        const reste = h.filter(e => e && e.date !== auj);
+        reste.push({ date: auj, goals: Object.assign({}, g),
+                     goalsMax: Object.assign({}, S().goalsMax || {}), act: pr.act || 1.55 });
+        S().goalsHisto = reste.sort((a, b) => a.date.localeCompare(b.date));
+      }
+    }
+  }
+
+  if (rev >= 6) return;                            // rien de nouveau a appliquer
+  S().revReglages = 6;
   try { localStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
 })();
 
@@ -5673,7 +5710,7 @@ $('#goalsNag').onclick = e => {
     const kcal = ce.kcal;
     const f = fourchettesProfil(prof, kcal);
     S().goals = { kcal: kcal, prot: f.min.prot, carb: f.min.carb, fat: f.min.fat,
-                  fiber: f.min.fiber, water: eauObjectif() };
+                  fiber: f.min.fiber, water: eauObjectif(prof) };
     S().goalsMax = f.max;
     S().goalsWeight = pc.kg;
     noterObjectifs();          // la date d'entree en vigueur, pour juger le passe
@@ -7324,14 +7361,16 @@ async function verrouLibre(emploi) {
   }
   const el = sheet('Encore un instant',
     '<div class="note" style="margin-bottom:13px">' +
-    'Une analyse photo consomme à elle seule plus de la moitié du quota par minute du ' +
+    /* Texte commun a tous les emplois (v15.18) : il parlait d'« analyse photo » meme
+       devant une analyse du Suivi ou une question au Conseil. */
+    'Une analyse consomme à elle seule plus de la moitié du quota par minute du ' +
     'palier gratuit. Ta précédente requête occupe encore la fenêtre.' +
     '</div>' +
     '<div style="text-align:center;font-size:44px;font-weight:800;font-variant-numeric:tabular-nums;' +
     'letter-spacing:-1px;margin:6px 0 4px" id="vqCount">' + texteAttente(r) + '</div>' +
     '<p class="tiny" style="text-align:center;margin-bottom:14px">avant de pouvoir relancer</p>' +
-    '<p class="muted" style="margin-bottom:12px">Tes photos sont conservées : relance simplement ' +
-    'l\'analyse une fois le décompte terminé.</p>' +
+    '<p class="muted" style="margin-bottom:12px">Rien n\'est perdu : relance simplement ' +
+    'une fois le décompte terminé.</p>' +
     '<button class="btn" data-x>Fermer</button>', null, true);
   /* Le minuteur se détruit avec la feuille : sans cela il continuerait à écrire dans
      un nœud retiré du document à chaque seconde. */
@@ -9732,7 +9771,9 @@ $('#btnMesure').onclick = () => {
         el.querySelector('#ms_bf').innerHTML = bf === null
           ? 'Renseigne au moins le tour de taille et le tour de cou pour estimer la masse grasse.'
           : '<b>' + bf.toFixed(1).replace('.', ',') + ' %</b> de masse grasse estimée. '
-            + 'Elle remplacera la valeur de ton profil.'; };
+            + (lu.date >= ((derniereMesure() || {}).date || '')
+                ? 'Elle remplacera la valeur de ton profil.'
+                : 'Relevé antérieur au dernier : ton profil garde la valeur du plus récent.'); };
       el.addEventListener('input', apercu); apercu();
       el.querySelector('#ms_ok').onclick = () => {
         const o = lire();
@@ -9749,7 +9790,15 @@ $('#btnMesure').onclick = () => {
            un chiffre d'un ecran a l'autre. Un releve qui ne sert a rien ne se refait pas. */
         const fus = DB.mesures.find(m => m.date === o.date) || o;
         const bf = masseGrasseNavy(p.sex, p.height, fus.taille, fus.cou, fus.hanches);
-        if (bf !== null) S().profile.bodyFat = Math.round(bf);
+        /* LE RELEVE LE PLUS RECENT FAIT FOI, pas celui qu'on vient de saisir (v15.18).
+           Revue du 24 novembre 2026 : un releve saisi apres coup, date d'avant le dernier,
+           imposait SA masse grasse au profil — donc au poids de reference, aux planchers
+           de proteines et au seuil de disponibilite energetique. On reprend le plus recent
+           des releves qui permettent le calcul. */
+        const recent = mesures().slice().reverse()
+          .map(m => masseGrasseNavy(p.sex, p.height, m.taille, m.cou, m.hanches))
+          .find(v => v !== null);
+        if (recent !== undefined) S().profile.bodyFat = Math.round(recent);
         save(); closeSheet(); renderHistory(); renderSettings();
         toast(bf === null ? 'Mesures enregistrées'
                           : 'Mesures enregistrées · masse grasse ' + Math.round(bf) + ' %');
@@ -10298,7 +10347,20 @@ function editSupp(sp, isNew) {
    librement : c'est un repère, pas une prescription. */
 /* Plancher de BASE, hors effort. La part liée aux séances est ajoutée jour par jour
    par `eauDuJour()` : c'est elle, et elle seule, qui a un fondement solide. */
-function eauObjectif() { return 1500; }
+/* PLANCHER D'EAU DE BOISSON, hors effort (v15.18 : selon le sexe).
+
+   La reference EFSA (2010) est un apport hydrique TOTAL de 2,5 L chez l'homme et 2,0 L
+   chez la femme, dont 20 a 30 % viennent des aliments : 1,75 a 2,0 L de boisson pour
+   l'homme, 1,4 a 1,6 L pour la femme. Le plancher valait 1500 pour tous, SOUS la
+   fourchette masculine que la spec calculait elle-meme. Releve dans la revue du 24
+   novembre 2026 ; l'utilisateur a choisi de suivre la preconisation. On retient le bas
+   de chaque fourchette : un plancher, pas une cible. Les deux constantes sont declarees
+   AVANT `migrerReglages`, qui s'execute au chargement et s'en sert : declarees ici, elles
+   seraient encore inaccessibles a ce moment-la et l'application ne demarrerait pas. */
+function eauObjectif(p) {
+  const pr = p || S().profile || {};
+  return pr.sex === 'f' ? EAU_FEMME : EAU_HOMME;
+}
 
 /* DOCUMENTATION NUTRITIONNELLE — dans l'application, jamais sur une page distante.
 
@@ -10403,7 +10465,7 @@ function docNutrition() {
         promesse de l'application. */
      '<em>14 g pour 1000 kcal, donc proportionnel à ce que tu manges. Si tu pars de loin, ' +
      'monte progressivement plutôt que d\'un coup : ça se paie toujours côté digestion.</em></td></tr>',
-     '<tr><td><b>Eau</b></td><td>≥ 1500 ml, plus 600 ml par heure d\'effort' +
+     '<tr><td><b>Eau</b></td><td>≥ 1750 ml pour un homme, 1500 ml pour une femme, plus 600 ml par heure d\'effort' +
      '<em>un repère souple. Ta soif et la couleur de tes urines restent de meilleurs juges ' +
      'qu\'un chiffre.</em></td></tr>',
      '<tr><td><b>Alcool</b></td><td>≤ ' + g((S().goalsMax || {}).alc || 100) + ' par <b>semaine</b>' +
@@ -10603,7 +10665,7 @@ $('#btnCalc').onclick = () => {
         const ce = cibleEnergetique(v);
         const kcal = ce.kcal;
         const f = fourchettesProfil(v, kcal);
-        const water = eauObjectif();
+        const water = eauObjectif(v);
         const coh = coherencePlanchers(f.min, kcal);
         /* Tout ce qui suit est NUMÉRIQUE — chaque valeur sort de `Math.round`, de
            `r0` ou de `toFixed` — à l'exception du libellé de profil, échappé ici. */
