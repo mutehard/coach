@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-TZY1fLKzDAwhCTUQggs+ox9Uiup+SFLsfERjfKV2gSA='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-3SenCOl8NDMa0czvzmHNThQO/m5jsc0+K0KqGWOMGK8='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.13</title>
+<title>Coach v15.14</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,14 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.14 — **Le verdict energetique de la semaine retire du Journal.** Demande de
+             l'utilisateur : « je ne comprends pas ce bloc et il ne m'apporte rien ». Ses
+             quatre variantes disparaissent de sous les jauges : « Energie tenue », l'ecart
+             moyen sur sept jours, « Retour de pause », « Pilotage du jour ». Restent au meme
+             endroit les deux messages qui ne sont pas un verdict : la pause declaree et
+             l'alerte de disponibilite energetique, seuil de securite. `bilanEnergieHebdo`
+             reste en service pour l'analyse du Suivi.
+
     v15.13 — **Trois regles de portions ajoutees a la consigne des photos et des repas en texte.**
              Ameliorations simples demandees par l'utilisateur, sans nouvelle fonction.
              1. COMPTER PLUTOT QU'ESTIMER : quand un aliment se compte, le modele compte les
@@ -5791,28 +5799,25 @@ function renderToday() {
     ['Fibres', t.fiber, g.min.fiber, g.max.fiber, 'var(--fib)', 'fiber']
   ];
 
-  /* HIÉRARCHIE DES VERDICTS.
+  /* LE VERDICT ENERGETIQUE DE LA SEMAINE A ETE RETIRE DU JOURNAL (v15.14).
 
-     Quatre planchers atteints ne garantissent pas la cible énergétique : on peut les
-     tenir tous les quatre et se situer plusieurs centaines de kilocalories à côté.
-     C'était déjà vrai des fourchettes de la v3.0, où l'état « tout vert » couvrait
-     795 kcal d'amplitude sur un profil de 78 kg — assez pour prendre du poids en
-     cherchant à en perdre, avec quatre coches vertes à l'écran. Le passage aux
-     planchers seuls en v12.0 n'y change rien : c'est inhérent à des seuils
-     indépendants.
+     Quatre variantes s'affichaient ici sous les jauges : « Energie tenue sur N jours »,
+     « −452 kcal par jour en moyenne sur 7 jours. C'est cette moyenne qui decide de ton
+     poids... », « Retour de pause », « Pilotage du jour ». L'utilisateur, le 24 novembre
+     2026 : « je ne comprends pas ce bloc et il ne m'apporte rien ». Un ecart moyen sur
+     sept jours, sans sa cible ni son sens a cote, ne se lit pas d'un coup d'oeil sur un
+     ecran fait pour piloter la journee — et le Suivi porte deja le deficit tenu.
 
-     On énonce donc l'ordre. L'ÉNERGIE commande la masse corporelle, les
-     MACRONUTRIMENTS commandent la composition et la santé. */
-  /* Le VERDICT porte sur la moyenne de sept jours, plus sur la journée : voir
-     `bilanEnergieHebdo`. Le compteur du jour reste affiché au-dessus, comme outil de
-     pilotage — mais il ne juge plus, parce qu'il n'en a pas la précision. */
-  const bil = bilanEnergieHebdo(curDate);
+     `bilanEnergieHebdo` reste en service : il alimente la charge de l'analyse du Suivi.
+     Restent ici les deux messages qui ne sont pas un verdict : la PAUSE declaree, et
+     l'alerte de DISPONIBILITE ENERGETIQUE, seuil de securite qui ne s'affiche qu'en cas
+     d'apport dangereusement bas. */
   const de = disponibiliteEnergetique(curDate);
   let tete = '';
   if (enPause(curDate)) {
-    /* En pause, on remplace le verdict par le rappel de ce qui tourne : le compteur
-       du jour et les jauges restent au-dessus, ils décrivent sans juger. La
-       disponibilité énergétique, elle, garde sa priorité juste en dessous. */
+    /* En pause, on rappelle ce qui tourne : le compteur du jour et les jauges restent
+       au-dessus, ils décrivent sans juger. La disponibilité énergétique, elle, garde sa
+       priorité juste en dessous. */
     tete = '<div class="prio ok"><b>Pause en cours.</b> Ta journée est enregistrée ' +
            'normalement, mais elle ne compte ni dans le bilan de la semaine ni dans ' +
            'ta tendance de poids. Profite.</div>';
@@ -5822,36 +5827,12 @@ function renderToday() {
         'de 30, les fonctions endocriniennes et la masse osseuse se dégradent. Mange davantage.</div>';
     }
   } else if (de && de.alerte) {
-    /* La disponibilité énergétique passe AVANT tout le reste : c'est un seuil de
-       sécurité, pas un objectif de composition. */
+    /* La disponibilité énergétique est un seuil de sécurité, pas un objectif de
+       composition : elle reste affichée quand elle alerte. */
     tete = '<div class="prio warn"><b>Disponibilité énergétique à ' + r0(de.de) +
       ' kcal/kg de masse maigre</b>, moyenne sur ' + r0(de.jours) + ' jours terminés. ' +
       'En dessous de 30, les fonctions endocriniennes et la masse osseuse se dégradent. ' +
       'Mange davantage, ou allège les séances.</div>';
-  } else if (bil && bil.jours >= 3) {
-    tete = bil.dansTolerance
-      ? '<div class="prio ok"><b>Énergie tenue sur ' + bil.jours + ' jours.</b> Moyenne ' +
-        r0(bil.moyenne) + ' kcal pour une cible de ' + r0(bil.cible) + '. Les planchers ' +
-        /* CI-DESSUS : `#macroHead` est monté APRÈS `#macros` dans le document, les jauges
-           sont donc au-dessus de ce message. L'erreur remontait à la v7.2 ; en v12.0 le
-           texte a été réécrit (« fourchettes » → « planchers ») sans que la direction soit
-           questionnée. Vérifier l'ordre du DOM avant d'écrire « ci-dessus » ou « ci-dessous ». */
-        'ci-dessus affinent la composition.</div>'
-      : '<div class="prio warn"><b>' + (bil.ecart > 0 ? '+' : '−') + r0(Math.abs(bil.ecart)) +
-        ' kcal par jour en moyenne sur ' + bil.jours + ' jours.</b> C\'est cette moyenne ' +
-        'qui décide de ton poids, pas une journée isolée.' +
-        (bil.pause ? ' Les ' + bil.pause + ' jours de pause de la semaine sont écartés du calcul.' : '') +
-        '</div>';
-  } else if (bil && bil.pause && t.kcal > 0) {
-    /* Semaine de reprise : trop peu de jours hors pause pour un verdict, mais la
-       raison n'est pas un défaut de saisie — le dire, sinon le message précédent
-       reprocherait un manque qui n'existe pas. */
-    tete = '<div class="prio ok"><b>Retour de pause.</b> ' + bil.pause +
-           ' des sept derniers jours étaient en pause. Le bilan de la semaine reprendra ' +
-           'quand trois journées hors pause seront enregistrées.</div>';
-  } else if (t.kcal > 0) {
-    tete = '<div class="prio ok"><b>Pilotage du jour.</b> Le bilan énergétique se juge ' +
-           'sur sept jours : il faut au moins trois journées renseignées.</div>';
   }
   $('#macroHead').innerHTML = tete;
 
