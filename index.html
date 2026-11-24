@@ -7,9 +7,9 @@
      Facts. L'empreinte est recalculee par sceller-csp.py, appele par preparer-deploiement.py :
      apres toute modification du script, la relancer, sinon la page reste blanche.
      frame-ancestors est sans effet dans une balise meta, et GitHub Pages ne pose pas d'en-tetes. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-7SoyHtL60XddHhWqBg35g1z70dcqUOUjap8yYXwjXCo='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-JEOnxYCJ3rcUCkbX21f0JU7xENG1aQcdZ5iOmAkncIA='; style-src 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src blob: data:; connect-src https://api.groq.com https://world.openfoodfacts.org; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Coach v15.16</title>
+<title>Coach v15.17</title>
 
 <!-- Application privée : on interdit le référencement, quel que soit l'hébergeur.
      Un robots.txt ne serait pas lu sur un site projet GitHub Pages (sous-dossier). -->
@@ -32,6 +32,15 @@
   transitent par l'API Groq, avec la clé saisie dans les réglages.
 
   CHANGELOG
+    v15.17 — **Une courbe de la masse grasse estimee, sous celle du poids.** Demande de
+             l'utilisateur, qui voulait savoir si l'evolution du poids tient au gras ou au
+             muscle. Un point par releve, calcule par `masseGrasseNavy` comme la carte : le
+             dernier point est le pourcentage affiche dessous. Evolution comptee en POINTS
+             (passer de 20 a 19 %, c'est -1 point). Echelle d'au moins 4 points, l'estimation
+             portant 3 a 4 points d'incertitude. Lue avec la courbe du poids, elle montre une
+             recomposition — poids plat, masse grasse en baisse — que le verdict gras / maigre
+             ne peut pas trancher tant que le poids ne varie pas d'un kilo.
+
     v15.16 — **Un deficit qui « expliquait » une prise de poids.** Analyse relevee chez
              l'utilisateur : « Le deficit reel de 407 kcal depasse le deficit prevu, ce qui
              explique la prise de poids de 0,9 kg ». Les deux mesures se contredisaient —
@@ -9060,7 +9069,10 @@ const MTOP = 6, MBASE = 62, MLAB = 76, MH = 82;
      ecart     : afficher l'ecart de tendance. FAUX pour le poids, dont la variation est deja
                  donnee par la ligne de composition, calculee autrement : deux chiffres pour
                  une meme grandeur, c'est la contradiction corrigee en v15.7 ;
-     fins      : points fins, pesees de pause en cercle creux et hors tendance. */
+     fins      : points fins, pesees de pause en cercle creux et hors tendance ;
+     uniteEcart: unite de l'ecart quand elle differe de celle de la valeur — la masse
+                 grasse s'affiche en %, mais son evolution se compte en POINTS : passer de
+                 20 a 19 %, c'est -1 point, pas -1 %. */
 function courbeMesure(cle, libelle, ms, x0, x1, opt) {
   const o = Object.assign({ unite: 'cm', echelleMin: MESURE_ECHELLE_MIN, ecart: true, fins: false }, opt || {});
   const pts = ms.filter(m => m[cle] > 0);
@@ -9081,7 +9093,7 @@ function courbeMesure(cle, libelle, ms, x0, x1, opt) {
   const ts = tendanceSerie(ptsR, cle);
   const delta = ts.delta, reg = ts.reg;
   const ecart = delta === null || !o.ecart ? '' : ' · ' + (delta > 0 ? '+' : delta < 0 ? '−' : '') +
-    fmt(Math.abs(delta)) + ' ' + o.unite + ' depuis le ' + depuis;
+    fmt(Math.abs(delta)) + ' ' + (o.uniteEcart || o.unite) + ' depuis le ' + depuis;
   const tete = '<div class="row between" style="margin-top:12px;font-size:13.5px">' +
     '<span style="color:var(--dim2)">' + esc(libelle.replace('Tour de ', '').replace(/^./, c => c.toUpperCase())) + '</span>' +
     '<span><b>' + fmt(der) + '</b> ' + o.unite + '<span class="tiny">' + ecart + '</span></span></div>';
@@ -9599,8 +9611,17 @@ function renderHistory() {
       .slice().sort((a, b) => a.date.localeCompare(b.date))
       .map(w => ({ date: w.date, poids: w.kg, pause: enPause(w.date) }));
     const enPauseVisible = pesees.some(w => w.pause);
+    /* MASSE GRASSE ESTIMEE (v15.17), relevé par relevé, avec la MEME fonction que la carte :
+       son dernier point est le pourcentage affiche sous les courbes. Placee juste sous le
+       poids pour que les deux se lisent ensemble. Echelle d'au moins 4 points : l'estimation
+       par circonferences porte 3 a 4 points d'incertitude, une echelle plus serree ferait
+       d'un relevé bruite une tendance. */
+    const prof = S().profile || {};
+    const gras = ms.map(m => ({ date: m.date, bf: masseGrasseNavy(prof.sex, prof.height, m.taille, m.cou, m.hanches) }))
+      .filter(x => x.bf !== null && x.bf > 0);
     const courbes = courbeMesure('poids', 'Poids', pesees, x0, x1,
                                  { unite: 'kg', echelleMin: 2, ecart: false, fins: true }) +
+      courbeMesure('bf', 'Masse grasse', gras, x0, x1, { unite: '%', uniteEcart: 'pt', echelleMin: 4 }) +
       CHAMPS_MESURE.map(c => courbeMesure(c[0], c[1], ms, x0, x1)).join('');
     const avecTendance = CHAMPS_MESURE.some(c => ms.filter(m => m[c[0]] > 0).length >= REPART_RELEVES_MINI);
     const legende = avecTendance
